@@ -1,0 +1,18 @@
+Copyright (c) 2009     Cisco Systems, Inc.  All rights reserved.
+
+$COPYRIGHT$
+
+Additional copyrights may follow
+
+$HEADER$
+
+===========================================================================
+
+This file contains the main features as well as overviews of specific
+bug fixes (and other actions) for each version of Open MPI since
+version 1.0.
+
+Trunk (not on release branches yet)
+-----------------------------------
+
+- Initial commit of OpenRCM from Cisco repository

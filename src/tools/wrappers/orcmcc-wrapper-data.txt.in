@@ -1,0 +1,26 @@
+# There can be multiple blocks of configuration data, chosen by
+# compiler flags (using the compiler_args key to chose which block
+# should be activated.  This can be useful for multilib builds.  See the
+# multilib page at:
+#    https://svn.open-mpi.org/trac/ompi/wiki/compilerwrapper3264 
+# for more information.
+
+project=OPEN Resilient Cluster Manager
+project_short=OPENRCM
+version=@OPENRCM_VERSION@
+language=C
+compiler_env=CC
+compiler_flags_env=CFLAGS
+compiler=@CC@
+extra_includes=@OPENRCM_WRAPPER_EXTRA_INCLUDES@
+preprocessor_flags=@OPENRCM_WRAPPER_EXTRA_CPPFLAGS@
+compiler_flags=@OPENRCM_WRAPPER_EXTRA_CFLAGS@
+linker_flags=@OPENRCM_WRAPPER_EXTRA_LDFLAGS@
+libs=-lopenrcm -lopen-rte -lopen-pal @OPENRCM_WRAPPER_EXTRA_LIBS@
+required_file=
+# Technically, we should be able to put ${includedir} and ${libdir}
+# here, but OMPI will expand this relative to *it's* prefix/exec_prefix,
+# which is not where OPENRCM's headers/libraries are.  So we expand
+# $includedir and $libdir in configure and AC_SUBST the values here.
+includedir=@OPENRCM_WRAPPER_INCLUDEDIR@
+libdir=@OPENRCM_WRAPPER_LIBDIR@

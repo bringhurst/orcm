@@ -1,0 +1,117 @@
+Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved.
+$COPYRIGHT$
+
+Additional copyrights may follow
+
+$HEADER$
+
+Overview
+========
+
+This file is here for those who are building/exploring OpenRCM in its
+source code form, most likely through a developer's tree (i.e., a
+Subversion checkout).
+
+Building the Required Open MPI Support
+======================================
+
+OpenRCM requires that the ORTE and OPAL layers of Open MPI be installed
+prior to building OpenRCM. Because OpenRCM relies on features in those
+layers that are not yet included in any available official release, you will
+need to checkout and build a developer's copy of Open MPI, and ensure that
+the relevant features are "enabled" during the configure.
+
+To build the required support, follow these steps:
+
+1. obtain a copy of the OMPI developer's trunk
+
+    shell$ svn co http://svn.open-mpi.org/svn/ompi/trunk ompi-trunk
+    shell$ cd ompi-trunk
+
+2. build only the ORTE and OPAL layers - you do not need the OMPI layer.
+   Note that you are welcome to build the entire OMPI package if you like.
+   Omitting the OMPI layer only makes the build go faster, and OpenRCM
+   itself does not require the OMPI layer.
+
+    shell$ ./autogen.sh -no-ompi
+
+3. configure the OMPI software for use with OpenRCM.
+
+    shell$ ./configure --prefix=whatever --enable-multicast --enable-bootstrap --with-devel-headers
+
+4. build and install the OMPI software
+
+    shell$ make clean all install > /dev/null
+
+You are now ready to build and install OpenRCM
+
+
+Building OpenRCM
+================
+
+Once the Open MPI support has been installed, you can proceed with building
+OpenRCM:
+
+1. obtain a copy of the OpenRCM developer's trunk
+
+    shell$ svn co http://svn.open-mpi.org/svn/orcm/trunk orcm-trunk
+    shell$ cd orcm-trunk
+
+2. the build requires that you start with a very simple autogen script
+
+    shell$ ./autogen.sh
+
+3. configure the OpenRCM software. Note that you must tell the configure
+   where to find the Open MPI build you installed!
+
+    shell$ ./configure --prefix=whatever --with-orte=ompi-prefix-given
+
+4. build and install the ORCM software
+
+    shell$ make clean all install > /dev/null
+
+
+
+Debugging vs. Optimized Builds
+==============================
+
+OpenRCM will work with both optimized and debug builds of Open MPI.
+If you are building Open MPI from a Subversion checkout, the default
+build includes a lot of debugging features.  This happens
+automatically when when configure detects the hidden ".svn" Subversion
+meta directory (that is present in all Subversion checkouts) in your
+source tree, and therefore activates a number of developer-only
+debugging features in the Open MPI code base.  The same is true if you
+have a Mercurial checkout (with the hidden .hg meta directory).
+
+By definition, debugging builds will perform [much] slower than
+optimized builds of Open MPI.  You should *NOT* conduct timing tests
+or try to run production performance numbers with debugging builds.
+
+If you wish to build an optimized version of Open MPI from a
+developer's checkout for use with OpenRCM, then you need to slightly
+modify the ./configure line:
+
+    shell$ ./configure --prefix=whatever --enable-multicast --enable-bootstrap --with-devel-headers --disable-debug
+
+
+Other Dependencies
+==================
+
+Open MPI depends upon several common software packages, including m4, libtool,
+automake, and autoconf. You will need specific versions (or above) of these tools
+in order to build Open MPI from a developer's checkout. See the HACKING file in
+the Open MPI code tree for details. OpenRCM will build fine with those minimum
+requirements - nothing additional is needed.
+
+
+Compiling OpenRCM Applications
+==========================
+
+ORCM applications should be compiled using the OpenRCM "wrapper"
+compiler. Currently, only C programs are supported:
+
+    shell$ orcmcc your-code.c
+
+The wrapper compiler simply adds various command line flags (such as libraries)
+and invoke a back-end compiler; they are not compilers in themselves.

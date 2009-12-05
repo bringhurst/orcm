@@ -1,0 +1,139 @@
+-*- text -*-
+
+openrcm is a fairly straightforward AC/AM/LT project.  Its output is a
+top-level libopenrcm.la (libopenrcm.so/dylib/etc).  
+
+* Its AC usage is minimal.  It's not really checking for much; it's
+  mainly calling the magic macros to setup various tools (AC, AM, LT).
+  AC's role in openrcm is 99% relegated to the contents of
+  configure.ac.  
+
+  The one notable thing that configure.ac does is look for
+  opal/mca/mca.h (i.e., Open MPI's "mca.h") and libopen-rte.  I have
+  been configuring Open MPI --with-devel-headers and then configuring
+  openrcm with
+
+  ./configure CPPFLAGS=-I/path/to/openmpi/prefix/include/openmpi \
+        LDFLAGS=-L/path/to/openmpi/prefix
+
+  Specifically, OMPI's --with-devel-headers installs all of its
+  headers under $prefix/include/openmpi.  If the openrcm configure
+  script can't find opal/mca/mca.h, it'll error/abort.  Similarly, if
+  it can't "-lopen-rte" successfully, it'll error/abort.
+
+  Note that libopenrcm.so is installed with a built-in rpath dependency to
+  libopen-rte.so, so you should be able to create openrcm apps with
+  just "-lopenrcm" (meaning that it'll automatically link in libopen-rte
+  and libopen-pal automatically -- no need to be specifically
+  mentioned on the link command line).
+
+* Its AM usage is very straightforward -- I made *no* optimizations
+  (especially as compared to OMPI's AM usage).  As such, if the "make"
+  process gets too long, there are a bunch of things that can be done
+  to speed up the process.  But in the name of simplicity (and because
+  the openrcm code base is much smaller than OMPI's code base), I did
+  zero optimizations to start with.  They can always be added later.
+  AM's role in openrcm is to have a Makefile.am in every single
+  directory.  It provides the entire "make" infrastructure, including
+  all the common targets ("make all", "make clean", "make install",
+  etc.).  Its Makefiles support VPATH building and parallel builds.
+
+* Its LT usage is also trivially straightforward: the use of the
+  LTLIBRARIES suffix in Makefile.am files will automatically invoke
+  the right Libtool magic to build libraries.  The use of
+  "noinst_LTLIBRARIES" a) tells AM to not install a given library (but
+  build it anyway) and b) tells AM/LT that that library will be
+  slurped up into a higher-level library in a higher-level directory.
+
+I defaulted to building dynamic libraries only under the assumption
+that multiple processes running on the same processor on the OPENRCM will
+be using libopenrcm.  As such, libopenrcm.so will only be loaded into memory
+*once* by the OS, and will therefore save RAM.
+
+I also defaulted to slurping all components into libopenrcm.so
+(vs. building individual DSOs that are dlopen'ed at run-time).  This
+also is a space-saving technique (DSOs consume multiples of 1MB of RAM
+when dlopen'ed, IIRC...?  Packing them all together in a shared
+library is much more efficient).
+
+I moved all source code under the "src" tree (arbitrarily; feel free
+to move it wherever you want).  src/mca is the MCA tree root for
+openrcm; under there is the same conventions that we use in OMPI:
+src/mca/<framework>/<component>.
+
+There is a top-level VERSION file that controls the openrcm version;
+it's identical to OMPI's VERSION file and usage.  If you don't need
+this, it's easy to remove (and have a single, hard-coded version
+number in configure.ac).
+
+Note that the use of SUBDIRS in Makefile.am tells AM which
+subdirectories to traverse.  ORDER IS IMPORTANT!  The subdirectories
+are traversed left-to-right.
+
+See mca/Makefile.am for some specific comments and suggestions about
+how to use AM / write Makefile.am's.
+
+This project has two dummy frameworks and two dummy components each:
+
+Framework: foo
+  Component: aaa
+  Component: bbb
+Framework: bar
+  Component: ccc
+  Component: ddd
+
+All of the component methods mainly opal_output their __func__ names,
+just so that you can see them invoked.  The component open/close
+functions are minimally functional as examples.
+
+The autogen.sh is a single line (woot).  It has none of the complexity
+of OMPI's autogen.sh, but that comes at a cost: to add a framework
+and/or a component, you have to perform a bunch of manual steps.  I
+also assumed that all frameworks and components will always build;
+there is no conditional logic to decide at autogen.sh- or
+configure-time build a component or not.  The logic and automation
+from Open MPI's configure/build can selectively be added if you
+want/need specific features.
+
+TO ADD A FRAMEWORK:
+-------------------
+
+mkdir -p mca/<framework>/base
+create mca/<framework>/base/Makefile.am:
+  - have it create libmca_<framework>_base.la
+create mca/<framework>/base/components.h:
+  - create openrcm_<framework>_base_components array (empty)
+create mca/<framework>/<framework>.h
+  - define openrcm_<framework>_base_component_<version>_t struct
+  - define openrcm_<framework>_base_module_<version>_t struct
+create mca/<framework>/Makefile.am:
+  - have it create libmca_<framework>.la
+  - have libmca_<framework>.la slurp in base/libmca_<framework>_base.la
+add the 2 new Makefiles to AC_CONFIG_FILES in configure.ac
+edit mca/Makefile.am:
+  - add <framework> to SUBDIRS
+  - have it slurp in the new libmca_<framework>.la
+add relevant calls to <framework> open/close/whatever in your C source code
+re-run autogen.sh and configure and make
+
+TO ADD A COMPONENT:
+-------------------
+
+mkdir mca/<framework>/<component>
+create mca/<framework>/<component>/Makefile.am:
+  - have it create libmca_<framework>_<component>.la
+edit mca/<framework>/Makefile.am:
+  - add <component> to SUBDIRS
+  - have libmca_<framework>.la slurp in 
+    <component>/libmca_<framework>_<component>.la
+add mca/<framework>/<component>/Makefile to AC_CONFIG_FILES in configure.ac
+edit mca/<framework>/base/public.h
+  - extern const openrcm_<framework>_base_component_t *openrcm_<framework>_base_components[];
+edit the open function in mca/<framework>/base
+  - add #include for your component that externs its component struct
+  - add mca_<framework>_<component>_component to
+    openrcm_<framework>_base_components[] array
+re-run autogen.sh and configure and make
+
+This is off the top of my head, so try it yourself and add in any
+steps that I forgot to list.  :-)

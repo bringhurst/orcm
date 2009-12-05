@@ -1,0 +1,33 @@
+/*
+ * Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+ * $COPYRIGHT$
+ * 
+ * Additional copyrights may follow
+ * 
+ * $HEADER$
+ */
+
+#ifndef CFGI_BASE_PUBLIC_H
+#define CFGI_BASE_PUBLIC_H
+
+#include "openrcm_config.h"
+
+#include "mca/cfgi/cfgi.h"
+
+/*
+ * globals that might be needed
+ */
+typedef struct {
+    int output;
+    opal_list_t opened;
+} orcm_cfgi_base_t;
+
+ORCM_DECLSPEC extern orcm_cfgi_base_t orcm_cfgi_base;
+
+int orcm_cfgi_base_open(void);
+int orcm_cfgi_base_select(void);
+int orcm_cfgi_base_close(void);
+
+extern const mca_base_component_t *orcm_cfgi_base_components[];
+
+#endif
