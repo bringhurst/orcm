@@ -123,7 +123,7 @@ static void sample(int fd, short event, void *arg)
         
         /* get the process resource utilization stats */
         if (ORCM_SUCCESS != (rc = opal_pstat.query(child->pid, &stats))) {
-            ORCM_ERROR_LOG(rc);
+            ORTE_ERROR_LOG(rc);
             /* no point in continuing sampling */
             sampling = false;
             return;
