@@ -40,17 +40,32 @@ AC_DEFINE_UNQUOTED([OPENRCM_RELEASE_VERSION], [$OPENRCM_RELEASE_VERSION],
     [Release version of openrcm])
 AC_MSG_RESULT([$OPENRCM_VERSION])
 
+#
+# Do we want to forgive all configure sins and just ensure to make a
+# "make dist"able package?
+#
+AC_ARG_ENABLE([dist],
+  [AC_HELP_STRING([--enable-dist],
+                  [Guarantee that that the "dist" make target will be functional, although may not guarantee that any other make target will be functional.])],
+    ORCM_WANT_DIST=yes, ORCM_WANT_DIST=no)
+
+if test "$ORCM_WANT_DIST" = "yes"; then
+    AC_MSG_WARN([*** Configuring in 'make dist' mode])
+    AC_MSG_WARN([*** Most make targets may be non-functional!])
+fi
+
+#
 # Obtain the location of the ORTE installation
+#
 AC_MSG_CHECKING([where ORTE installation is located])
 AC_ARG_WITH([orte],
     [AC_HELP_STRING([--with-orte],
                     [Build with ORTE support from the specified install directory])])
-if test -z "$with_orte"; then
-    AC_MSG_RESULT([unknown])
+AS_IF([test -z "$with_orte" -a "$ORCM_WANT_DIST" != "yes"],
+   [AC_MSG_RESULT([unknown])
     AC_MSG_WARN([*** Must specify --with-orte value])
     AC_MSG_WARN([*** See "configure --help" output])
-    AC_MSG_ERROR([Cannot continue])
-fi
+    AC_MSG_ERROR([Cannot continue])])
 AC_MSG_RESULT([found $with_orte])
 ORTE_INSTALL_PREFIX="$with_orte"
 AC_SUBST(ORTE_INSTALL_PREFIX)
@@ -134,20 +149,17 @@ AH_BOTTOM([
 ])
 
 #
-# C compiler.  Use ortecc by default if $CC wasn't otherwise specified.
+# C compiler.  Use ortecc by default if $CC wasn't otherwise specified
+# (and if we're not --enable-dist).
 #
 
 CFLAGS_save="$CFLAGS"
-if test "x$CC" = "x"; then
-   CC=ortecc
-fi
+AS_IF([test "x$CC" = "x" -a "$ORCM_WANT_DIST" != "yes"], [CC=ortecc])
 AC_PROG_CC
 CFLAGS="$CFLAGS_save"
 
 CXXFLAGS_save="$CXXFLAGS"
-if test "x$CXX" = "x"; then
-   CXX=ortec++
-fi
+AS_IF([test "x$CXX" = "x" -a "$ORCM_WANT_DIST" != "yes"], [CXX=ortec++])
 AC_PROG_CXX
 CXXFLAGS="$CXXFLAGS_save"
 
@@ -167,16 +179,18 @@ AC_MSG_RESULT([$LDFLAGS])
 # Need to find the OMPI header files and libraries
 #
 
-AC_CHECK_HEADERS([opal/mca/mca.h], [], 
-                 [AC_MSG_ERROR([*** Cannot find opal/mca/mca.h])])
-AC_CHECK_LIB([open-pal], [opal_init_util], [],
-             [AC_MSG_ERROR([*** Cannot find/link to libopen-pal])])
-AC_CHECK_LIB([open-rte], [orte_init], [],
-             [AC_MSG_ERROR([*** Cannot find/link to libopen-rte])],
-             [-lopen-pal])
-# RHC: need to find a better public symbol than orte_rmcast
-AC_CHECK_FUNC([orte_rmcast], [],
-              [AC_MSG_ERROR([*** ORTE does not appear to have been built with multicast support.  Cannot continue.])])
+AS_IF([test "$ORCM_WANT_DIST" != "yes"],
+      [AC_CHECK_HEADERS([opal/mca/mca.h], [], 
+                        [AC_MSG_ERROR([*** Cannot find opal/mca/mca.h])])
+       AC_CHECK_LIB([open-pal], [opal_init_util], [],
+                    [AC_MSG_ERROR([*** Cannot find/link to libopen-pal])])
+       AC_CHECK_LIB([open-rte], [orte_init], [],
+                    [AC_MSG_ERROR([*** Cannot find/link to libopen-rte])],
+                    [-lopen-pal])
+       # RHC: need to find a better public symbol than orte_rmcast
+       AC_CHECK_FUNC([orte_rmcast], [],
+                     [AC_MSG_ERROR([*** ORTE does not appear to have been built with multicast support.  Cannot continue.])])
+])
 
 # Expand/eval $includedir and $libdir for AC_SUBST'ing.
 
