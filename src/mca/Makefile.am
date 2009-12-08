@@ -1,3 +1,13 @@
+#
+# Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+#
+# $COPYRIGHT$
+# 
+# Additional copyrights may follow
+# 
+# $HEADER$
+#
+
 # Subdirectories are traversed *in order*.  I.e., when "make all"
 # comes through, AM will invoke "make all" in bar, then "make all" in
 # foo, and then "make all" in this Makefile.am.  To be precise, if "."

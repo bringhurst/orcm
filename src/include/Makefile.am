@@ -1,3 +1,13 @@
+#
+# Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+#
+# $COPYRIGHT$
+# 
+# Additional copyrights may follow
+# 
+# $HEADER$
+#
+
 headers = \
         openrcm_config.h \
         openrcm_config_bottom.h \

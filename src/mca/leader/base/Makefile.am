@@ -1,3 +1,13 @@
+#
+# Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+#
+# $COPYRIGHT$
+# 
+# Additional copyrights may follow
+# 
+# $HEADER$
+#
+
 noinst_LTLIBRARIES = libmca_leader_base.la
 libmca_leader_base_la_SOURCES = \
         public.h \

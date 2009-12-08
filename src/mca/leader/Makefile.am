@@ -1,3 +1,13 @@
+#
+# Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+#
+# $COPYRIGHT$
+# 
+# Additional copyrights may follow
+# 
+# $HEADER$
+#
+
 SUBDIRS = base fifl
 
 headers = leader.h
