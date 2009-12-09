@@ -33,7 +33,7 @@ int main(int argc, char* argv[])
         maxrun = 100;
     }
     
-    orte_init(ORTE_PROC_NON_MPI);
+    orte_init(NULL, NULL, ORTE_PROC_NON_MPI);
     
     sleep(1);
     i = 0;

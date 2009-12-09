@@ -35,7 +35,7 @@ int main(int argc, char* argv[])
     }
 gethostname(hostname, 1024);
     
-    orte_init(ORTE_PROC_NON_MPI);
+    orte_init(NULL, NULL, ORTE_PROC_NON_MPI);
 
 fprintf(stderr, "%s is on node %s\n", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), hostname);
     sleep(1);
