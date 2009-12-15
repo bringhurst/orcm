@@ -57,6 +57,7 @@ static struct {
     int update_rate;
     char *scope;
     int scope_flag;
+    char *hnp_uri;
 } my_globals;
 
 opal_cmd_line_init_t cmd_line_opts[] = {
@@ -76,6 +77,10 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       &my_globals.update_rate, OPAL_CMD_LINE_TYPE_INT,
       "Update rate in seconds (default: 5)" },
     
+    { NULL, NULL, NULL, '\0', "uri", "uri", 1,
+      &my_globals.hnp_uri, OPAL_CMD_LINE_TYPE_STRING,
+      "The uri of the CM that you wish to query/monitor" },
+
     /* End of list */
     { NULL, NULL, NULL, '\0', NULL, NULL, 0,
       NULL, OPAL_CMD_LINE_TYPE_NULL,
@@ -199,6 +204,7 @@ int main(int argc, char *argv[])
     my_globals.monitor = false;
     my_globals.scope = NULL;
     my_globals.update_rate = 5;
+    my_globals.hnp_uri = NULL;
     
     /* Parse the command line options */
     opal_cmd_line_create(&cmd_line, cmd_line_opts);
@@ -238,6 +244,52 @@ int main(int argc, char *argv[])
     OBJ_CONSTRUCT(&orte_exit, orte_trigger_event_t);
     OBJ_CONSTRUCT(&orteds_exit, orte_trigger_event_t);
 
+    /* if we were given HNP contact info, parse it and
+     * setup the process_info struct with that info
+     */
+    if (NULL != my_globals.hnp_uri) {
+        if (0 == strncmp(my_globals.hnp_uri, "file", strlen("file")) ||
+            0 == strncmp(my_globals.hnp_uri, "FILE", strlen("FILE"))) {
+            char input[1024], *filename;
+            FILE *fp;
+            
+            /* it is a file - get the filename */
+            filename = strchr(my_globals.hnp_uri, ':');
+            if (NULL == filename) {
+                /* filename is not correctly formatted */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "uri", my_globals.hnp_uri);
+                goto cleanup;
+            }
+            ++filename; /* space past the : */
+            
+            if (0 >= strlen(filename)) {
+                /* they forgot to give us the name! */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "uri", my_globals.hnp_uri);
+                goto cleanup;
+            }
+            
+            /* open the file and extract the uri */
+            fp = fopen(filename, "r");
+            if (NULL == fp) { /* can't find or read file! */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, filename);
+                goto cleanup;
+            }
+            if (NULL == fgets(input, 1024, fp)) {
+                /* something malformed about file */
+                fclose(fp);
+                orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", true, filename);
+                goto cleanup;
+            }
+            fclose(fp);
+            input[strlen(input)-1] = '\0';  /* remove newline */
+            /* put into the process info struct */
+            orte_process_info.my_hnp_uri = strdup(input);
+        } else {
+            /* should just be the uri itself */
+            orte_process_info.my_hnp_uri = strdup(my_globals.hnp_uri);
+        }
+    }
+    
     /***************************
      * We need all of OPAL and ORTE - this will
      * automatically connect us to the CM
@@ -306,9 +358,6 @@ static void pretty_print(opal_buffer_t *buf)
     orte_vpid_t vpid;
     char *node;
     int rc;
-    
-    /* clear the screen */
-    system("clear");
     
     n=1;
     while (ORTE_SUCCESS == (rc = opal_dss.unpack(buf, &app, &n, OPAL_STRING))) {

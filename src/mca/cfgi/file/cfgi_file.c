@@ -95,7 +95,7 @@ static void file_read_config(orcm_spawn_fn_t spawn_app)
         opal_argv_free(inpt);
         cmd = opal_argv_join(xfer, ' ');
         opal_argv_free(xfer);
-        ORCM_SPAWN_EVENT(cmd, num_apps, NULL, false, spawn_app);
+        ORCM_SPAWN_EVENT(cmd, false, false, num_apps, NULL, false, spawn_app);
         free(cmd);
     }
     fclose(fp);

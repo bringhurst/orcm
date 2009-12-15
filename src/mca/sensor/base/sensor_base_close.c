@@ -23,11 +23,14 @@ int orcm_sensor_base_close(void)
 {
     opal_list_item_t *item;
     
-    /* destruct the list of modules so they each can finalize */
-    while (NULL != (item = opal_list_remove_first(&orcm_sensor_base_selected_modules))) {
-        OBJ_RELEASE(item);
+    if (orcm_sensor_initialized) {
+        /* destruct the list of modules so they each can finalize */
+        while (NULL != (item = opal_list_remove_first(&orcm_sensor_base_selected_modules))) {
+            OBJ_RELEASE(item);
+        }
+        OBJ_DESTRUCT(&orcm_sensor_base_selected_modules);
+        orcm_sensor_initialized = false;
     }
-    OBJ_DESTRUCT(&orcm_sensor_base_selected_modules);
     
     /* Close all remaining available components */
     

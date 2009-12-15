@@ -41,8 +41,6 @@ ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_send_t);
 
 ORCM_DECLSPEC void orcm_pnp_base_push_data(orcm_pnp_source_t *src, opal_buffer_t *buf);
 ORCM_DECLSPEC opal_buffer_t* orcm_pnp_base_pop_data(orcm_pnp_source_t *src);
-ORCM_DECLSPEC bool orcm_pnp_base_valid_sequence_number(orcm_pnp_source_t *src,
-                                                       orte_rmcast_seq_t seq);
 
 END_C_DECLS
 

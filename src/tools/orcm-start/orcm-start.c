@@ -63,6 +63,7 @@
 #include "orte/runtime/orte_globals.h"
 #include "orte/mca/rml/rml.h"
 #include "orte/util/name_fns.h"
+#include "orte/util/proc_info.h"
 
 /*****************************************
  * Global Vars for Command line Arguments
@@ -71,8 +72,11 @@ static struct {
     bool help;
     char *config_file;
     int num_procs;
+    bool add_procs;
     char *hosts;
     bool constrained;
+    bool gdb;
+    char *hnp_uri;
 } my_globals;
 
 opal_cmd_line_init_t cmd_line_opts[] = {
@@ -88,6 +92,14 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       &my_globals.num_procs, OPAL_CMD_LINE_TYPE_INT,
       "Number of instances to start" },
 
+    { NULL, NULL, NULL, 'a', "add", "add", 1,
+      &my_globals.add_procs, OPAL_CMD_LINE_TYPE_BOOL,
+      "Number of instances to add to existing job" },
+    
+    { NULL, NULL, NULL, '\0', "gdb", "gdb", 0,
+      &my_globals.gdb, OPAL_CMD_LINE_TYPE_BOOL,
+      "Have the application spin in init until a debugger attaches" },
+
     { NULL, NULL, NULL, 'H', "host", "host", 1,
       &my_globals.hosts, OPAL_CMD_LINE_TYPE_STRING,
       "Comma-delimited list of hosts upon which procs are to be initially started" },
@@ -96,6 +108,10 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       &my_globals.constrained, OPAL_CMD_LINE_TYPE_BOOL,
       "Constrain processes to run solely on the specified hosts, even upon restart from failure" },
 
+    { NULL, NULL, NULL, '\0', "uri", "uri", 1,
+      &my_globals.hnp_uri, OPAL_CMD_LINE_TYPE_STRING,
+      "The uri of the CM" },
+    
 /* End of list */
     { NULL, NULL, NULL, 
       '\0', NULL, NULL, 
@@ -168,6 +184,9 @@ int main(int argc, char *argv[])
     my_globals.num_procs = 0;
     my_globals.hosts = NULL;
     my_globals.constrained = false;
+    my_globals.add_procs = false;
+    my_globals.gdb = false;
+    my_globals.hnp_uri = NULL;
     
     /* Parse the command line options */
     opal_cmd_line_create(&cmd_line, cmd_line_opts);
@@ -200,6 +219,52 @@ int main(int argc, char *argv[])
     OBJ_CONSTRUCT(&orte_exit, orte_trigger_event_t);
     OBJ_CONSTRUCT(&orteds_exit, orte_trigger_event_t);
 
+    /* if we were given HNP contact info, parse it and
+     * setup the process_info struct with that info
+     */
+    if (NULL != my_globals.hnp_uri) {
+        if (0 == strncmp(my_globals.hnp_uri, "file", strlen("file")) ||
+            0 == strncmp(my_globals.hnp_uri, "FILE", strlen("FILE"))) {
+            char input[1024], *filename;
+            FILE *fp;
+            
+            /* it is a file - get the filename */
+            filename = strchr(my_globals.hnp_uri, ':');
+            if (NULL == filename) {
+                /* filename is not correctly formatted */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "uri", my_globals.hnp_uri);
+                goto cleanup;
+            }
+            ++filename; /* space past the : */
+            
+            if (0 >= strlen(filename)) {
+                /* they forgot to give us the name! */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "uri", my_globals.hnp_uri);
+                goto cleanup;
+            }
+            
+            /* open the file and extract the uri */
+            fp = fopen(filename, "r");
+            if (NULL == fp) { /* can't find or read file! */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, filename);
+                goto cleanup;
+            }
+            if (NULL == fgets(input, 1024, fp)) {
+                /* something malformed about file */
+                fclose(fp);
+                orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", true, filename);
+                goto cleanup;
+            }
+            fclose(fp);
+            input[strlen(input)-1] = '\0';  /* remove newline */
+            /* put into the process info struct */
+            orte_process_info.my_hnp_uri = strdup(input);
+        } else {
+            /* should just be the uri itself */
+            orte_process_info.my_hnp_uri = strdup(my_globals.hnp_uri);
+        }
+    }
+    
     /***************************
      * We need all of OPAL and ORTE - this will
      * automatically connect us to the CM
@@ -215,6 +280,22 @@ int main(int argc, char *argv[])
     /* load the start cmd */
     opal_dss.pack(&buf, &flag, 1, OPENRCM_TOOL_CMD_T);
     
+    /* load the add procs flag */
+    if (my_globals.add_procs) {
+        constrain = 1;
+    } else {
+        constrain = 0;
+    }
+    opal_dss.pack(&buf, &constrain, 1, OPAL_INT8);
+    
+    /* load the gdb flag */
+    if (my_globals.gdb) {
+        constrain = 1;
+    } else {
+        constrain = 0;
+    }
+    opal_dss.pack(&buf, &constrain, 1, OPAL_INT8);
+
     /* if we have a config file, read it */
     if (NULL != my_globals.config_file) {
         fp = fopen(my_globals.config_file, "r");

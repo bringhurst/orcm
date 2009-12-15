@@ -10,7 +10,7 @@
 
 SUBDIRS = base fifl
 
-headers = leader.h
+headers = leader.h leader_types.h
 
 # install the header files where they can be found
 nobase_openrcm_HEADERS = $(headers)

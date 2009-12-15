@@ -39,14 +39,22 @@ orcm_pnp_base_module_t orcm_pnp = {
     NULL,
     NULL,
     NULL,
+    NULL,
     NULL
 };
+
+/* instantiate the wildcard source */
+orcm_pnp_source_t orcm_pnp_wildcard;
 
 /* instantiate the globals */
 orcm_pnp_base_t orcm_pnp_base;
 
 int orcm_pnp_base_open(void)
 {
+    /* setup the source wildcard */
+    orcm_pnp_wildcard.name.jobid = ORTE_JOBID_WILDCARD;
+    orcm_pnp_wildcard.name.vpid = ORTE_VPID_WILDCARD;
+    
     /* Debugging / verbose output.  Always have stream open, with
      verbose set by the mca open system... */
     orcm_pnp_base.output = opal_output_open(NULL);

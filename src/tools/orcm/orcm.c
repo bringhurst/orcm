@@ -91,6 +91,7 @@ static struct {
     int verbosity;
     char *hostfile;
     char *hosts;
+    char *report_uri;
 } my_globals;
 
 opal_cmd_line_init_t cmd_line_opts[] = {
@@ -119,6 +120,10 @@ opal_cmd_line_init_t cmd_line_opts[] = {
     { "rmaps", "base", "no_schedule_local", '\0', "nolocal", "nolocal", 0,
       NULL, OPAL_CMD_LINE_TYPE_BOOL,
       "Do not run any applications on the local node" },
+
+    { NULL, NULL, NULL, '\0', "report-uri", "report-uri", 1,
+      &my_globals.report_uri, OPAL_CMD_LINE_TYPE_STRING,
+      "Printout URI on stdout [-], stderr [+], or a file [anything else]" },
 
     /* End of list */
     { NULL, NULL, NULL, '\0', NULL, NULL, 0,
@@ -221,6 +226,7 @@ int main(int argc, char *argv[])
     my_globals.verbosity = 0;
     my_globals.hostfile = NULL;
     my_globals.hosts = NULL;
+    my_globals.report_uri = NULL;
     
     /* Parse the command line options */
     opal_cmd_line_create(&cmd_line, cmd_line_opts);
@@ -268,6 +274,32 @@ int main(int argc, char *argv[])
     if (ORTE_SUCCESS != orcm_init(OPENRCM_MASTER)) {
         orcm_finalize();
         return 1;
+    }
+
+    /* check for request to report uri */
+    if (NULL != my_globals.report_uri) {
+        FILE *fp;
+        char *rml_uri;
+        rml_uri = orte_rml.get_contact_info();
+        if (0 == strcmp(my_globals.report_uri, "-")) {
+            /* if '-', then output to stdout */
+            printf("%s\n",  (NULL == rml_uri) ? "NULL" : rml_uri);
+        } else if (0 == strcmp(my_globals.report_uri, "+")) {
+            /* if '+', output to stderr */
+            fprintf(stderr, "%s\n",  (NULL == rml_uri) ? "NULL" : rml_uri);
+        } else {
+            fp = fopen(my_globals.report_uri, "w");
+            if (NULL == fp) {
+                orte_show_help("help-orcm.txt", "orcm:write_file", false,
+                               "orcm", "uri", my_globals.report_uri);
+                exit(0);
+            }
+            fprintf(fp, "%s\n", (NULL == rml_uri) ? "NULL" : rml_uri);
+            fclose(fp);
+        }
+        if (NULL != rml_uri) {
+            free(rml_uri);
+        }        
     }
 
     /* setup a non-blocking recv in case someone wants to
@@ -563,6 +595,26 @@ static void spawn_app(int fd, short event, void *command)
                          "%s spawn:app: %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), cmd));
     
+    /* if we are adding procs, find the existing job object */
+    if (spev->add_procs) {
+        for (i=0; i < orte_job_data->size; i++) {
+            if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
+                continue;
+            }
+            if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, 0))) {
+                continue;
+            }
+            if (0 == strcmp(spev->cmd, app->app)) {
+                /* found it */
+                app->num_procs += np;
+                goto launch;
+            }
+        }
+    }
+    /* get here if we are not adding procs, or we couldn't find the
+     * pre-existing job object
+     */
+    
     /* identify the states where we want callbacks */
     state = ORTE_PROC_STATE_ABORTED | ORTE_PROC_STATE_FAILED_TO_START |
             ORTE_PROC_STATE_ABORTED_BY_SIG | ORTE_PROC_STATE_TERM_WO_SYNC;
@@ -627,6 +679,13 @@ static void spawn_app(int fd, short event, void *command)
      * procs terminate
      */
     jdata->controls |= ORTE_JOB_CONTROL_CONTINUOUS_OP;
+    
+launch:
+    /* if we want to debug the apps, set the proper envar */
+    if (spev->debug) {
+        opal_setenv("ORCM_MCA_spin", "1", true, &app->env);
+    }
+    
     OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
                          "%s LAUNCHING APP %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), app->app));
@@ -649,7 +708,7 @@ static void spawn_app(int fd, short event, void *command)
 static int kill_app(char *cmd, opal_value_array_t *replicas)
 {
     int i, j;
-    orte_job_t *jdata, *jdat;
+    orte_job_t *jdata;
     orte_app_context_t *app;
     char **inpt;
     orte_proc_t *proc;
@@ -678,61 +737,56 @@ static int kill_app(char *cmd, opal_value_array_t *replicas)
         OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
                              "%s kill:app: %s",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), inpt[i]));
-        /* find the job data object for this app - skip the daemon job */
-        jdata = NULL;
+        /* find all job data objects for this app - skip the daemon job
+         * We have to check all the jobs because there could be multiple
+         * invocations of the same application
+         */
         for (j=1; j < orte_job_data->size; j++) {
-            if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, j))) {
+            if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, j))) {
                 continue;
             }
-            if (jdat->state > ORTE_PROC_STATE_UNTERMINATED) {
+            if (jdata->state > ORTE_PROC_STATE_UNTERMINATED) {
                 /* job is already terminated */
                 continue;
             }
             /* retrieve the app */
-            if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, 0))) {
+            if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, 0))) {
                 /* youch - this won't work */
                 ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
                 return ORTE_ERR_NOT_FOUND;
             }
             if (0 == strcasecmp(inpt[i], app->app)) {
-                /* got it */
-                jdata = jdat;
+                /* if no replicas were provided, or if the wildcard
+                 * was provided, kill the entire job
+                 */
+                if (killall) {
+                    /* turn off the restart for this job */
+                    jdata->err_cbfunc = NULL;
+                    jdata->err_cbstates = 0;
+                    /* indicate that this is no longer a continuously operating job */
+                    jdata->controls &= ~ORTE_JOB_CONTROL_CONTINUOUS_OP;
+                    /* kill this job */
+                    OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
+                                         "%s killing job %s app: %s",
+                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                         ORTE_JOBID_PRINT(jdata->jobid), inpt[i]));
+                    orte_plm.terminate_job(jdata->jobid);
+                } else {
+                    /* kill the individual procs */
+                    for (j=0; j < num_reps; j++) {
+                        if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(&procs, j))) {
+                            continue;
+                        }
+                        proc->name.jobid = jdata->jobid;
+                        OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
+                                             "%s killing proc %s",
+                                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                             ORTE_NAME_PRINT(&proc->name)));
+                    }
+                    orte_plm.terminate_procs(&procs);
+                }
                 continue;
             }
-        }
-        if (NULL == jdata) {
-            /* couldn't find the job object - let them know */
-            opal_output(0, "orcm: all replicas for app %s are already dead", inpt[i]);
-            continue;
-        }
-        /* if no replicas were provided, or if the wildcard
-         * was provided, kill the entire job
-         */
-        if (killall) {
-            /* turn off the restart for this job */
-            jdata->err_cbfunc = NULL;
-            jdata->err_cbstates = 0;
-            /* indicate that this is no longer a continuously operating job */
-            jdata->controls &= ~ORTE_JOB_CONTROL_CONTINUOUS_OP;
-            /* kill this job */
-            OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
-                                 "%s killing job %s app: %s",
-                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                 ORTE_JOBID_PRINT(jdata->jobid), inpt[i]));
-            orte_plm.terminate_job(jdata->jobid);
-        } else {
-            /* kill the individual procs */
-            for (j=0; j < num_reps; j++) {
-                if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(&procs, j))) {
-                    continue;
-                }
-                proc->name.jobid = jdata->jobid;
-                OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
-                                     "%s killing proc %s",
-                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                     ORTE_NAME_PRINT(&proc->name)));
-            }
-            orte_plm.terminate_procs(&procs);
         }
     }
 
@@ -913,7 +967,7 @@ static void process_boot_req(int fd, short event, void *data)
     orte_proc_t *proc;
     orte_vpid_t vpid;
     orcm_tool_cmd_t flag;
-    int8_t constrain;
+    int8_t constrain, add_procs, debug;
     opal_value_array_t replicas;
     
     /* unpack the cmd type */
@@ -960,18 +1014,43 @@ static void process_boot_req(int fd, short event, void *data)
                              "%s spawn cmd from %s",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                              ORTE_NAME_PRINT(&mev->sender)));
+        /* unpack the add procs flag */
+        n=1;
+        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &add_procs, &n, OPAL_INT8))) {
+            ORTE_ERROR_LOG(rc);
+            goto cleanup;
+        }
+        /* unpack the debug flag */
+        n=1;
+        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &debug, &n, OPAL_INT8))) {
+            ORTE_ERROR_LOG(rc);
+            goto cleanup;
+        }
+        
         /* unpack the #instances to start */
         n=1;
-        opal_dss.unpack(buffer, &num_apps, &n, OPAL_INT32);
+        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &num_apps, &n, OPAL_INT32))) {
+            ORTE_ERROR_LOG(rc);
+            goto cleanup;
+        }
         /* unpack the starting hosts - okay to unpack a NULL string */
         n=1;
-        opal_dss.unpack(buffer, &hosts, &n, OPAL_STRING);
+        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &hosts, &n, OPAL_STRING))) {
+            ORTE_ERROR_LOG(rc);
+            goto cleanup;
+        }
         /* unpack the constrain flag */
         n=1;
-        opal_dss.unpack(buffer, &constrain, &n, OPAL_INT8);
+        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &constrain, &n, OPAL_INT8))) {
+            ORTE_ERROR_LOG(rc);
+            goto cleanup;
+        }
         /* unpack the cmd */
         n=1;
-        opal_dss.unpack(buffer, &cmd, &n, OPAL_STRING);
+        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &cmd, &n, OPAL_STRING))) {
+            ORTE_ERROR_LOG(rc);
+            goto cleanup;
+        }
         /* spawn it */
         OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
                              "%s spawning cmd %s np %d hosts %s constrain %s",
@@ -979,19 +1058,25 @@ static void process_boot_req(int fd, short event, void *data)
                              cmd, num_apps,
                              (NULL == hosts) ? "NULL" : hosts,
                              (0 == constrain) ? "FALSE" : "TRUE"));
-        ORCM_SPAWN_EVENT(cmd, num_apps, hosts, constrain, spawn_app);
+        ORCM_SPAWN_EVENT(cmd, add_procs, debug, num_apps, hosts, constrain, spawn_app);
     } else if (OPENRCM_TOOL_STOP_CMD == flag) {
         /* setup a replica array */
         OBJ_CONSTRUCT(&replicas, opal_value_array_t);
         opal_value_array_init(&replicas, sizeof(int32_t));
         /* unpack the number of replicas included in command */
         n=1;
-        opal_dss.unpack(buffer, &num_apps, &n, OPAL_INT32);
+        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &num_apps, &n, OPAL_INT32))) {
+            ORTE_ERROR_LOG(rc);
+            goto cleanup;
+        }
         opal_value_array_set_size(&replicas, (size_t)num_apps);
         /* unpack the replica info */
         for (j=0; j < num_apps; j++) {
             n=1;
-            opal_dss.unpack(buffer, &replica, &n, OPAL_INT32);
+            if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &replica, &n, OPAL_INT32))) {
+                ORTE_ERROR_LOG(rc);
+                goto cleanup;
+            }
             OPAL_VALUE_ARRAY_SET_ITEM(&replicas, int32_t, j, replica);
         }
         n=1;

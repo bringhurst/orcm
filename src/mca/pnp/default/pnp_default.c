@@ -66,6 +66,7 @@ static int default_output_buffer_nb(orte_process_name_t *recipient,
                                     opal_buffer_t *buffer,
                                     orcm_pnp_callback_buffer_fn_t cbfunc,
                                     void *cbdata);
+static orcm_pnp_group_t* get_group(char *app, char *version, char *release);
 static orcm_pnp_tag_t define_new_tag(void);
 static int default_finalize(void);
 
@@ -81,6 +82,8 @@ orcm_pnp_base_module_t orcm_pnp_default_module = {
     default_output_nb,
     default_output_buffer,
     default_output_buffer_nb,
+    get_group,
+    define_new_tag,
     default_finalize
 };
 
@@ -346,7 +349,12 @@ static int register_input_buffer(char *app,
         if (0 == strcasecmp(group->app, app) &&
             (NULL == version || 0 == strcasecmp(group->version, version)) &&
             (NULL == release || 0 == strcasecmp(group->release, release))) {
-            /* ensure we are listening on all known channels */
+            /* record the request for future use */
+            request = OBJ_NEW(orcm_pnp_pending_request_t);
+            request->tag = tag;
+            request->cbfunc_buf = cbfunc;
+            opal_list_append(&group->requests, &request->super);
+            /* ensure we are listening on all previously-known channels */
             for (sz=0; sz < opal_value_array_get_size(&group->channels); sz++) {
                 channel = OPAL_VALUE_ARRAY_GET_ITEM(&group->channels, orte_rmcast_channel_t, sz);
                 OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
@@ -379,6 +387,12 @@ static int register_input_buffer(char *app,
      * it is announced
      */
     if (!found) {
+        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                             "%s pnp:default:register_input_buffer adding group app %s version %s release %s tag %d",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             app, (NULL == version) ? "NULL" : version,
+                             (NULL == release) ? "NULL" : release, tag));
+        
         group = OBJ_NEW(orcm_pnp_group_t);
         group->app = strdup(app);
         if (NULL != version) {
@@ -629,6 +643,50 @@ static int default_output_buffer_nb(orte_process_name_t *recipient,
         ORTE_ERROR_LOG(ret);
     }
     return ret;
+}
+
+static orcm_pnp_group_t* get_group(char *app, char *version, char *release)
+{
+    opal_list_item_t *item;
+    orcm_pnp_group_t *group;
+
+    for (item = opal_list_get_first(&groups);
+         item != opal_list_get_end(&groups);
+         item = opal_list_get_next(item)) {
+        group = (orcm_pnp_group_t*)item;
+        
+        if (0 == strcasecmp(group->app, app) &&
+            (NULL == version || 0 == strcasecmp(group->version, version)) &&
+            (NULL == release || 0 == strcasecmp(group->release, release))) {
+            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                                 "%s pnp:default:found group %s:%s:%s",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), app,
+                                 (NULL == version) ? "NULL" : version,
+                                 (NULL == release) ? "NULL" : release));
+            return group;
+        }
+    }
+    
+    /* if we get here, then the group wasn't found - so
+     * create it
+     */
+    group = OBJ_NEW(orcm_pnp_group_t);
+    group->app = strdup(app);
+    if (NULL != version) {
+        group->version = strdup(version);
+    }
+    if (NULL != release) {
+        group->release = strdup(release);
+    }
+    /* add to the list of groups */
+    opal_list_append(&groups, &group->super);
+
+    OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                         "%s pnp:default:defined new group %s:%s:%s",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), app,
+                         (NULL == version) ? "NULL" : version,
+                         (NULL == release) ? "NULL" : release));
+    return group;
 }
 
 static orcm_pnp_tag_t define_new_tag(void)
@@ -962,45 +1020,36 @@ static void recv_inputs(int status,
         return;
     }
     
+    /* if the leader is wildcard, then just deliver the message
+     * with no further overhead
+     */
+    if (ORCM_SOURCE_WILDCARD == grp->leader) {
+        cbfunc(ORCM_SUCCESS, sender, tag, msg, count, NULL);
+        /* update the msg number */
+        src->last_msg_num = seq_num;
+        return;
+    }
+    
     /* if we haven't set a leader for this group, do so now */
     if (NULL == grp->leader) {
         grp->leader = src;
     }
     
-    /* if the message is out of sequence... */
-    if (!orcm_pnp_base_valid_sequence_number(src, seq_num)) {
-        if (src == grp->leader) {
-            /* ouch - we need a new leader */
-            if (ORCM_SUCCESS != (rc = orcm_leader.set_leader(grp, NULL))) {
-                ORTE_ERROR_LOG(rc);
-            }
-        } 
-        /* remove this source from the list of members, thus
-         * declaring it "invalid" from here forward
-         */
-        opal_list_remove_item(&grp->members, &src->super);
-        OBJ_RELEASE(src);
-        return;
-    }
-    /* update the msg number */
-    src->last_msg_num = seq_num;
-    
-    /* if this data came from the leader, just use it */
-    if (src == grp->leader) {
-        cbfunc(ORCM_SUCCESS, sender, tag, msg, count, NULL);
-    } else {
-        /* check if we need a new leader */
-        if (orcm_leader.has_leader_failed(grp)) {
-            /* leader has failed - get new one */
-            if (ORCM_SUCCESS != (rc = orcm_leader.set_leader(grp, NULL))) {
-                ORTE_ERROR_LOG(rc);
-            }
-            /* if the sender is the new leader, deliver message */
-            if (src == grp->leader) {
-                cbfunc(ORCM_SUCCESS, sender, tag, msg, count, NULL);
-            }
+    /* see if the leader has failed */
+    if (orcm_leader.has_leader_failed(grp, src, seq_num)) {
+        /* leader has failed - get new one */
+        if (ORCM_SUCCESS != (rc = orcm_leader.select_leader(grp))) {
+            ORTE_ERROR_LOG(rc);
         }
     }
+    
+    /* if this data came from the leader, deliver it */
+    if (NULL != grp->leader && src == grp->leader) {
+        cbfunc(ORCM_SUCCESS, sender, tag, msg, count, NULL);
+    }
+    
+    /* update the msg number */
+    src->last_msg_num = seq_num;
 }
 
 static void recv_input_buffers(int status,
@@ -1044,6 +1093,10 @@ static void recv_input_buffers(int status,
         return;
     }
     
+    OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                         "%s pnp:default:received input buffer found grp",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+    
     src = NULL;
     for (item = opal_list_get_first(&grp->members);
          item != opal_list_get_end(&grp->members);
@@ -1061,44 +1114,53 @@ static void recv_input_buffers(int status,
         return;
     }
     
+    OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                         "%s pnp:default:received input buffer found sender %s in grp",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         ORTE_NAME_PRINT(sender)));
+    
+    /* if the leader is wildcard, then just deliver the message
+     * with no further overhead
+     */
+    if (ORCM_SOURCE_WILDCARD == grp->leader) {
+        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                             "%s pnp:default:received input buffer wildcard leader - delivering msg",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        
+        cbfunc(ORCM_SUCCESS, sender, tag, buf, NULL);
+        /* update the msg number */
+        src->last_msg_num = seq_num;
+        return;
+    }
+    
     /* if we haven't set a leader for this group, do so now */
     if (NULL == grp->leader) {
+        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                             "%s pnp:default:received input buffer setting initial leader to %s",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             ORTE_NAME_PRINT(sender)));
         grp->leader = src;
     }
     
-    /* if the message is out of sequence... */
-    if (!orcm_pnp_base_valid_sequence_number(src, seq_num)) {
-        if (src == grp->leader) {
-            /* ouch - we need a new leader */
-            if (ORCM_SUCCESS != (rc = orcm_leader.set_leader(grp, NULL))) {
-                ORTE_ERROR_LOG(rc);
-            }
-        } 
-        /* remove this source from the list of members, thus
-         * declaring it "invalid" from here forward
-         */
-        opal_list_remove_item(&grp->members, &src->super);
-        OBJ_RELEASE(src);
-        return;
-    }
-    /* update the msg number */
-    src->last_msg_num = seq_num;
-    
-    /* if this data came from the leader, just use it */
-    if (src == grp->leader) {
-        cbfunc(ORCM_SUCCESS, sender, tag, buf, NULL);
-    } else {
-        /* check if we need a new leader */
-        if (orcm_leader.has_leader_failed(grp)) {
-            /* leader has failed - get new one */
-            if (ORCM_SUCCESS != (rc = orcm_leader.set_leader(grp, NULL))) {
-                ORTE_ERROR_LOG(rc);
-            }
-            /* if the sender is the new leader, deliver message */
-            if (src == grp->leader) {
-                cbfunc(ORCM_SUCCESS, sender, tag, buf, NULL);
-            }
+    /* see if the leader has failed */
+    if (orcm_leader.has_leader_failed(grp, src, seq_num)) {
+        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                             "%s pnp:default:received input buffer leader failed",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        
+        /* leader has failed - get new one */
+        if (ORCM_SUCCESS != (rc = orcm_leader.select_leader(grp))) {
+            ORTE_ERROR_LOG(rc);
         }
+        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                             "%s pnp:default:received input buffer setting new leader to %s",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             ORTE_NAME_PRINT(&(grp->leader->name))));
+    }
+    
+    /* if this data came from the leader, deliver it */
+    if (NULL != grp->leader && src == grp->leader) {
+        cbfunc(ORCM_SUCCESS, sender, tag, buf, NULL);
     }
 }
 

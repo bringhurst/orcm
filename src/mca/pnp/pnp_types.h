@@ -19,6 +19,8 @@
 #include "orte/types.h"
 #include "orte/mca/rmcast/rmcast_types.h"
 
+#include "mca/leader/leader_types.h"
+
 #define ORCM_PNP_MAX_MSGS    4
 
 typedef struct {
@@ -31,6 +33,11 @@ typedef struct {
 } orcm_pnp_source_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_source_t);
 
+/* provide a wildcard version */
+ORCM_DECLSPEC extern orcm_pnp_source_t orcm_pnp_wildcard;
+#define ORCM_SOURCE_WILDCARD    (&orcm_pnp_wildcard)
+
+
 typedef struct {
     opal_list_item_t super;
     char *app;
@@ -41,9 +48,10 @@ typedef struct {
     opal_list_t requests;
     opal_list_t members;
     orcm_pnp_source_t *leader;
+    bool leader_set;
+    orcm_leader_cbfunc_t leader_failed_cbfunc;
 } orcm_pnp_group_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_group_t);
-
 
 typedef int32_t orcm_pnp_tag_t;
 #define ORCM_PNP_TAG_T  OPAL_INT32

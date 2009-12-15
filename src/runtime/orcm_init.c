@@ -10,6 +10,8 @@
 #include "openrcm_config.h"
 #include "include/constants.h"
 
+#include <time.h>
+
 #include "opal/util/error.h"
 
 #include "orte/runtime/runtime.h"
@@ -31,6 +33,15 @@ int orcm_init(orcm_proc_type_t flags)
 {
     int ret;
     char *error;
+    int spin;
+    struct timespec timer = {1, 0};
+    
+    if (NULL != getenv("ORCM_MCA_spin")) {
+        /* spin until a debugger can attach */
+        while (0 == spin) {
+            nanosleep(&timer, NULL);
+        }
+    }
     
     if (!orcm_util_initialized) {
         orcm_init_util();
@@ -54,8 +65,10 @@ int orcm_init(orcm_proc_type_t flags)
         }
         
     }  else if (OPENRCM_DAEMON & flags) {
-        /* ensure we use the right ess module */
-        putenv("OMPI_MCA_ess=cm");
+        /* ensure we use the right ess module if one isn't given */
+        if (NULL == getenv("OMPI_MCA_ess=cm")) {
+            putenv("OMPI_MCA_ess=cm");
+        }
         if (ORTE_SUCCESS != (ret = orte_init(NULL, NULL, ORTE_PROC_DAEMON))) {
             error = "orte_init";
             goto error;
@@ -150,7 +163,7 @@ int orcm_init_util(void)
     char *error;
     
     /* Ensure that enough of OPAL is setup for us to be able to run */
-    if( ORTE_SUCCESS != (ret = opal_init_util()) ) {
+    if( ORTE_SUCCESS != (ret = opal_init_util(NULL, NULL)) ) {
         error = "opal_init_util";
         goto error;
     }
@@ -185,6 +198,8 @@ static void spawn_construct(orcm_spawn_event_t *ptr)
     ptr->np = 0;
     ptr->hosts = NULL;
     ptr->constrain = false;
+    ptr->add_procs = false;
+    ptr->debug = false;
 }
 static void spawn_destruct(orcm_spawn_event_t *ptr)
 {

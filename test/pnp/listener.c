@@ -23,6 +23,7 @@
 #include "orte/runtime/orte_globals.h"
 
 #include "mca/pnp/pnp.h"
+#include "mca/leader/leader.h"
 #include "runtime/runtime.h"
 
 static struct opal_event term_handler;
@@ -35,6 +36,11 @@ static void recv_input(int status,
                        orcm_pnp_tag_t tag,
                        opal_buffer_t *buf,
                        void *cbdata);
+
+static void ldr_failed(char *app,
+                       char *version,
+                       char *release,
+                       int sibling);
 
 int main(int argc, char* argv[])
 {
@@ -73,6 +79,17 @@ int main(int argc, char* argv[])
     if (ORCM_SUCCESS != (rc = orcm_pnp.announce("LISTENER", "1.0", "alpha"))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
+    }
+    
+    /* see if we want to accept ALL input messages */
+    if (1 < argc) {
+        if (0 == strncmp(argv[1], "-a", 2)) {
+            if (ORCM_SUCCESS != (rc = orcm_leader.set_leader("TALKER", "1.0", "alpha",
+                                                             ORCM_LEADER_WILDCARD, ldr_failed))) {
+                ORTE_ERROR_LOG(rc);
+                goto cleanup;
+            }
+        }
     }
     
     /* we want to listen to the TALKER app */
@@ -120,4 +137,12 @@ static void recv_input(int status,
     opal_output(0, "%s recvd message from talker %s on tag %d",
                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                 ORTE_NAME_PRINT(sender), (int)tag);
+}
+
+static void ldr_failed(char *app,
+                       char *version,
+                       char *release,
+                       int sibling)
+{
+    opal_output(0, "%s LEADER FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
 }

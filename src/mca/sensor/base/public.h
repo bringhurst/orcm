@@ -41,6 +41,7 @@ ORCM_DECLSPEC    int orcm_sensor_base_close(void);
  */
 
 ORCM_DECLSPEC extern int orcm_sensor_base_output;
+ORCM_DECLSPEC extern bool orcm_sensor_initialized;
 ORCM_DECLSPEC extern opal_list_t mca_sensor_base_components_available;
 ORCM_DECLSPEC extern opal_list_t orcm_sensor_base_selected_modules;
 

@@ -113,6 +113,9 @@ typedef int (*orcm_pnp_module_output_buffer_nb_fn_t)(orte_process_name_t *recipi
                                                      orcm_pnp_callback_buffer_fn_t cbfunc,
                                                      void *cbdata);
 
+/* get the multicast group object for the specified app-triplet */
+typedef orcm_pnp_group_t* (*orcm_pnp_module_get_group_fn_t)(char *app, char *version, char *release);
+
 /* dynamically define a new tag */
 typedef orcm_pnp_tag_t (*orcm_pnp_module_define_new_tag_fn_t)(void);
 
@@ -137,6 +140,7 @@ typedef struct {
     orcm_pnp_module_output_nb_fn_t                  output_nb;
     orcm_pnp_module_output_buffer_fn_t              output_buffer;
     orcm_pnp_module_output_buffer_nb_fn_t           output_buffer_nb;
+    orcm_pnp_module_get_group_fn_t                  get_group;
     orcm_pnp_module_define_new_tag_fn_t             define_new_tag;
     orcm_pnp_module_finalize_fn_t                   finalize;
 } orcm_pnp_base_module_t;

@@ -59,6 +59,7 @@ static void stop(void);
  * Global variables
  */
 int orcm_sensor_base_output = -1;
+bool orcm_sensor_initialized = false;
 orcm_sensor_base_API_module_t orcm_sensor = {
     start,
     stop
@@ -78,6 +79,9 @@ int orcm_sensor_base_open(void)
     
     /* construct the list of modules */
     OBJ_CONSTRUCT(&orcm_sensor_base_selected_modules, opal_list_t);
+    
+    /* flag that we have initialized */
+    orcm_sensor_initialized = true;
     
     /* Open up all available components */
 
