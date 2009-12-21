@@ -7,6 +7,7 @@
 #include "opal/class/opal_list.h"
 #include "opal/class/opal_value_array.h"
 
+#include "orte/mca/rml/rml_types.h"
 #include "orte/mca/rmcast/rmcast_types.h"
 
 #include "mca/pnp/pnp_types.h"
@@ -33,8 +34,12 @@ ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_pending_request_t);
 
 typedef struct {
     opal_object_t super;
-    orcm_pnp_callback_fn_t cbfunc;
+    orte_rml_tag_t tag;
+    opal_buffer_t *buffer;
     orcm_pnp_callback_buffer_fn_t cbfunc_buf;
+    struct iovec *msg;
+    int count;
+    orcm_pnp_callback_fn_t cbfunc;
     void *cbdata;
 } orcm_pnp_send_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_send_t);

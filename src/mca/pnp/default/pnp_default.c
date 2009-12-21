@@ -135,6 +135,12 @@ static void rml_callback_buffer(int status,
                                 orte_rml_tag_t tag,
                                 void* cbdata);
 
+static void process_direct_msgs(int fd, short event, void *cbdata);
+
+static void recv_direct_msgs(int status, orte_process_name_t* sender,
+                             opal_buffer_t* buffer, orte_rml_tag_t tag,
+                             void* cbdata);
+
 /* Local variables */
 static opal_list_t groups;
 static int32_t packet_number = 0;
@@ -142,6 +148,11 @@ static bool recv_on = false;
 static char *my_app = NULL;
 static char *my_version = NULL;
 static char *my_release = NULL;
+static opal_mutex_t lock;
+static opal_list_t recvs;
+static opal_event_t ready;
+static int ready_fd[2];
+static bool processing;
 
 static int default_init(void)
 {
@@ -150,12 +161,29 @@ static int default_init(void)
     /* init the list of known application groups */
     OBJ_CONSTRUCT(&groups, opal_list_t);
     
+    /* setup the threading support */
+    processing = false;
+    OBJ_CONSTRUCT(&lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&recvs, opal_list_t);
+    pipe(ready_fd);
+    opal_event_set(&ready, ready_fd[0], OPAL_EV_READ, process_direct_msgs, NULL);
+    opal_event_add(&ready, 0);
+
     /* setup a recv to catch any announcements */
     if (!recv_on) {
         if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(ORTE_RMCAST_APP_PUBLIC_CHANNEL,
                                                               ORTE_RMCAST_TAG_ANNOUNCE,
                                                               ORTE_RMCAST_PERSISTENT,
                                                               recv_announcements, NULL))) {
+            ORTE_ERROR_LOG(ret);
+            return ret;
+        }
+        /* setup an RML recv to catch any direct messages */
+        if (ORTE_SUCCESS != (ret = orte_rml.recv_buffer_nb(ORTE_NAME_WILDCARD,
+                                                           ORTE_RML_TAG_MULTICAST,
+                                                           ORTE_RML_NON_PERSISTENT,
+                                                           recv_direct_msgs,
+                                                           NULL))) {
             ORTE_ERROR_LOG(ret);
             return ret;
         }
@@ -462,6 +490,10 @@ static int default_output(orte_process_name_t *recipient,
                           struct iovec *msg, int count)
 {
     int ret;
+    opal_buffer_t buf;
+    int8_t flag;
+    int32_t cnt;
+    int sz;
     
     /* if this is intended for everyone who might be listening to my output,
      * multicast it
@@ -494,9 +526,32 @@ static int default_output(orte_process_name_t *recipient,
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:sending p2p message of %d iovecs to tag %d",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), count, tag));
-    if (ORCM_SUCCESS != (ret = orte_rml.send(recipient, msg, count, tag, 0))) {
+    /* make a tmp buffer */
+    OBJ_CONSTRUCT(&buf, opal_buffer_t);
+    /* flag the buffer as containing iovecs */
+    flag = 0;
+    opal_dss.pack(&buf, &flag, 1, OPAL_INT8);
+    /* pass the target tag */
+    opal_dss.pack(&buf, &tag, 1, ORTE_RML_TAG_T);
+    /* pack the number of iovecs */
+    cnt = count;
+    opal_dss.pack(&buf, &cnt, 1, OPAL_INT32);
+    
+    /* pack each iovec into a buffer in prep for sending
+     * so we can recreate the array at the other end
+     */
+    for (sz=0; sz < count; sz++) {
+        /* pack the size */
+        cnt = msg[sz].iov_len;
+        opal_dss.pack(&buf, &cnt, 1, OPAL_INT32);
+        /* pack the bytes */
+        opal_dss.pack(&buf, &(msg[sz].iov_base), cnt, OPAL_UINT8);
+    }
+    /* send the msg */
+    if (0 > (ret = orte_rml.send_buffer(recipient, &buf, ORTE_RML_TAG_MULTICAST, 0))) {
         ORTE_ERROR_LOG(ret);
     }
+    OBJ_DESTRUCT(&buf);
     return ret;
 }
 
@@ -508,8 +563,15 @@ static int default_output_nb(orte_process_name_t *recipient,
 {
     int ret;
     orcm_pnp_send_t *send;
+    opal_buffer_t *buf;
+    int8_t flag;
+    int32_t cnt;
+    int sz;
     
     send = OBJ_NEW(orcm_pnp_send_t);
+    send->tag = tag;
+    send->msg = msg;
+    send->count = count;
     send->cbfunc = cbfunc;
     send->cbdata = cbdata;
     
@@ -544,7 +606,31 @@ static int default_output_nb(orte_process_name_t *recipient,
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:sending p2p message of %d iovecs to tag %d",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), count, tag));
-    if (ORCM_SUCCESS != (ret = orte_rml.send_nb(recipient, msg, count, tag, 0, rml_callback, send))) {
+    /* make a tmp buffer */
+    buf = OBJ_NEW(opal_buffer_t);
+    /* flag the buffer as containing iovecs */
+    flag = 0;
+    opal_dss.pack(buf, &flag, 1, OPAL_INT8);
+    /* pass the target tag */
+    opal_dss.pack(buf, &tag, 1, ORTE_RML_TAG_T);
+    /* pack the number of iovecs */
+    cnt = count;
+    opal_dss.pack(buf, &cnt, 1, OPAL_INT32);
+    
+    /* pack each iovec into a buffer in prep for sending
+     * so we can recreate the array at the other end
+     */
+    for (sz=0; sz < count; sz++) {
+        /* pack the size */
+        cnt = msg[sz].iov_len;
+        opal_dss.pack(buf, &cnt, 1, OPAL_INT32);
+        /* pack the bytes */
+        opal_dss.pack(buf, &(msg[sz].iov_base), cnt, OPAL_UINT8);
+    }
+    /* send the msg */
+    if (ORCM_SUCCESS != (ret = orte_rml.send_buffer_nb(recipient, buf,
+                                                       ORTE_RML_TAG_MULTICAST, 0,
+                                                       rml_callback_buffer, send))) {
         ORTE_ERROR_LOG(ret);
     }
     return ret;
@@ -555,7 +641,9 @@ static int default_output_buffer(orte_process_name_t *recipient,
                                  opal_buffer_t *buffer)
 {
     int ret;
-    
+    opal_buffer_t buf;
+    int8_t flag;
+
     /* if this is intended for everyone who might be listening to my output,
      * multicast it
      */
@@ -587,9 +675,23 @@ static int default_output_buffer(orte_process_name_t *recipient,
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:sending p2p buffer of %d bytes to tag %d",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), (int)buffer->bytes_used, tag));
-    if (ORCM_SUCCESS != (ret = orte_rml.send_buffer(recipient, buffer, tag, 0))) {
+    /* make a tmp buffer */
+    OBJ_CONSTRUCT(&buf, opal_buffer_t);
+    /* flag that we sent a buffer */
+    flag = 1;
+    opal_dss.pack(&buf, &flag, 1, OPAL_INT8);
+    /* pass the target tag */
+    opal_dss.pack(&buf, &tag, 1, ORTE_RML_TAG_T);
+    /* copy the payload */
+    if (ORTE_SUCCESS != (ret = opal_dss.copy_payload(&buf, buffer))) {
+        ORTE_ERROR_LOG(ret);
+        OBJ_DESTRUCT(&buf);
+        return ret;
+    }
+    if (0 > (ret = orte_rml.send_buffer(recipient, &buf, ORTE_RML_TAG_MULTICAST, 0))) {
         ORTE_ERROR_LOG(ret);
     }
+    OBJ_DESTRUCT(&buf);
     return ret;
 }
 
@@ -601,8 +703,12 @@ static int default_output_buffer_nb(orte_process_name_t *recipient,
 {
     int ret;
     orcm_pnp_send_t *send;
-    
+    opal_buffer_t *buf;
+    int8_t flag;
+
     send = OBJ_NEW(orcm_pnp_send_t);
+    send->tag = tag;
+    send->buffer = buffer;
     send->cbfunc_buf = cbfunc;
     send->cbdata = cbdata;
     
@@ -638,7 +744,21 @@ static int default_output_buffer_nb(orte_process_name_t *recipient,
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:sending p2p buffer of %d bytes to tag %d",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), (int)buffer->bytes_used, tag));
-    if (ORCM_SUCCESS != (ret = orte_rml.send_buffer_nb(recipient, buffer, tag, 0,
+    /* make a tmp buffer */
+    buf = OBJ_NEW(opal_buffer_t);
+    /* flag that we sent a buffer */
+    flag = 1;
+    opal_dss.pack(buf, &flag, 1, OPAL_INT8);
+    /* pass the target tag */
+    opal_dss.pack(buf, &tag, 1, ORTE_RML_TAG_T);
+    /* copy the payload */
+    if (ORTE_SUCCESS != (ret = opal_dss.copy_payload(buf, buffer))) {
+        ORTE_ERROR_LOG(ret);
+        OBJ_RELEASE(buf);
+        return ret;
+    }
+    if (ORCM_SUCCESS != (ret = orte_rml.send_buffer_nb(recipient, buf,
+                                                       ORTE_RML_TAG_MULTICAST, 0,
                                                        rml_callback_buffer, send))) {
         ORTE_ERROR_LOG(ret);
     }
@@ -708,6 +828,13 @@ static int default_finalize(void)
         recv_on = false;
     }
     
+    /* destruct the threading support */
+    OBJ_DESTRUCT(&recvs);
+    opal_event_del(&ready);
+    close(ready_fd[0]);
+    processing = false;
+    OBJ_DESTRUCT(&lock);
+
     /* release the list of known application groups */
     while (NULL != (item = opal_list_remove_first(&groups))) {
         OBJ_RELEASE(item);
@@ -1217,24 +1344,6 @@ static void rmcast_callback(int status,
 {
     orcm_pnp_send_t *send = (orcm_pnp_send_t*)cbdata;
     
-    if (NULL != send->cbfunc) {
-        send->cbfunc(status, ORTE_PROC_MY_NAME, tag, msg, count, send->cbdata);
-    }
-    OBJ_RELEASE(send);
-}
-
-static void rml_callback(int status,
-                         orte_process_name_t* sender,
-                         struct iovec* msg,
-                         int count,
-                         orte_rml_tag_t tag,
-                         void* cbdata)
-{
-    orcm_pnp_send_t *send = (orcm_pnp_send_t*)cbdata;
-    
-    if (NULL != send->cbfunc) {
-        send->cbfunc(status, ORTE_PROC_MY_NAME, tag, msg, count, send->cbdata);
-    }
     OBJ_RELEASE(send);
 }
 
@@ -1246,8 +1355,211 @@ static void rml_callback_buffer(int status,
 {
     orcm_pnp_send_t *send = (orcm_pnp_send_t*)cbdata;
     
+    /* release the scratch buffer */
+    OBJ_RELEASE(buffer);
+    /* do any required callbacks */
     if (NULL != send->cbfunc_buf) {
-        send->cbfunc_buf(status, ORTE_PROC_MY_NAME, tag, buffer, send->cbdata);
+        send->cbfunc_buf(status, ORTE_PROC_MY_NAME, send->tag, send->buffer, send->cbdata);
+    } else if (NULL != send->cbfunc) {
+        send->cbfunc(status, ORTE_PROC_MY_NAME, send->tag, send->msg, send->count, send->cbdata);
     }
     OBJ_RELEASE(send);
+}
+
+static void process_direct_msgs(int fd, short event, void *cbdata)
+{
+    orte_msg_packet_t *msgpkt;
+    orte_jobid_t job;
+    int rc;
+    orte_std_cntr_t cnt;
+    opal_list_item_t *itmgrp, *itmsrc, *itmrecv, *itmreq;
+    int dump[128];
+    orte_process_name_t sender;
+    orte_rml_tag_t tag;
+    opal_buffer_t *buf, recvd_buf;
+    opal_list_item_t *item;
+    orcm_pnp_group_t *group;
+    orcm_pnp_source_t *source;
+    int8_t flag;
+    struct iovec *iovec_array=NULL;
+    int32_t iovec_count=0, i, sz, n;
+    orcm_pnp_pending_request_t *request;
+    
+    OPAL_OUTPUT_VERBOSE((5, orcm_pnp_base.output,
+                         "%s pnp:default: processing direct msg",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+    
+    OPAL_THREAD_LOCK(&lock);
+    
+    /* tag that we are processing the list */
+    processing = true;
+    
+    /* clear the file descriptor to stop the event from refiring */
+    read(fd, &dump, sizeof(dump));
+    
+    while (NULL != (itmrecv = opal_list_remove_first(&recvs))) {
+        msgpkt = (orte_msg_packet_t*)itmrecv;
+        
+        sender.jobid = msgpkt->sender.jobid;
+        sender.vpid = msgpkt->sender.vpid;
+        buf = msgpkt->buffer;
+        
+        /* unpack the flag */
+        n=1;
+        if (ORCM_SUCCESS != (rc = opal_dss.unpack(buf, &flag, &n, OPAL_INT8))) {
+            ORTE_ERROR_LOG(rc);
+            OBJ_RELEASE(msgpkt);
+            continue;
+        }
+        
+        /* unpack the intended tag for this message */
+        n=1;
+        if (ORCM_SUCCESS != (rc = opal_dss.unpack(buf, &tag, &n, ORTE_RML_TAG_T))) {
+            ORTE_ERROR_LOG(rc);
+            OBJ_RELEASE(msgpkt);
+            continue;
+        }
+        
+        /* locate this sender */
+        for (itmgrp = opal_list_get_first(&groups);
+             itmgrp != opal_list_get_end(&groups);
+             itmgrp = opal_list_get_next(itmgrp)) {
+            group = (orcm_pnp_group_t*)itmgrp;
+            
+            for (itmsrc = opal_list_get_first(&group->members);
+                 itmsrc != opal_list_get_end(&group->members);
+                 itmsrc = opal_list_get_next(itmsrc)) {
+                source = (orcm_pnp_source_t*)itmsrc;
+                
+                if (sender.jobid == source->name.jobid &&
+                    sender.vpid == source->name.vpid) {
+                    /* found it - since a source can only be a
+                     * member of one group, we only need to
+                     * unpack the msg once
+                     */
+                    if (1 == flag) {
+                        /* buffer was included */
+                        OBJ_CONSTRUCT(&recvd_buf, opal_buffer_t);
+                        /* copy the payload */
+                        if (ORTE_SUCCESS != (rc = opal_dss.copy_payload(&recvd_buf, buf))) {
+                            ORTE_ERROR_LOG(rc);
+                            OBJ_DESTRUCT(&recvd_buf);
+                            goto NEXT;
+                        }
+                        /* loop through the recorded recv requests on this
+                         * group to find the specified tag so we can get
+                         * the associated callback function
+                         */
+                        for (itmreq = opal_list_get_first(&group->requests);
+                             itmreq != opal_list_get_end(&group->requests);
+                             itmreq = opal_list_get_next(itmreq)) {
+                            request = (orcm_pnp_pending_request_t*)itmreq;
+                            
+                            if (request->tag == tag &&
+                                NULL != request->cbfunc_buf) {
+                                /* deliver it */
+                                request->cbfunc_buf(ORCM_SUCCESS, &sender, tag, &recvd_buf, NULL);
+                                break;
+                            }
+                        }
+                        /* release scratch buffer */
+                        OBJ_DESTRUCT(&recvd_buf);
+                        /* done */
+                        goto NEXT;
+                    } else if (0 == flag) {
+                        /* iovecs included and we still need to unpack it - get
+                         * the number of iovecs in the buffer
+                         */
+                        n=1;
+                        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &iovec_count, &n, OPAL_INT32))) {
+                            ORTE_ERROR_LOG(rc);
+                            goto NEXT;
+                        }
+                        /* malloc the required space */
+                        iovec_array = (struct iovec *)malloc(iovec_count * sizeof(struct iovec));
+                        /* unpack the iovecs */
+                        for (i=0; i < iovec_count; i++) {
+                            /* unpack the number of bytes in this iovec */
+                            n=1;
+                            if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &sz, &n, OPAL_INT32))) {
+                                ORTE_ERROR_LOG(rc);
+                                goto NEXT;
+                            }
+                            /* allocate the space */
+                            iovec_array[i].iov_base = (uint8_t*)malloc(sz);
+                            iovec_array[i].iov_len = sz;
+                            /* unpack the data */
+                            if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, iovec_array[i].iov_base, &sz, OPAL_UINT8))) {
+                                ORTE_ERROR_LOG(rc);
+                                goto NEXT;
+                            }                    
+                        }
+                        /* loop through the recorded recv requests on this
+                         * group to find the specified tag so we can get
+                         * the associated callback function
+                         */
+                        for (itmreq = opal_list_get_first(&group->requests);
+                             itmreq != opal_list_get_end(&group->requests);
+                             itmreq = opal_list_get_next(itmreq)) {
+                            request = (orcm_pnp_pending_request_t*)itmreq;
+                            
+                            if (request->tag == tag &&
+                                NULL != request->cbfunc) {
+                                /* deliver it */
+                                request->cbfunc(ORCM_SUCCESS, &sender, tag, iovec_array, iovec_count, NULL);
+                                break;
+                            }
+                        }                        
+                        /* release the memory */
+                        for (i=0; i < iovec_count; i++) {
+                            free(iovec_array[i].iov_base);
+                        }
+                        free(iovec_array);                        
+                    }
+                    goto NEXT;
+                }
+            }
+        }
+    NEXT:
+        OBJ_RELEASE(msgpkt);
+    }
+    
+    /* reset the event */
+    processing = false;
+    opal_event_add(&ready, 0);
+    
+    /* release the thread */
+    OPAL_THREAD_UNLOCK(&lock);
+}
+
+static void recv_direct_msgs(int status, orte_process_name_t* sender,
+                             opal_buffer_t* buffer, orte_rml_tag_t tag,
+                             void* cbdata)
+{
+    int ret;
+    
+    OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                         "%s pnp:defaultrecvd direct msg from %s",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         ORTE_NAME_PRINT(sender)));
+    
+    /* don't process this right away - we need to get out of the recv before
+     * we process the message as it may ask us to do something that involves
+     * more messaging! Instead, setup an event so that the message gets processed
+     * as soon as we leave the recv.
+     *
+     * The macro makes a copy of the buffer, which we release above - the incoming
+     * buffer, however, is NOT released here, although its payload IS transferred
+     * to the message buffer for later processing
+     */
+    ORTE_PROCESS_MESSAGE(&recvs, &lock, processing, ready_fd[1], true, sender, &buffer);
+
+    /* reissue the recv */
+    if (ORTE_SUCCESS != (ret = orte_rml.recv_buffer_nb(ORTE_NAME_WILDCARD,
+                                                       ORTE_RML_TAG_MULTICAST,
+                                                       ORTE_RML_NON_PERSISTENT,
+                                                       recv_direct_msgs,
+                                                       NULL))) {
+        ORTE_ERROR_LOG(ret);
+    }
 }

@@ -15,6 +15,7 @@
 #include "opal/mca/mca.h"
 #include "opal/mca/base/base.h"
 
+#include "orte/mca/rml/rml_types.h"
 #include "orte/mca/rmcast/rmcast_types.h"
 
 #include "mca/pnp/pnp.h"
@@ -149,8 +150,12 @@ OBJ_CLASS_INSTANCE(orcm_pnp_pending_request_t,
 
 static void send_constructor(orcm_pnp_send_t *ptr)
 {
-    ptr->cbfunc = NULL;
+    ptr->tag = ORTE_RML_TAG_INVALID;
+    ptr->buffer = NULL;
     ptr->cbfunc_buf = NULL;
+    ptr->msg = NULL;
+    ptr->count = 0;
+    ptr->cbfunc = NULL;
     ptr->cbdata = NULL;
 }
 /* no destruct required here */
