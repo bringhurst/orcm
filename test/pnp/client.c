@@ -43,7 +43,7 @@ static int32_t flag=0;
 int main(int argc, char* argv[])
 {
     struct timeval tp;
-    int rc;
+    int rc, delay;
     
     /* seed the random number generator */
     gettimeofday (&tp, NULL);
@@ -82,8 +82,12 @@ int main(int argc, char* argv[])
         goto cleanup;
     }
     
-    /* wake up every 5 seconds and send something */
-    ORTE_TIMER_EVENT(5, 0, send_data);
+    /* compute a wait time */
+    delay = 2*ORTE_PROC_MY_NAME->vpid + 1;
+    opal_output(0, "sending data every %d seconds", delay);
+    
+    /* wake up every delay seconds and send something */
+    ORTE_TIMER_EVENT(delay, 0, send_data);
     
     /* just sit here */
     opal_event_dispatch();

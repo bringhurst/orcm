@@ -531,8 +531,8 @@ static int default_output(orte_process_name_t *recipient,
     /* flag the buffer as containing iovecs */
     flag = 0;
     opal_dss.pack(&buf, &flag, 1, OPAL_INT8);
-    /* pass the target tag */
-    opal_dss.pack(&buf, &tag, 1, ORTE_RML_TAG_T);
+    /* pass the target PNP tag */
+    opal_dss.pack(&buf, &tag, 1, ORCM_PNP_TAG_T);
     /* pack the number of iovecs */
     cnt = count;
     opal_dss.pack(&buf, &cnt, 1, OPAL_INT32);
@@ -612,7 +612,7 @@ static int default_output_nb(orte_process_name_t *recipient,
     flag = 0;
     opal_dss.pack(buf, &flag, 1, OPAL_INT8);
     /* pass the target tag */
-    opal_dss.pack(buf, &tag, 1, ORTE_RML_TAG_T);
+    opal_dss.pack(buf, &tag, 1, ORCM_PNP_TAG_T);
     /* pack the number of iovecs */
     cnt = count;
     opal_dss.pack(buf, &cnt, 1, OPAL_INT32);
@@ -680,8 +680,8 @@ static int default_output_buffer(orte_process_name_t *recipient,
     /* flag that we sent a buffer */
     flag = 1;
     opal_dss.pack(&buf, &flag, 1, OPAL_INT8);
-    /* pass the target tag */
-    opal_dss.pack(&buf, &tag, 1, ORTE_RML_TAG_T);
+    /* pass the target PNP tag */
+    opal_dss.pack(&buf, &tag, 1, ORCM_PNP_TAG_T);
     /* copy the payload */
     if (ORTE_SUCCESS != (ret = opal_dss.copy_payload(&buf, buffer))) {
         ORTE_ERROR_LOG(ret);
@@ -750,7 +750,7 @@ static int default_output_buffer_nb(orte_process_name_t *recipient,
     flag = 1;
     opal_dss.pack(buf, &flag, 1, OPAL_INT8);
     /* pass the target tag */
-    opal_dss.pack(buf, &tag, 1, ORTE_RML_TAG_T);
+    opal_dss.pack(buf, &tag, 1, ORCM_PNP_TAG_T);
     /* copy the payload */
     if (ORTE_SUCCESS != (ret = opal_dss.copy_payload(buf, buffer))) {
         ORTE_ERROR_LOG(ret);
@@ -1375,7 +1375,7 @@ static void process_direct_msgs(int fd, short event, void *cbdata)
     opal_list_item_t *itmgrp, *itmsrc, *itmrecv, *itmreq;
     int dump[128];
     orte_process_name_t sender;
-    orte_rml_tag_t tag;
+    orcm_pnp_tag_t tag;
     opal_buffer_t *buf, recvd_buf;
     opal_list_item_t *item;
     orcm_pnp_group_t *group;
@@ -1414,7 +1414,7 @@ static void process_direct_msgs(int fd, short event, void *cbdata)
         
         /* unpack the intended tag for this message */
         n=1;
-        if (ORCM_SUCCESS != (rc = opal_dss.unpack(buf, &tag, &n, ORTE_RML_TAG_T))) {
+        if (ORCM_SUCCESS != (rc = opal_dss.unpack(buf, &tag, &n, ORCM_PNP_TAG_T))) {
             ORTE_ERROR_LOG(rc);
             OBJ_RELEASE(msgpkt);
             continue;
