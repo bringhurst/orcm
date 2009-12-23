@@ -9,7 +9,7 @@
 
 man_pages = orcmcc.1
 
-if OPAL_WANT_SCRIPT_WRAPPER_COMPILERS
+if OPENRCM_WANT_SCRIPT_WRAPPER_COMPILERS
 
 bin_SCRIPTS = openrcm_wrapper_script
 CLEANFILES = $(bin_SCRIPTS)
@@ -23,7 +23,7 @@ uninstall-local:
 	rm -f $(DESTDIR)$(bindir)/orcmcc
 	rm -f $(DESTDIR)$(bindir)/orcmc++
 
-else # OPAL_WANT_SCRIPT_WRAPPER_COMPILERS
+else # OPENRCM_WANT_SCRIPT_WRAPPER_COMPILERS
 
 nodist_pkgdata_DATA = \
 	orcmcc-wrapper-data.txt
