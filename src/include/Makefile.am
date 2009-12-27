@@ -8,11 +8,7 @@
 # $HEADER$
 #
 
-headers = \
-        openrcm_config.h \
-        openrcm_config_bottom.h \
-        constants.h
-
-# install the header files where they can be found
-nobase_openrcm_HEADERS = $(headers)
-openrcmdir = $(includedir)/openrcm/include
+headers += \
+        include/openrcm_config.h \
+        include/openrcm_config_bottom.h \
+        include/constants.h

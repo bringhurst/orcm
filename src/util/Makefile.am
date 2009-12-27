@@ -8,6 +8,5 @@
 # $HEADER$
 #
 
-noinst_LTLIBRARIES = libutil.la
-libutil_la_SOURCES = \
-        error_strings.c
+libopenrcm_la_SOURCES += \
+        util/error_strings.c

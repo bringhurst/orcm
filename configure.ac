@@ -251,9 +251,6 @@ AM_DISABLE_SHARED
 AC_CONFIG_HEADERS([src/include/openrcm_config.h])
 AC_CONFIG_FILES([Makefile
                  src/Makefile
-		 src/include/Makefile
-		 src/runtime/Makefile
-		 src/util/Makefile
 
 		 src/mca/Makefile
 
