@@ -5,7 +5,7 @@ all: $(PROGS)
 CC = orcmcc
 
 %: %.c
-	$(CC) -o $@ $<
+	$(CC) -g -o $@ $<
 
 # Simplistic install target for use by the ebuild system
 INSTALL_DIR = .

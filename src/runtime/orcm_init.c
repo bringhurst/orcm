@@ -10,8 +10,6 @@
 #include "openrcm_config.h"
 #include "include/constants.h"
 
-#include <time.h>
-
 #include "opal/util/error.h"
 
 #include "orte/runtime/runtime.h"
@@ -34,12 +32,13 @@ int orcm_init(orcm_proc_type_t flags)
     int ret;
     char *error;
     int spin;
-    struct timespec timer = {1, 0};
     
     if (NULL != getenv("ORCM_MCA_spin")) {
+        spin = 0;
         /* spin until a debugger can attach */
         while (0 == spin) {
-            nanosleep(&timer, NULL);
+            for (spin=0; spin < 1000000; spin++);
+            spin = 0;
         }
     }
     
