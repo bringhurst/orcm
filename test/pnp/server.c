@@ -92,7 +92,7 @@ int main(int argc, char* argv[])
     
     /* we want to listen to the CLIENT app */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_input_buffer("CLIENT", "1.0", "alpha",
-                                                             ORCM_PNP_TAG_OUTPUT, recv_input))) {
+                                                             ORCM_PNP_TAG_WILDCARD, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
