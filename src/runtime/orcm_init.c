@@ -37,8 +37,10 @@ int orcm_init(orcm_proc_type_t flags)
         spin = 0;
         /* spin until a debugger can attach */
         while (0 == spin) {
-            for (spin=0; spin < 1000000; spin++);
-            spin = 0;
+            ret = 0;
+            while (ret < 10000) {
+                ret++;
+            };
         }
     }
     
