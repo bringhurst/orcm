@@ -98,13 +98,32 @@ AC_DEFINE_UNQUOTED([OPENRCM_HELPFILES], ["$prefix/share/openrcm"], [Where openrc
 AC_MSG_CHECKING([if want developer-level compiler pickyness])
 AC_ARG_ENABLE(picky, 
     AC_HELP_STRING([--enable-picky],
-                   [enable developer-level compiler pickyness when building (default: disabled)]))
-if test "$enable_picky" = "yes"; then
-    AC_MSG_RESULT([yes])
-    WANT_PICKY_COMPILER=1
-else
+                   [enable developer-level compiler pickyness when building (default: enabled)]))
+if test "$enable_picky" = "no"; then
     AC_MSG_RESULT([no])
     WANT_PICKY_COMPILER=0
+else
+    AC_MSG_RESULT([yes])
+    WANT_PICKY_COMPILER=1
+fi
+
+#
+# Developer debugging
+#
+AC_MSG_CHECKING([if want developer-level debugging code])
+AC_ARG_ENABLE(debug, 
+    AC_HELP_STRING([--enable-debug],
+                   [enable developer-level debugging code (default: enabled)]))
+if test "$enable_debug" = "no"; then
+    AC_MSG_RESULT([no])
+    WANT_DEBUG=0
+else
+    AC_MSG_RESULT([yes])
+    WANT_DEBUG=1
+fi
+if test "$WANT_DEBUG" = "0"; then
+    CFLAGS="-DNDEBUG -g $CFLAGS"
+    CXXFLAGS="-DNDEBUG -g $CXXFLAGS"
 fi
 
 # Override/fixup the version numbers set by AC_INIT, since on
