@@ -180,7 +180,7 @@ static int default_init(void)
         }
         /* setup an RML recv to catch any direct messages */
         if (ORTE_SUCCESS != (ret = orte_rml.recv_buffer_nb(ORTE_NAME_WILDCARD,
-                                                           ORTE_RML_TAG_MULTICAST,
+                                                           ORTE_RML_TAG_MULTICAST_DIRECT,
                                                            ORTE_RML_NON_PERSISTENT,
                                                            recv_direct_msgs,
                                                            NULL))) {
@@ -530,12 +530,21 @@ static int default_output(orte_process_name_t *recipient,
     OBJ_CONSTRUCT(&buf, opal_buffer_t);
     /* flag the buffer as containing iovecs */
     flag = 0;
-    opal_dss.pack(&buf, &flag, 1, OPAL_INT8);
+    if (ORCM_SUCCESS != (ret = opal_dss.pack(&buf, &flag, 1, OPAL_INT8))) {
+        ORTE_ERROR_LOG(ret);
+        return ret;
+    }
     /* pass the target PNP tag */
-    opal_dss.pack(&buf, &tag, 1, ORCM_PNP_TAG_T);
+    if (ORCM_SUCCESS != (ret = opal_dss.pack(&buf, &tag, 1, ORCM_PNP_TAG_T))) {
+        ORTE_ERROR_LOG(ret);
+        return ret;
+    }
     /* pack the number of iovecs */
     cnt = count;
-    opal_dss.pack(&buf, &cnt, 1, OPAL_INT32);
+    if (ORCM_SUCCESS != (ret = opal_dss.pack(&buf, &cnt, 1, OPAL_INT32))) {
+        ORTE_ERROR_LOG(ret);
+        return ret;
+    }    
     
     /* pack each iovec into a buffer in prep for sending
      * so we can recreate the array at the other end
@@ -543,12 +552,18 @@ static int default_output(orte_process_name_t *recipient,
     for (sz=0; sz < count; sz++) {
         /* pack the size */
         cnt = msg[sz].iov_len;
-        opal_dss.pack(&buf, &cnt, 1, OPAL_INT32);
+        if (ORCM_SUCCESS != (ret = opal_dss.pack(&buf, &cnt, 1, OPAL_INT32))) {
+            ORTE_ERROR_LOG(ret);
+            return ret;
+        }        
         /* pack the bytes */
-        opal_dss.pack(&buf, &(msg[sz].iov_base), cnt, OPAL_UINT8);
+        if (ORCM_SUCCESS != (ret = opal_dss.pack(&buf, &(msg[sz].iov_base), cnt, OPAL_UINT8))) {
+            ORTE_ERROR_LOG(ret);
+            return ret;
+        }        
     }
     /* send the msg */
-    if (0 > (ret = orte_rml.send_buffer(recipient, &buf, ORTE_RML_TAG_MULTICAST, 0))) {
+    if (0 > (ret = orte_rml.send_buffer(recipient, &buf, ORTE_RML_TAG_MULTICAST_DIRECT, 0))) {
         ORTE_ERROR_LOG(ret);
     }
     OBJ_DESTRUCT(&buf);
@@ -610,12 +625,21 @@ static int default_output_nb(orte_process_name_t *recipient,
     buf = OBJ_NEW(opal_buffer_t);
     /* flag the buffer as containing iovecs */
     flag = 0;
-    opal_dss.pack(buf, &flag, 1, OPAL_INT8);
+    if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, &flag, 1, OPAL_INT8))) {
+        ORTE_ERROR_LOG(ret);
+        return ret;
+    }    
     /* pass the target tag */
-    opal_dss.pack(buf, &tag, 1, ORCM_PNP_TAG_T);
+    if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, &tag, 1, ORCM_PNP_TAG_T))) {
+        ORTE_ERROR_LOG(ret);
+        return ret;
+    }    
     /* pack the number of iovecs */
     cnt = count;
-    opal_dss.pack(buf, &cnt, 1, OPAL_INT32);
+    if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, &cnt, 1, OPAL_INT32))) {
+        ORTE_ERROR_LOG(ret);
+        return ret;
+    }    
     
     /* pack each iovec into a buffer in prep for sending
      * so we can recreate the array at the other end
@@ -623,13 +647,19 @@ static int default_output_nb(orte_process_name_t *recipient,
     for (sz=0; sz < count; sz++) {
         /* pack the size */
         cnt = msg[sz].iov_len;
-        opal_dss.pack(buf, &cnt, 1, OPAL_INT32);
+        if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, &cnt, 1, OPAL_INT32))) {
+            ORTE_ERROR_LOG(ret);
+            return ret;
+        }        
         /* pack the bytes */
-        opal_dss.pack(buf, &(msg[sz].iov_base), cnt, OPAL_UINT8);
+        if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, &(msg[sz].iov_base), cnt, OPAL_UINT8))) {
+            ORTE_ERROR_LOG(ret);
+            return ret;
+        }        
     }
     /* send the msg */
     if (ORCM_SUCCESS != (ret = orte_rml.send_buffer_nb(recipient, buf,
-                                                       ORTE_RML_TAG_MULTICAST, 0,
+                                                       ORTE_RML_TAG_MULTICAST_DIRECT, 0,
                                                        rml_callback_buffer, send))) {
         ORTE_ERROR_LOG(ret);
     }
@@ -679,16 +709,22 @@ static int default_output_buffer(orte_process_name_t *recipient,
     OBJ_CONSTRUCT(&buf, opal_buffer_t);
     /* flag that we sent a buffer */
     flag = 1;
-    opal_dss.pack(&buf, &flag, 1, OPAL_INT8);
+    if (ORCM_SUCCESS != (ret = opal_dss.pack(&buf, &flag, 1, OPAL_INT8))) {
+        ORTE_ERROR_LOG(ret);
+        return ret;
+    }    
     /* pass the target PNP tag */
-    opal_dss.pack(&buf, &tag, 1, ORCM_PNP_TAG_T);
+    if (ORCM_SUCCESS != (ret = opal_dss.pack(&buf, &tag, 1, ORCM_PNP_TAG_T))) {
+        ORTE_ERROR_LOG(ret);
+        return ret;
+    }    
     /* copy the payload */
     if (ORTE_SUCCESS != (ret = opal_dss.copy_payload(&buf, buffer))) {
         ORTE_ERROR_LOG(ret);
         OBJ_DESTRUCT(&buf);
         return ret;
     }
-    if (0 > (ret = orte_rml.send_buffer(recipient, &buf, ORTE_RML_TAG_MULTICAST, 0))) {
+    if (0 > (ret = orte_rml.send_buffer(recipient, &buf, ORTE_RML_TAG_MULTICAST_DIRECT, 0))) {
         ORTE_ERROR_LOG(ret);
     }
     OBJ_DESTRUCT(&buf);
@@ -748,9 +784,15 @@ static int default_output_buffer_nb(orte_process_name_t *recipient,
     buf = OBJ_NEW(opal_buffer_t);
     /* flag that we sent a buffer */
     flag = 1;
-    opal_dss.pack(buf, &flag, 1, OPAL_INT8);
+    if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, &flag, 1, OPAL_INT8))) {
+        ORTE_ERROR_LOG(ret);
+        return ret;
+    }    
     /* pass the target tag */
-    opal_dss.pack(buf, &tag, 1, ORCM_PNP_TAG_T);
+    if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, &tag, 1, ORCM_PNP_TAG_T))) {
+        ORTE_ERROR_LOG(ret);
+        return ret;
+    }    
     /* copy the payload */
     if (ORTE_SUCCESS != (ret = opal_dss.copy_payload(buf, buffer))) {
         ORTE_ERROR_LOG(ret);
@@ -758,7 +800,7 @@ static int default_output_buffer_nb(orte_process_name_t *recipient,
         return ret;
     }
     if (ORCM_SUCCESS != (ret = orte_rml.send_buffer_nb(recipient, buf,
-                                                       ORTE_RML_TAG_MULTICAST, 0,
+                                                       ORTE_RML_TAG_MULTICAST_DIRECT, 0,
                                                        rml_callback_buffer, send))) {
         ORTE_ERROR_LOG(ret);
     }
@@ -1556,7 +1598,7 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
 
     /* reissue the recv */
     if (ORTE_SUCCESS != (ret = orte_rml.recv_buffer_nb(ORTE_NAME_WILDCARD,
-                                                       ORTE_RML_TAG_MULTICAST,
+                                                       ORTE_RML_TAG_MULTICAST_DIRECT,
                                                        ORTE_RML_NON_PERSISTENT,
                                                        recv_direct_msgs,
                                                        NULL))) {
