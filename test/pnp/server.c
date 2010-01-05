@@ -36,7 +36,8 @@ static void abort_exit_callback(int fd, short flags, void *arg);
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
-                       opal_buffer_t *buf,
+                       struct iovec *msg,
+                       int count,
                        void *cbdata);
 
 static void ldr_failed(char *app,
@@ -91,8 +92,8 @@ int main(int argc, char* argv[])
     }
     
     /* we want to listen to the CLIENT app */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input_buffer("CLIENT", "1.0", "alpha",
-                                                             ORCM_PNP_TAG_WILDCARD, recv_input))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("CLIENT", "1.0", "alpha",
+                                                      ORCM_PNP_TAG_OUTPUT, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -127,26 +128,36 @@ static void abort_exit_callback(int fd, short ign, void *arg)
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
-                       opal_buffer_t *buf,
+                       struct iovec *msg,
+                       int count,
                        void *cbdata)
 {
-    int32_t i32, n;
+    int32_t i, n, *data;
     opal_buffer_t response;
     
-    opal_output(0, "%s recvd message from client %s on tag %d",
+    opal_output(0, "%s recvd message from client %s on tag %d with %d iovecs",
                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                ORTE_VPID_PRINT(sender->vpid), (int)tag);
+                ORTE_VPID_PRINT(sender->vpid), (int)tag, count);
     
-    /* unpack the first value in the recvd buffer */
-    n=1;
-    opal_dss.unpack(buf, &i32, &n, OPAL_INT32);
-    
-    /* if it is zero, then send a response */
-    if (0 == i32) {
-        OBJ_CONSTRUCT(&response, opal_buffer_t);
-        opal_dss.pack(&response, &i32, 1, OPAL_INT32);
-        orcm_pnp.output_buffer(sender, ORCM_TEST_CLIENT_SERVER_TAG, &response);
-        OBJ_DESTRUCT(&response);
+    /* loop over the ioves */
+    for (i=0; i < count; i++) {
+        /* check the number of values */
+        if (20 != msg[i].iov_len) {
+            opal_output(0, "\tError: iovec has incorrect length %d", (int)msg[i].iov_len);
+            return;
+        }
+        
+        /* print the first value */
+        data = (int32_t*)msg[i].iov_base;
+        opal_output(0, "\tValue in first posn: %d", data[0]);
+        
+        /* now check the values */
+        for (n=1; n < 5; n++) {
+            if (data[n] != data[0]) {
+                opal_output(0, "\tError: invalid data %d at posn %d", data[n], n);
+                return;
+            }
+        }
     }
 }
 
