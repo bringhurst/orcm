@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+ * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
  *
  * $COPYRIGHT$
  *
@@ -16,7 +16,7 @@
 /*
  * includes
  */
-#include "openrcm_config.h"
+#include "openrcm.h"
 
 #include "opal/dss/dss_types.h"
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+ * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
  * $COPYRIGHT$
  * 
  * Additional copyrights may follow
@@ -10,7 +10,7 @@
 #ifndef CFGI_CONFD_H
 #define CFGI_CONFD_H
 
-#include "openrcm_config.h"
+#include "openrcm.h"
 
 /* Functions in the cfgi confd component */
 

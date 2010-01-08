@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+ * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
  *
  * $COPYRIGHT$
  * 
@@ -14,7 +14,7 @@
 #ifndef ORCM_FDDP_TREND_H
 #define ORCM_FDDP_TREND_H
 
-#include "openrcm_config.h"
+#include "openrcm.h"
 
 #include "mca/fddp/fddp.h"
 

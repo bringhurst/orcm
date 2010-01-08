@@ -1,7 +1,16 @@
+/*
+ * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
+ * $COPYRIGHT$
+ * 
+ * Additional copyrights may follow
+ * 
+ * $HEADER$
+ */
+
 #ifndef PNP_BASE_PRIVATE_H
 #define PNP_BASE_PRIVATE_H
 
-#include "openrcm_config.h"
+#include "openrcm.h"
 
 #include "opal/dss/dss_types.h"
 #include "opal/class/opal_list.h"

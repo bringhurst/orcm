@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+ * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
  * $COPYRIGHT$
  * 
  * Additional copyrights may follow
@@ -10,7 +10,7 @@
 #ifndef ORCM_LEADER_H
 #define ORCM_LEADER_H
 
-#include "openrcm_config.h"
+#include "openrcm.h"
 
 #include "opal/mca/mca.h"
 #include "opal/class/opal_list.h"

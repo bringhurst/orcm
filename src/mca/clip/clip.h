@@ -1,7 +1,16 @@
+/*
+ * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
+ * $COPYRIGHT$
+ * 
+ * Additional copyrights may follow
+ * 
+ * $HEADER$
+ */
+
 #ifndef ORCM_CLIP_H
 #define ORCM_CLIP_H
 
-#include "openrcm_config.h"
+#include "openrcm.h"
 
 #include "opal/mca/mca.h"
 

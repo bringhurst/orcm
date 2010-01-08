@@ -10,7 +10,7 @@
 #ifndef ORCM_CONSTANTS_H
 #define ORCM_CONSTANTS_H
 
-#include "openrcm_config.h"
+#include "openrcm.h"
 
 #include "orte/constants.h"
 

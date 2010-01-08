@@ -9,6 +9,7 @@
  *                         University of Stuttgart.  All rights reserved.
  * Copyright (c) 2004-2005 The Regents of the University of California.
  *                         All rights reserved.
+ * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved.
  * $COPYRIGHT$
  * 
  * Additional copyrights may follow
@@ -16,7 +17,7 @@
  * $HEADER$
  */
 
-#include "openrcm_config.h"
+#include "openrcm_config_private.h"
 #include "constants.h"
 
 #include "opal/mca/base/base.h"

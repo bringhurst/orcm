@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+ * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
  * $COPYRIGHT$
  * 
  * Additional copyrights may follow
@@ -10,7 +10,7 @@
 #ifndef ORCM_PNP_H
 #define ORCM_PNP_H
 
-#include "openrcm_config.h"
+#include "openrcm.h"
 
 #ifdef HAVE_NETINET_IN_H
 #include <netinet/in.h>

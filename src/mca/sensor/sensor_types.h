@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+ * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
  *
  * $COPYRIGHT$
  * 
@@ -13,7 +13,7 @@
 #ifndef ORCM_MCA_SENSOR_TYPES_H
 #define ORCM_MCA_SENSOR_TYPES_H
 
-#include "openrcm_config.h"
+#include "openrcm.h"
 #include "constants.h"
 
 #ifdef HAVE_SYS_TIME_H

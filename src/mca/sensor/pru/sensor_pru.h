@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+ * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
  *
  * $COPYRIGHT$
  * 
@@ -15,7 +15,7 @@
 #ifndef ORCM_SENSOR_PRU_H
 #define ORCM_SENSOR_PRU_H
 
-#include "openrcm_config.h"
+#include "openrcm.h"
 
 #include "mca/sensor/sensor.h"
 

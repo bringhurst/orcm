@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+ * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
  * $COPYRIGHT$
  * 
  * Additional copyrights may follow
@@ -15,7 +15,7 @@
 #ifndef ORCM_RUNTIME_H
 #define ORCM_RUNTIME_H
 
-#include "openrcm_config.h"
+#include "openrcm.h"
 
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>

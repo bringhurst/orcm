@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+ * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
  *
  * $COPYRIGHT$
  * 
@@ -8,7 +8,7 @@
  * $HEADER$
  */
 
-#include "openrcm_config.h"
+#include "openrcm_config_private.h"
 #include "constants.h"
 
 #include <errno.h>

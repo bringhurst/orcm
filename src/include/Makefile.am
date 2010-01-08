@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+# Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
 #
 # $COPYRIGHT$
 # 
@@ -9,6 +9,7 @@
 #
 
 headers += \
-        include/openrcm_config.h \
+        include/openrcm.h \
+        include/openrcm_config_private.h \
         include/openrcm_config_bottom.h \
         include/constants.h
