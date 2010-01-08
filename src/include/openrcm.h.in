@@ -18,5 +18,13 @@
 
 /* ...Ralph -- put all the rest of the #undef's that you need here... */
 
+#  if OPAL_C_HAVE_VISIBILITY
+#    define ORCM_DECLSPEC           __opal_attribute_visibility__("default")
+#    define ORCM_MODULE_DECLSPEC    __opal_attribute_visibility__("default")
+#  else
+#    define ORCM_DECLSPEC
+#    define ORCM_MODULE_DECLSPEC
+#  endif
+
 #endif /* OPENRCM_H */
 
