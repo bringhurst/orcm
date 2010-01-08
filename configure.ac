@@ -18,6 +18,9 @@ AC_CANONICAL_SYSTEM
 
 AM_INIT_AUTOMAKE([1.10 no-define foreign -Wall -Werror])
 
+# If Automake supports silent rules, enable them.
+m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
+
 # Make configure depend on the VERSION file, since it's used in AC_INIT
 
 AC_SUBST([CONFIGURE_DEPENDENCIES], ['$(top_srcdir)/VERSION'])
