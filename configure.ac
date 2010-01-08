@@ -16,7 +16,7 @@ AC_CONFIG_MACRO_DIR([config])
 
 AC_CANONICAL_SYSTEM
 
-AM_INIT_AUTOMAKE([1.10 foreign -Wall -Werror])
+AM_INIT_AUTOMAKE([1.10 no-define foreign -Wall -Werror])
 
 # Make configure depend on the VERSION file, since it's used in AC_INIT
 

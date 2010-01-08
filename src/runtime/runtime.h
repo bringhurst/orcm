@@ -60,6 +60,7 @@ typedef struct {
     bool constrain;
     bool add_procs;
     bool debug;
+    int max_restarts;
 } orcm_spawn_event_t;
 ORTE_DECLSPEC OBJ_CLASS_DECLARATION(orcm_spawn_event_t);
 
@@ -67,30 +68,31 @@ ORTE_DECLSPEC OBJ_CLASS_DECLARATION(orcm_spawn_event_t);
 typedef void (*orcm_spawn_fn_t)(int fd, short event, void *command);
 
 /* a convenience macro for setting up a launch event */
-#define ORCM_SPAWN_EVENT(comd, adp, dbg, n, hsts, cnstrn, cbfunc)   \
-    do {                                                            \
-        orcm_spawn_event_t *mev;                                    \
-        struct timeval now;                                         \
-        OPAL_OUTPUT_VERBOSE((1, orcm_debug_output,                  \
-                            "defining message event: %s:%d",        \
-                            __FILE__, __LINE__));                   \
-        mev = OBJ_NEW(orcm_spawn_event_t);                          \
-        mev->cmd = strdup((comd));                                  \
-        mev->np = (n);                                              \
-        if ((adp)) {                                                \
-            mev->add_procs = true;                                  \
-        }                                                           \
-        if ((dbg)) {                                                \
-            mev->debug = true;                                      \
-        }                                                           \
-        if (NULL != (hsts)) {                                       \
-            mev->hosts = strdup((hsts));                            \
-        }                                                           \
-        mev->constrain = (0 == cnstrn) ? false : true;              \
-        opal_evtimer_set(mev->ev, (cbfunc), mev);                   \
-        now.tv_sec = 0;                                             \
-        now.tv_usec = 0;                                            \
-        opal_evtimer_add(mev->ev, &now);                            \
+#define ORCM_SPAWN_EVENT(comd, adp, dbg, rstrts, n, hsts, cnstrn, cbfunc)   \
+    do {                                                                    \
+        orcm_spawn_event_t *mev;                                            \
+        struct timeval now;                                                 \
+        OPAL_OUTPUT_VERBOSE((1, orcm_debug_output,                          \
+                            "defining message event: %s:%d",                \
+                            __FILE__, __LINE__));                           \
+        mev = OBJ_NEW(orcm_spawn_event_t);                                  \
+        mev->cmd = strdup((comd));                                          \
+        mev->np = (n);                                                      \
+        if ((adp)) {                                                        \
+            mev->add_procs = true;                                          \
+        }                                                                   \
+        if ((dbg)) {                                                        \
+            mev->debug = true;                                              \
+        }                                                                   \
+        mev->max_restarts = (rstrts);                                       \
+        if (NULL != (hsts)) {                                               \
+            mev->hosts = strdup((hsts));                                    \
+        }                                                                   \
+        mev->constrain = (0 == cnstrn) ? false : true;                      \
+        opal_evtimer_set(mev->ev, (cbfunc), mev);                           \
+        now.tv_sec = 0;                                                     \
+        now.tv_usec = 0;                                                    \
+        opal_evtimer_add(mev->ev, &now);                                    \
     } while(0);
     
 /** version string of OPENRCM */

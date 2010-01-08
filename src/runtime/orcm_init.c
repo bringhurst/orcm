@@ -34,9 +34,9 @@ int orcm_init(orcm_proc_type_t flags)
     int spin;
     
     if (NULL != getenv("ORCM_MCA_spin")) {
-        spin = 0;
+        spin = 1;
         /* spin until a debugger can attach */
-        while (0 == spin) {
+        while (0 != spin) {
             ret = 0;
             while (ret < 10000) {
                 ret++;

@@ -679,6 +679,8 @@ static void spawn_app(int fd, short event, void *command)
      * procs terminate
      */
     jdata->controls |= ORTE_JOB_CONTROL_CONTINUOUS_OP;
+    /* pass max number of restarts */
+    jdata->max_restarts = spev->max_restarts;
     
 launch:
     /* if we want to debug the apps, set the proper envar */
@@ -882,6 +884,8 @@ void restart(orte_process_name_t *proc, orte_proc_state_t state, void *cbdata)
             }
             /* set the proc to abnormally terminated */
             nodeproc->state = ORTE_PROC_STATE_ABORTED;
+            /* increment restarts */
+            nodeproc->restarts++;
             /* check if this proc's jobid is already in array */
             found = false;
             for (j=0; j < opal_value_array_get_size(&jobs); j++) {
@@ -928,13 +932,24 @@ void restart(orte_process_name_t *proc, orte_proc_state_t state, void *cbdata)
     jdata = (orte_job_t*)cbdata;
     /* get the app - just for output purposes in case of error */
     app = opal_pointer_array_get_item(jdata->apps, 0);
-    /* save the node where this proc was located */
     pdata = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, proc->vpid);
-    if (NULL != pdata) {
-        node = pdata->node;
+    if (NULL == pdata) {
+        opal_output(0, "Data for proc %s could not be found", ORTE_NAME_PRINT(proc));
+        return;
+    }
+    /* save the node where this proc was located */
+    node = pdata->node;
+    /* increment restarts */
+    pdata->restarts++;
+    /* have we exceeded #restarts? */
+    if (jdata->max_restarts < pdata->restarts) {
+        opal_output(0, "Max restarts for proc %s of app %s has been exceeded - process will not be restarted",
+                    ORTE_NAME_PRINT(proc), app->app);
+        return;
     }
     /* reset the job params for restart */
     orte_plm_base_reset_job(jdata);
+    
     /* restart the job - the spawn function will remap and
      * launch the replacement proc(s)
      */
@@ -960,7 +975,7 @@ static void process_boot_req(int fd, short event, void *data)
     orte_message_event_t *mev = (orte_message_event_t*)data;
     opal_buffer_t *buffer = mev->buffer;
     char *cmd, *hosts;
-    int32_t rc, n, j, num_apps, replica;
+    int32_t rc, n, j, num_apps, replica, restarts;
     opal_buffer_t response;
     orte_job_t *jdata;
     orte_app_context_t *app;
@@ -1026,7 +1041,12 @@ static void process_boot_req(int fd, short event, void *data)
             ORTE_ERROR_LOG(rc);
             goto cleanup;
         }
-        
+        /* unpack the max number of restarts */
+        n=1;
+        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &restarts, &n, OPAL_INT32))) {
+            ORTE_ERROR_LOG(rc);
+            goto cleanup;
+        }
         /* unpack the #instances to start */
         n=1;
         if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &num_apps, &n, OPAL_INT32))) {
@@ -1058,7 +1078,7 @@ static void process_boot_req(int fd, short event, void *data)
                              cmd, num_apps,
                              (NULL == hosts) ? "NULL" : hosts,
                              (0 == constrain) ? "FALSE" : "TRUE"));
-        ORCM_SPAWN_EVENT(cmd, add_procs, debug, num_apps, hosts, constrain, spawn_app);
+        ORCM_SPAWN_EVENT(cmd, add_procs, debug, restarts, num_apps, hosts, constrain, spawn_app);
     } else if (OPENRCM_TOOL_STOP_CMD == flag) {
         /* setup a replica array */
         OBJ_CONSTRUCT(&replicas, opal_value_array_t);

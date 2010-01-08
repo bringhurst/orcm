@@ -77,6 +77,7 @@ static struct {
     bool constrained;
     bool gdb;
     char *hnp_uri;
+    int max_restarts;
 } my_globals;
 
 opal_cmd_line_init_t cmd_line_opts[] = {
@@ -112,6 +113,10 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       &my_globals.hnp_uri, OPAL_CMD_LINE_TYPE_STRING,
       "The uri of the CM" },
     
+    { NULL, NULL, NULL, 'r', "max-restarts", "max-restarts", 1,
+      &my_globals.max_restarts, OPAL_CMD_LINE_TYPE_INT,
+      "Maximum number of times a process in this job can be restarted (default: unbounded)" },
+
 /* End of list */
     { NULL, NULL, NULL, 
       '\0', NULL, NULL, 
@@ -153,7 +158,7 @@ retry:
 
 int main(int argc, char *argv[])
 {
-    int32_t ret, i, num_apps;
+    int32_t ret, i, num_apps, restarts;
     opal_cmd_line_t cmd_line;
     FILE *fp;
     char *cmd;
@@ -187,6 +192,7 @@ int main(int argc, char *argv[])
     my_globals.add_procs = false;
     my_globals.gdb = false;
     my_globals.hnp_uri = NULL;
+    my_globals.max_restarts = -1;
     
     /* Parse the command line options */
     opal_cmd_line_create(&cmd_line, cmd_line_opts);
@@ -265,6 +271,13 @@ int main(int argc, char *argv[])
         }
     }
     
+    /* setup the max number of restarts */
+    if (-1 == my_globals.max_restarts) {
+        restarts = INT32_MAX;
+    } else {
+        restarts = my_globals.max_restarts;
+    }
+    
     /***************************
      * We need all of OPAL and ORTE - this will
      * automatically connect us to the CM
@@ -296,6 +309,9 @@ int main(int argc, char *argv[])
     }
     opal_dss.pack(&buf, &constrain, 1, OPAL_INT8);
 
+    /* load the max restarts value */
+    opal_dss.pack(&buf, &restarts, 1, OPAL_INT32);
+    
     /* if we have a config file, read it */
     if (NULL != my_globals.config_file) {
         fp = fopen(my_globals.config_file, "r");
