@@ -9,10 +9,14 @@
 
 #man_pages = orcmcc.1
 
-if OPENRCM_WANT_SCRIPT_WRAPPER_COMPILERS
-
-bin_SCRIPTS = openrcm_wrapper_script
+bin_SCRIPTS = orcm_wrapper_script
 CLEANFILES = $(bin_SCRIPTS)
+
+dist_pkgdata_DATA = \
+	orcmcc-wrapper-data.txt \
+	orcm_wrapper_script
+
+if OPENRCM_WANT_SCRIPT_WRAPPER_COMPILERS
 
 install-exec-hook:
 	test -z "$(bindir)" || $(mkdir_p) "$(DESTDIR)$(bindir)"
@@ -24,9 +28,6 @@ uninstall-local:
 	rm -f $(DESTDIR)$(bindir)/orcmc++
 
 else # OPENRCM_WANT_SCRIPT_WRAPPER_COMPILERS
-
-nodist_pkgdata_DATA = \
-	orcmcc-wrapper-data.txt
 
 man_MANS = $(man_pages)
 
