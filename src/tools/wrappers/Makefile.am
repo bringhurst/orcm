@@ -35,8 +35,8 @@ install-exec-hook:
 	test -z "$(bindir)" || $(mkdir_p) "$(DESTDIR)$(bindir)"
 	(cd $(DESTDIR)$(bindir); rm -f orcmcc$(EXEEXT); $(LN_S) @ORTE_INSTALL_PREFIX@/bin/opal_wrapper orcmcc)
 	(cd $(DESTDIR)$(bindir); rm -f orcmcc++$(EXEEXT); $(LN_S) @ORTE_INSTALL_PREFIX@/bin/opal_wrapper orcmcc++)
-	(rm -f @OPENRCM_DATADIR@/openrcm/orcmcc-wrapper-data.txt; \
-	    $(LN_S) @OPENRCM_DATADIR@/openrcm/orcmcc-wrapper-data.txt @ORTE_INSTALL_PREFIX@/share/openmpi/orcmcc-wrapper-data.txt)
+	(rm -f @ORTE_INSTALL_PREFIX@/share/openmpi-rte/orcmcc-wrapper-data.txt; \
+	    $(LN_S) @OPENRCM_DATADIR@/openrcm/orcmcc-wrapper-data.txt @ORTE_INSTALL_PREFIX@/share/openmpi-rte/orcmcc-wrapper-data.txt)
 
 #orcmcc.1: @ORTE_INSTALL_PREFIX@/share/man/man1/ortecc.1
 #	rm -f orcmcc.1
