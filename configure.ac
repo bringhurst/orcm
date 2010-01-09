@@ -80,6 +80,32 @@ AC_MSG_CHECKING([for ORTE LDFLAGS])
 ORTE_LDFLAGS="-L$with_orte/lib"
 AC_MSG_RESULT([$ORTE_LDFLAGS])
 
+AC_MSG_CHECKING([for ORTE wrapper data files])
+AC_ARG_WITH([orte-wrapper-dir],
+    [AC_HELP_STRING([--with-orte-wrapper-dir],
+                    [Directory where ORTE's wrapper data files are located])])
+happy=0
+ORTE_WRAPPER_DATA_DIR="not found"
+AS_IF([test "$with_orte_wrapper_dir" != ""],
+      [AS_IF([test -d "$with_orte_wrapper_dir" -a -f "$with_orte_wrapper_dir/ortecc-wrapper-data.txt"],
+             [happy=1
+              ORTE_WRAPPER_DATA_DIR=$with_orte_wrapper_dir])],
+      [AS_IF([test -d "$with_orte/share"],
+             [files=`find "$with_orte/share" | grep ortecc-wrapper-data.txt`
+              num_files=`echo $files | wc -w`
+              AS_IF([test $num_files = 1],
+                    [ORTE_WRAPPER_DATA_DIR=`echo $files | sed -e s@/ortecc-wrapper-data.txt@@`
+	             happy=1
+                     AC_SUBST(ORTE_WRAPPER_DATA_DIR)])
+             ])
+      ])
+AC_MSG_RESULT([$ORTE_WRAPPER_DATA_DIR])
+AS_IF([test "$happy" = 0],
+      [AC_MSG_WARN([Unable to find ORTE wrapper data files.])
+       AC_MSG_WARN([Please use the --with-orte-wrapper-dir option to specify])
+       AC_MSG_WARN([their location.])
+       AC_MSG_ERROR([Cannot continue.])])
+
 #
 # Do we want to use script wrapper compilers
 #
