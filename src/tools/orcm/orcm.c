@@ -1394,14 +1394,17 @@ static int setup_daemon(orte_process_name_t *name,
             continue;
         }
         if (0 == strcmp(nodename, nd->name)) {
-            opal_output(0, "found node %s nodename %s daemon %s", node->name, nodename,
-                        (NULL == node->daemon) ? "NULL" : ORTE_NAME_PRINT(&(node->daemon->name)));
+            opal_output(0, "found node %s nodename %s daemon %s", nd->name, nodename,
+                        (NULL == nd->daemon) ? "NULL" : ORTE_NAME_PRINT(&(nd->daemon->name)));
             node = nd;
             break;
         }
     }
     if (NULL == node) {
         /* new node - add it */
+        OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
+                             "%s adding new node %s",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), nodename));
         node = OBJ_NEW(orte_node_t);
         node->name = strdup(nodename);
         /* we have no idea how many slots might be there,
@@ -1411,7 +1414,7 @@ static int setup_daemon(orte_process_name_t *name,
         node->slots_max = 0;
         /* insert it into the array */
         node->index = opal_pointer_array_add(orte_node_pool, (void*)node);
-        if (ORTE_SUCCESS > (rc = node->index)) {
+        if (0 > (rc = node->index)) {
             ORTE_ERROR_LOG(rc);
             return rc;
         }
@@ -1427,12 +1430,20 @@ static int setup_daemon(orte_process_name_t *name,
         }
         for (i=0; i < num_values; i++) {
             info = OBJ_NEW(opal_sysinfo_value_t);
+            n=1;
+            opal_dss.unpack(buf, &info->key, &n, OPAL_STRING);
+            n=1;
             opal_dss.unpack(buf, &info->type, &n, OPAL_DATA_TYPE_T);
+            n=1;
             if (OPAL_INT64 == info->type) {
                 opal_dss.unpack(buf, &(info->data.i64), &n, OPAL_INT64);
             } else if (OPAL_STRING == info->type) {
                 opal_dss.unpack(buf, &(info->data.str), &n, OPAL_STRING);
             }
+            OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
+                                 "%s adding resource %s",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                 info->key));
             opal_list_append(&node->resources, &info->super);
         }
     }
