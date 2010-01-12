@@ -133,7 +133,7 @@ static void rml_callback(int status,
                          int count,
                          orte_rml_tag_t tag,
                          void* cbdata);
-                         
+
 static void rml_callback_buffer(int status,
                                 struct orte_process_name_t* peer,
                                 struct opal_buffer_t* buffer,
@@ -177,10 +177,10 @@ static int default_init(void)
     OBJ_CONSTRUCT(&recvlock, opal_mutex_t);
     OBJ_CONSTRUCT(&recvcond, opal_condition_t);
     OBJ_CONSTRUCT(&recvs, opal_list_t);
-
+    
     /* record my channel */
     my_channel = orte_rmcast.query_channel();
-
+    
     /* setup a recv to catch any announcements */
     if (!recv_on) {
         if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(ORTE_RMCAST_APP_PUBLIC_CHANNEL,
@@ -239,7 +239,7 @@ static int announce(char *app, char *version, char *release)
                          "%s pnp:default:announce app %s version %s release %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                          app, version, release));
-
+    
     /* retain a local record of my info */
     my_app = strdup(app);
     my_version = strdup(version);
@@ -265,8 +265,8 @@ static int announce(char *app, char *version, char *release)
     
     /* send it */
     if (ORCM_SUCCESS != (ret = orte_rmcast.send_buffer(ORTE_RMCAST_APP_PUBLIC_CHANNEL,
-                                                      ORTE_RMCAST_TAG_ANNOUNCE,
-                                                      &buf))) {
+                                                       ORTE_RMCAST_TAG_ANNOUNCE,
+                                                       &buf))) {
         ORTE_ERROR_LOG(ret);
     }
     
@@ -333,9 +333,9 @@ static int register_input(char *app,
                  * the channel already exists
                  */
                 if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(&channel,
-                                                                   group->app,
-                                                                   NULL, -1, NULL,
-                                                                   ORTE_RMCAST_RECV))) {
+                                                                    group->app,
+                                                                    NULL, -1, NULL,
+                                                                    ORTE_RMCAST_RECV))) {
                     ORTE_ERROR_LOG(ret);
                     OPAL_THREAD_UNLOCK(&lock);
                     return;
@@ -377,7 +377,7 @@ static int register_input(char *app,
     
     /* clear the thread */
     OPAL_THREAD_UNLOCK(&lock);
-
+    
     return ORCM_SUCCESS;
 }
 
@@ -436,9 +436,9 @@ static int register_input_buffer(char *app,
                  * the channel already exists
                  */
                 if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(&channel,
-                                                                   group->app,
-                                                                   NULL, -1, NULL,
-                                                                   ORTE_RMCAST_RECV))) {
+                                                                    group->app,
+                                                                    NULL, -1, NULL,
+                                                                    ORTE_RMCAST_RECV))) {
                     ORTE_ERROR_LOG(ret);
                     OPAL_THREAD_UNLOCK(&lock);
                     return;
@@ -551,24 +551,24 @@ static int default_output(orte_process_name_t *recipient,
     int8_t flag;
     int32_t cnt;
     int sz;
-
+    
     /* if this is intended for everyone who might be listening to my output,
      * multicast it
      */
     if (NULL == recipient ||
         (ORTE_JOBID_WILDCARD == recipient->jobid &&
          ORTE_VPID_WILDCARD == recipient->vpid)) {
-        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:sending multicast of %d iovecs to tag %d",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), count, tag));
-        
-        /* send the iovecs to my group output channel */
-        if (ORCM_SUCCESS != (ret = orte_rmcast.send(ORTE_RMCAST_GROUP_OUTPUT_CHANNEL,
-                                                   tag, msg, count))) {
-            ORTE_ERROR_LOG(ret);
+            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                                 "%s pnp:default:sending multicast of %d iovecs to tag %d",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), count, tag));
+            
+            /* send the iovecs to my group output channel */
+            if (ORCM_SUCCESS != (ret = orte_rmcast.send(ORTE_RMCAST_GROUP_OUTPUT_CHANNEL,
+                                                        tag, msg, count))) {
+                ORTE_ERROR_LOG(ret);
+            }
+            return ret;
         }
-        return ret;
-    }
     
     /* if only one name field is WILDCARD, I don't know how to send
      * it - at least, not right now
@@ -627,6 +627,8 @@ static int default_output(orte_process_name_t *recipient,
     /* send the msg */
     if (0 > (ret = orte_rml.send_buffer(recipient, &buf, ORTE_RML_TAG_MULTICAST_DIRECT, 0))) {
         ORTE_ERROR_LOG(ret);
+    } else {
+        ret = ORCM_SUCCESS;
     }
     OBJ_DESTRUCT(&buf);
     return ret;
@@ -664,7 +666,7 @@ static int default_output_nb(orte_process_name_t *recipient,
             
             /* send the iovecs to my group output channel */
             if (ORCM_SUCCESS != (ret = orte_rmcast.send_nb(ORTE_RMCAST_GROUP_OUTPUT_CHANNEL,
-                                                         tag, msg, count, rmcast_callback, send))) {
+                                                           tag, msg, count, rmcast_callback, send))) {
                 ORTE_ERROR_LOG(ret);
             }
             return ret;
@@ -725,10 +727,12 @@ static int default_output_nb(orte_process_name_t *recipient,
         }        
     }
     /* send the msg */
-    if (ORCM_SUCCESS != (ret = orte_rml.send_buffer_nb(recipient, buf,
-                                                       ORTE_RML_TAG_MULTICAST_DIRECT, 0,
-                                                       rml_callback_buffer, send))) {
+    if (0 > (ret = orte_rml.send_buffer_nb(recipient, buf,
+                                           ORTE_RML_TAG_MULTICAST_DIRECT, 0,
+                                           rml_callback_buffer, send))) {
         ORTE_ERROR_LOG(ret);
+    } else {
+        ret = ORCM_SUCCESS;
     }
     return ret;
 }
@@ -740,25 +744,25 @@ static int default_output_buffer(orte_process_name_t *recipient,
     int ret;
     opal_buffer_t buf;
     int8_t flag;
-
+    
     /* if this is intended for everyone who might be listening to my output,
      * multicast it
      */
     if (NULL == recipient ||
         (ORTE_JOBID_WILDCARD == recipient->jobid &&
          ORTE_VPID_WILDCARD == recipient->vpid)) {
-        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:sending multicast buffer of %d bytes to channel %d tag %d",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), (int)buffer->bytes_used,
-                             (int)ORTE_RMCAST_GROUP_OUTPUT_CHANNEL, tag));
-        
-        /* send the buffer to my group output channel */
-        if (ORCM_SUCCESS != (ret = orte_rmcast.send_buffer(ORTE_RMCAST_GROUP_OUTPUT_CHANNEL,
-                                                          tag, buffer))) {
-            ORTE_ERROR_LOG(ret);
+            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                                 "%s pnp:default:sending multicast buffer of %d bytes to channel %d tag %d",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), (int)buffer->bytes_used,
+                                 (int)ORTE_RMCAST_GROUP_OUTPUT_CHANNEL, tag));
+            
+            /* send the buffer to my group output channel */
+            if (ORCM_SUCCESS != (ret = orte_rmcast.send_buffer(ORTE_RMCAST_GROUP_OUTPUT_CHANNEL,
+                                                               tag, buffer))) {
+                ORTE_ERROR_LOG(ret);
+            }
+            return ret;
         }
-        return ret;
-    }
     
     /* if only one name field is WILDCARD, I don't know how to send
      * it - at least, not right now
@@ -799,6 +803,8 @@ static int default_output_buffer(orte_process_name_t *recipient,
     }
     if (0 > (ret = orte_rml.send_buffer(recipient, &buf, ORTE_RML_TAG_MULTICAST_DIRECT, 0))) {
         ORTE_ERROR_LOG(ret);
+    } else {
+        ret = ORCM_SUCCESS;
     }
     OBJ_DESTRUCT(&buf);
     return ret;
@@ -814,7 +820,7 @@ static int default_output_buffer_nb(orte_process_name_t *recipient,
     orcm_pnp_send_t *send;
     opal_buffer_t *buf;
     int8_t flag;
-
+    
     send = OBJ_NEW(orcm_pnp_send_t);
     send->tag = tag;
     send->buffer = buffer;
@@ -877,10 +883,12 @@ static int default_output_buffer_nb(orte_process_name_t *recipient,
         OBJ_RELEASE(buf);
         return ret;
     }
-    if (ORCM_SUCCESS != (ret = orte_rml.send_buffer_nb(recipient, buf,
-                                                       ORTE_RML_TAG_MULTICAST_DIRECT, 0,
-                                                       rml_callback_buffer, send))) {
+    if (0 > (ret = orte_rml.send_buffer_nb(recipient, buf,
+                                           ORTE_RML_TAG_MULTICAST_DIRECT, 0,
+                                           rml_callback_buffer, send))) {
         ORTE_ERROR_LOG(ret);
+    } else {
+        ret = ORCM_SUCCESS;
     }
     return ret;
 }
@@ -889,7 +897,7 @@ static orcm_pnp_group_t* get_group(char *app, char *version, char *release)
 {
     opal_list_item_t *item;
     orcm_pnp_group_t *group;
-
+    
     /* since we are modifying global lists, lock
      * the thread
      */
@@ -926,13 +934,13 @@ static orcm_pnp_group_t* get_group(char *app, char *version, char *release)
     }
     /* add to the list of groups */
     opal_list_append(&groups, &group->super);
-
+    
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:defined new group %s:%s:%s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), app,
                          (NULL == version) ? "NULL" : version,
                          (NULL == release) ? "NULL" : release));
-
+    
     /* clear the thread */
     OPAL_THREAD_UNLOCK(&lock);
     
@@ -1022,7 +1030,7 @@ static void recv_announcements(int status,
         ORTE_ERROR_LOG(rc);
         return;
     }
-        
+    
     /* get its release */
     n=1;
     if (ORCM_SUCCESS != (rc = opal_dss.unpack(buf, &release, &n, OPAL_STRING))) {
@@ -1041,7 +1049,7 @@ static void recv_announcements(int status,
                          "%s pnp:default:received announcement from group app %s version %s release %s channel %d",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                          app, version, release, output));
-
+    
     /* since we are accessing global lists, lock
      * the thread
      */
@@ -1086,8 +1094,8 @@ static void recv_announcements(int status,
              * the channel already exists
              */
             if (ORCM_SUCCESS != (rc = orte_rmcast.open_channel(&output,
-                                                              group->app, NULL, -1, NULL,
-                                                              ORTE_RMCAST_RECV))) {
+                                                               group->app, NULL, -1, NULL,
+                                                               ORTE_RMCAST_RECV))) {
                 ORTE_ERROR_LOG(rc);
                 OPAL_THREAD_UNLOCK(&lock);
                 return;
@@ -1097,7 +1105,7 @@ static void recv_announcements(int status,
                  itm2 != opal_list_get_end(&group->requests);
                  itm2 = opal_list_get_next(itm2)) {
                 request = (orcm_pnp_pending_request_t*)itm2;
- 
+                
                 if (NULL != request->cbfunc) {
                     /* setup to listen to it - will just return if we already are */
                     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
@@ -1164,7 +1172,7 @@ senders:
         if (sender->jobid == source->name.jobid &&
             sender->vpid == source->name.vpid) {
             goto response;
-         }
+        }
     }
     
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
@@ -1339,7 +1347,7 @@ static void recv_inputs(int status,
 DEPART:
     /* update the msg number */
     src->last_msg_num = seq_num;
-
+    
     /* clear the thread */
     OPAL_THREAD_UNLOCK(&lock);
 }
@@ -1685,7 +1693,7 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
         ORTE_ERROR_LOG(rc);
         goto CLEANUP;
     }
-
+    
     if (1 == flag) {
         /* buffer was included */
         ORCM_PROCESS_PNP_BUFFERS(&recvs, &recvlock, &recvcond, grp, src,
