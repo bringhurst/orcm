@@ -15,6 +15,8 @@
 #include "opal/dss/dss_types.h"
 #include "opal/class/opal_list.h"
 #include "opal/class/opal_value_array.h"
+#include "opal/threads/condition.h"
+#include "opal/threads/mutex.h"
 
 #include "orte/types.h"
 #include "orte/mca/rmcast/rmcast_types.h"
@@ -67,5 +69,53 @@ enum {
 };
 
 #define ORCM_PNP_TAG_DYNAMIC    100
+
+typedef struct {
+    opal_list_item_t super;
+    orcm_pnp_group_t *grp;
+    orcm_pnp_source_t *src;
+    orte_rmcast_channel_t channel;
+    orte_rmcast_tag_t tag;
+    struct iovec *msg;
+    int count;
+    opal_buffer_t *buffer;
+    void *cbdata;
+} orcm_msg_packet_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_msg_packet_t);
+
+#define ORCM_PROCESS_PNP_IOVECS(rlist, lck, cond, gp, sndr, \
+                                chan, tg, mg, cnt, cbd)     \
+    do {                                                    \
+        orcm_msg_packet_t *pkt;                             \
+        pkt = OBJ_NEW(orcm_msg_packet_t);                   \
+        pkt->grp = (gp);                                    \
+        pkt->src = (sndr);                                  \
+        pkt->channel = (chan);                              \
+        pkt->tag = (tg);                                    \
+        pkt->msg = (mg);                                    \
+        pkt->count = (cnt);                                 \
+        pkt->cbdata = (cbd);                                \
+        OPAL_THREAD_LOCK((lck));                            \
+        opal_list_append((rlist), &pkt->super);             \
+        opal_condition_broadcast((cond));                   \
+        OPAL_THREAD_UNLOCK((lck));                          \
+    } while(0);
+
+#define ORCM_PROCESS_PNP_BUFFERS(rlist, lck, cond, gp, sndr,    \
+                                 chan, tg, buf, cbd)            \
+    do {                                                        \
+        orcm_msg_packet_t *pkt;                                 \
+        pkt = OBJ_NEW(orcm_msg_packet_t);                       \
+        pkt->grp = (gp);                                        \
+        pkt->src = (sndr);                                      \
+        pkt->channel = (chan);                                  \
+        pkt->tag = (tg);                                        \
+        pkt->buffer = OBJ_NEW(opal_buffer_t);                   \
+        opal_dss.copy_payload(pkt->buffer, (buf));              \
+        OPAL_THREAD_LOCK((lck));                                \
+        opal_list_append((rlist), &pkt->super);                 \
+        opal_condition_broadcast((cond));                       \
+        OPAL_THREAD_UNLOCK((lck));                              \
+    } while(0);
 
 #endif /* ORCM_PNP_TYPES_H */

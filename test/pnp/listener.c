@@ -44,16 +44,9 @@ static void ldr_failed(char *app,
 
 int main(int argc, char* argv[])
 {
-    int i, j;
-    float randval, pi;
-    struct timeval tp;
+    int i;
+    float pi;
     int rc;
-    int32_t myval;
-    opal_buffer_t buf;
-    
-    /* seed the random number generator */
-    gettimeofday (&tp, NULL);
-    srand (tp.tv_usec);
     
     /* init the ORCM library - this includes registering
      * a multicast recv so we hear announcements and
@@ -81,15 +74,11 @@ int main(int argc, char* argv[])
         goto cleanup;
     }
     
-    /* see if we want to accept ALL input messages */
-    if (1 < argc) {
-        if (0 == strncmp(argv[1], "-a", 2)) {
-            if (ORCM_SUCCESS != (rc = orcm_leader.set_leader("TALKER", "1.0", "alpha",
-                                                             ORCM_LEADER_WILDCARD, ldr_failed))) {
-                ORTE_ERROR_LOG(rc);
-                goto cleanup;
-            }
-        }
+    /* accept ALL input messages */
+    if (ORCM_SUCCESS != (rc = orcm_leader.set_leader("TALKER", "1.0", "alpha",
+                                                     ORCM_LEADER_WILDCARD, ldr_failed))) {
+        ORTE_ERROR_LOG(rc);
+        goto cleanup;
     }
     
     /* we want to listen to the TALKER app */
@@ -100,7 +89,11 @@ int main(int argc, char* argv[])
     }
     
     /* just sit here */
-    opal_event_dispatch();
+    while (1) {
+        for (i=0; i < 100000; i++) {
+            pi = 3.14159 * (double)i;
+        }
+    }
 
 cleanup:
     /* Remove the TERM and INT signal handlers */

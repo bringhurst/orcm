@@ -30,15 +30,12 @@ static struct opal_event term_handler;
 static struct opal_event int_handler;
 static void abort_exit_callback(int fd, short flags, void *arg);
 static void send_data(int fd, short flags, void *arg);
+static int counter=0;
 
 int main(int argc, char* argv[])
 {
-    struct timeval tp;
+    struct timespec tp;
     int rc;
-    
-    /* seed the random number generator */
-    gettimeofday (&tp, NULL);
-    srand (tp.tv_usec);
     
     /* init the ORCM library - this includes registering
      * a multicast recv so we hear announcements and
@@ -69,46 +66,47 @@ int main(int argc, char* argv[])
     /* for this application, there are no desired
      * inputs, so we don't register any
      */
-    
-    /* wake up every 5 seconds and send something */
-    ORTE_TIMER_EVENT(5, 0, send_data);
-    
-    /* just sit here */
-    opal_event_dispatch();
+    tp.tv_sec = 0;
+    tp.tv_nsec = 100000000*(2*ORTE_PROC_MY_NAME->vpid + 1);
+    while (1) {
+        nanosleep(&tp, NULL);
+        send_data(0, 0, NULL);
+    }
 
 cleanup:
     orcm_finalize();
     return rc;
 }
 
+static void cbfunc(int status, orte_process_name_t *name,
+                   orcm_pnp_tag_t tag, opal_buffer_t *buf, void *cbdata)
+{
+    OBJ_RELEASE(buf);
+}
+
 static void send_data(int fd, short flags, void *arg)
 {
     int32_t myval;
-    opal_buffer_t buf;
+    opal_buffer_t *buf;
     int rc;
     int j;
     float randval;
     opal_event_t *tmp = (opal_event_t*)arg;
     struct timeval now;
 
-    OBJ_CONSTRUCT(&buf, opal_buffer_t);
-    opal_dss.pack(&buf, ORTE_PROC_MY_NAME, 1, ORTE_NAME);
+    buf = OBJ_NEW(opal_buffer_t);
+    opal_dss.pack(buf, ORTE_PROC_MY_NAME, 1, ORTE_NAME);
     for (j=0; j < 100; j++) {
         randval = rand();
         myval = randval * 100;
-        opal_dss.pack(&buf, &myval, 1, OPAL_INT32);
+        opal_dss.pack(buf, &myval, 1, OPAL_INT32);
     }
     /* output the values */
-    opal_output(0, "%s sending data", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output_buffer(NULL, ORCM_PNP_TAG_OUTPUT, &buf))) {
+    opal_output(0, "%s sending msg number %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), counter);
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_buffer_nb(NULL, ORCM_PNP_TAG_OUTPUT, buf, cbfunc, NULL))) {
         ORTE_ERROR_LOG(rc);
     }
-    OBJ_DESTRUCT(&buf);
-
-    /* reset the timer */
-    now.tv_sec = 5;
-    now.tv_usec = 0;
-    opal_evtimer_add(tmp, &now);
+    counter++;
 }
 
 static void abort_exit_callback(int fd, short ign, void *arg)

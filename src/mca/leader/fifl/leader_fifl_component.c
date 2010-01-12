@@ -46,7 +46,7 @@ int orcm_leader_fifl_component_open(void)
     /* lookup parameters */
     mca_base_param_reg_int(c, "trigger",
                            "Difference level between recvd packet numbers that declares a leader as unavailable",
-                           false, false, NULL,  &mca_leader_fifl_component.trigger);
+                           false, false, -1, &mca_leader_fifl_component.trigger);
     
     return ORCM_SUCCESS;
 }

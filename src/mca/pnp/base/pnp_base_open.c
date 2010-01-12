@@ -162,3 +162,36 @@ static void send_constructor(orcm_pnp_send_t *ptr)
 OBJ_CLASS_INSTANCE(orcm_pnp_send_t,
                    opal_object_t,
                    send_constructor, NULL);
+
+static void msgpkt_constructor(orcm_msg_packet_t *ptr)
+{
+    ptr->grp = NULL;
+    ptr->src = NULL;
+    ptr->channel = ORTE_RMCAST_INVALID_CHANNEL;
+    ptr->tag = ORTE_RML_TAG_INVALID;
+    ptr->msg = NULL;
+    ptr->count = 0;
+    ptr->buffer = NULL;
+    ptr->cbdata = NULL;
+}
+static void msgpkt_destructor(orcm_msg_packet_t *ptr)
+{
+    int i;
+    
+    if (NULL != ptr->msg) {
+        for (i=0; i < ptr->count; i++) {
+            if (NULL != ptr->msg[i].iov_base) {
+                free(ptr->msg[i].iov_base);
+            }
+        }
+        free(ptr->msg);
+    }
+    if (NULL != ptr->buffer) {
+        OBJ_RELEASE(ptr->buffer);
+    }
+}
+/* no destruct required here */
+OBJ_CLASS_INSTANCE(orcm_msg_packet_t,
+                   opal_list_item_t,
+                   msgpkt_constructor,
+                   msgpkt_destructor);
