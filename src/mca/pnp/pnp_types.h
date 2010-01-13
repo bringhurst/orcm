@@ -83,22 +83,33 @@ typedef struct {
 } orcm_msg_packet_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_msg_packet_t);
 
-#define ORCM_PROCESS_PNP_IOVECS(rlist, lck, cond, gp, sndr, \
-                                chan, tg, mg, cnt, cbd)     \
-    do {                                                    \
-        orcm_msg_packet_t *pkt;                             \
-        pkt = OBJ_NEW(orcm_msg_packet_t);                   \
-        pkt->grp = (gp);                                    \
-        pkt->src = (sndr);                                  \
-        pkt->channel = (chan);                              \
-        pkt->tag = (tg);                                    \
-        pkt->msg = (mg);                                    \
-        pkt->count = (cnt);                                 \
-        pkt->cbdata = (cbd);                                \
-        OPAL_THREAD_LOCK((lck));                            \
-        opal_list_append((rlist), &pkt->super);             \
-        opal_condition_broadcast((cond));                   \
-        OPAL_THREAD_UNLOCK((lck));                          \
+#define ORCM_PROCESS_PNP_IOVECS(rlist, lck, cond, gp, sndr,                         \
+                                chan, tg, mg, cnt, cbd)                             \
+    do {                                                                            \
+        int i;                                                                      \
+        struct iovec *m;                                                            \
+        orcm_msg_packet_t *pkt;                                                     \
+        pkt = OBJ_NEW(orcm_msg_packet_t);                                           \
+        pkt->grp = (gp);                                                            \
+        pkt->src = (sndr);                                                          \
+        pkt->channel = (chan);                                                      \
+        pkt->tag = (tg);                                                            \
+        if (NULL != (mg)) {                                                         \
+            m = mg;                                                                 \
+            pkt->msg = (struct iovec*)malloc((cnt)*sizeof(struct iovec));           \
+            for (i=0; i < (cnt); i++) {                                             \
+                pkt->msg[i].iov_len = m->iov_len;                                   \
+                pkt->msg[i].iov_base = (void*)malloc(m->iov_len);                   \
+                memcpy((char*)pkt->msg[i].iov_base, (char*)m->iov_base, m->iov_len);\
+                m++;                                                                \
+            }                                                                       \
+        }                                                                           \
+        pkt->count = (cnt);                                                         \
+        pkt->cbdata = (cbd);                                                        \
+        OPAL_THREAD_LOCK((lck));                                                    \
+        opal_list_append((rlist), &pkt->super);                                     \
+        opal_condition_broadcast((cond));                                           \
+        OPAL_THREAD_UNLOCK((lck));                                                  \
     } while(0);
 
 #define ORCM_PROCESS_PNP_BUFFERS(rlist, lck, cond, gp, sndr,    \

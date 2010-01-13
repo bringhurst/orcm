@@ -47,16 +47,9 @@ static void ldr_failed(char *app,
 
 int main(int argc, char* argv[])
 {
-    int i, j;
-    float randval, pi;
-    struct timeval tp;
+    int i;
+    float pi;
     int rc;
-    int32_t myval;
-    opal_buffer_t buf;
-    
-    /* seed the random number generator */
-    gettimeofday (&tp, NULL);
-    srand (tp.tv_usec);
     
     /* init the ORCM library - this includes registering
      * a multicast recv so we hear announcements and
@@ -99,8 +92,12 @@ int main(int argc, char* argv[])
     }
     
     /* just sit here */
-    opal_event_dispatch();
-
+    while (1) {
+        for (i=0; i < 100000; i++) {
+            pi = 3.14159 * (double)i;
+        }
+    }
+    
 cleanup:
     /* Remove the TERM and INT signal handlers */
     opal_signal_del(&term_handler);
@@ -112,11 +109,6 @@ cleanup:
 
 static void abort_exit_callback(int fd, short ign, void *arg)
 {
-    int j;
-    orte_job_t *jdata;
-    opal_list_item_t *item;
-    int ret;
-    
     /* Remove the TERM and INT signal handlers */
     opal_signal_del(&term_handler);
     opal_signal_del(&int_handler);
@@ -139,7 +131,7 @@ static void recv_input(int status,
                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                 ORTE_VPID_PRINT(sender->vpid), (int)tag, count);
     
-    /* loop over the ioves */
+    /* loop over the iovecs */
     for (i=0; i < count; i++) {
         /* check the number of values */
         if (20 != msg[i].iov_len) {

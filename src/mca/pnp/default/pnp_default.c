@@ -1512,7 +1512,7 @@ static void rmcast_callback_buffer(int status,
     orcm_pnp_send_t *send = (orcm_pnp_send_t*)cbdata;
     
     if (NULL != send->cbfunc_buf) {
-        send->cbfunc_buf(status, ORTE_PROC_MY_NAME, tag, buf, send->cbdata);
+        send->cbfunc_buf(status, ORTE_PROC_MY_NAME, send->tag, send->buffer, send->cbdata);
     }
     OBJ_RELEASE(send);
 }
@@ -1526,6 +1526,13 @@ static void rmcast_callback(int status,
 {
     orcm_pnp_send_t *send = (orcm_pnp_send_t*)cbdata;
     
+    opal_output(0, "%s RML CALLBACK - SEND IS %s", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                (NULL == send) ? "NULL" : "NON-NULL");
+    
+/*    if (NULL != send->cbfunc) {
+        send->cbfunc(status, ORTE_PROC_MY_NAME, send->tag, send->msg, send->count, send->cbdata);
+    }
+ */
     OBJ_RELEASE(send);
 }
 

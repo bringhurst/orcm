@@ -45,12 +45,14 @@ static void recv_input(int status,
                        void *cbdata);
 
 static int32_t flag=0;
-static int msg_num, delay;
+static int msg_num;
 
 int main(int argc, char* argv[])
 {
     int rc;
-    
+    struct timespec tp;
+    int delay;
+
     /* init the ORCM library - this includes registering
      * a multicast recv so we hear announcements and
      * their responses from other apps
@@ -92,7 +94,12 @@ int main(int argc, char* argv[])
     msg_num = 0;
     
     /* wake up every delay microseconds and send something */
-    ORTE_TIMER_EVENT(1, delay, send_data);
+    tp.tv_sec = delay/200;
+    tp.tv_nsec = 0; /*1000*delay;*/
+    while (1) {
+        nanosleep(&tp, NULL);
+        send_data(0, 0, NULL);
+    }
     
     /* just sit here */
     opal_event_dispatch();
@@ -102,44 +109,46 @@ cleanup:
     return rc;
 }
 
+static void cbfunc(int status, orte_process_name_t *name, orcm_pnp_tag_t tag,
+                   struct iovec *msg, int count, void *cbdata)
+{
+    opal_output(0, "%s send complete", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+}
+
 static void send_data(int fd, short flags, void *arg)
 {
-    int32_t myval;
+    int32_t *ptr;
     int rc;
-    int j;
+    int j, n;
     float randval;
-    opal_event_t *tmp = (opal_event_t*)arg;
-    struct timeval now;
-    struct iovec msg[2];
+    struct iovec *msg;
     int count;
-    int32_t data[5];
 
     /* prep the message */
-    data[0] = msg_num;
-    data[1] = data[2] = data[3] = data[4] = data[0];
-    msg[0].iov_base = (void*)data;
-    msg[0].iov_len = 20;
-    msg[1].iov_base = (void*)data;
-    msg[1].iov_len = 20;
-    
-    /* output the values */
-    opal_output(0, "%s sending data for msg number %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
     if (0 == ORTE_PROC_MY_NAME->vpid) {
         count = 1;
     } else {
         count = 2;
     }
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output(NULL, ORCM_PNP_TAG_OUTPUT, msg, count))) {
+    msg = (struct iovec*)malloc(count * sizeof(struct iovec));
+    for (j=0; j < count; j++) {
+        msg[j].iov_len = 5 * sizeof(int32_t);
+        msg[j].iov_base = (void*)malloc(msg[j].iov_len);
+        ptr = (int32_t*)msg[j].iov_base;
+        for (n=0; n < 5; n++) {
+            *ptr = msg_num;
+            ptr++;
+        }
+    }
+    
+    /* output the values */
+    opal_output(0, "%s sending data for msg number %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(NULL, ORCM_PNP_TAG_OUTPUT, msg, count, cbfunc, NULL))) {
         ORTE_ERROR_LOG(rc);
     }
 
     /* increment the msg number */
     msg_num++;
-
-    /* reset the timer */
-    now.tv_sec = 1;
-    now.tv_usec = delay;
-    opal_evtimer_add(tmp, &now);
 }
 
 static void abort_exit_callback(int fd, short ign, void *arg)
