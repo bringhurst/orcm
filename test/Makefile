@@ -1,4 +1,4 @@
-PROGS = spinners/cm_spin spinners/cm_spin2 pnp/talker pnp/listener spinners/spin pnp/client pnp/server
+PROGS = spinners/cm_spin spinners/cm_spin2 pnp/talker pnp/listener spinners/spin pnp/client pnp/server pnp/talker_iovec pnp/listener_iovec pnp/talker_iovec_nb
 
 all: $(PROGS)
 

@@ -157,6 +157,7 @@ static char *my_version = NULL;
 static char *my_release = NULL;
 static opal_list_t recvs;
 static orte_rmcast_channel_t my_channel;
+static orte_rmcast_channel_t my_channel;
 
 /* local thread support */
 static opal_mutex_t lock, recvlock;
@@ -177,6 +178,9 @@ static int default_init(void)
     OBJ_CONSTRUCT(&recvlock, opal_mutex_t);
     OBJ_CONSTRUCT(&recvcond, opal_condition_t);
     OBJ_CONSTRUCT(&recvs, opal_list_t);
+    
+    /* record my channel */
+    my_channel = orte_rmcast.query_channel();
     
     /* record my channel */
     my_channel = orte_rmcast.query_channel();
@@ -374,7 +378,7 @@ static int register_input(char *app,
         /* add to the list of groups */
         opal_list_append(&groups, &group->super);
     }
-    
+
     /* clear the thread */
     OPAL_THREAD_UNLOCK(&lock);
     
@@ -1526,13 +1530,9 @@ static void rmcast_callback(int status,
 {
     orcm_pnp_send_t *send = (orcm_pnp_send_t*)cbdata;
     
-    opal_output(0, "%s RML CALLBACK - SEND IS %s", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                (NULL == send) ? "NULL" : "NON-NULL");
-    
-/*    if (NULL != send->cbfunc) {
+    if (NULL != send->cbfunc) {
         send->cbfunc(status, ORTE_PROC_MY_NAME, send->tag, send->msg, send->count, send->cbdata);
-    }
- */
+    }    
     OBJ_RELEASE(send);
 }
 
@@ -1549,8 +1549,6 @@ static void rml_callback_buffer(int status,
     /* do any required callbacks */
     if (NULL != send->cbfunc_buf) {
         send->cbfunc_buf(status, ORTE_PROC_MY_NAME, send->tag, send->buffer, send->cbdata);
-    } else if (NULL != send->cbfunc) {
-        send->cbfunc(status, ORTE_PROC_MY_NAME, send->tag, send->msg, send->count, send->cbdata);
     }
     OBJ_RELEASE(send);
 }
@@ -1586,6 +1584,11 @@ static void* process_msgs(opal_object_t *obj)
             sender.jobid = msgpkt->src->name.jobid;
             sender.vpid = msgpkt->src->name.vpid;
             group = msgpkt->grp;
+            
+            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                                 "%s pnp:default processing msg from %s",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                 ORTE_NAME_PRINT(&sender)));
             
             /* loop through the recorded recv requests on this
              * group to find the specified tag so we can get

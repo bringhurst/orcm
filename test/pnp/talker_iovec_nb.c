@@ -13,12 +13,6 @@
 #ifdef HAVE_SIGNAL_H
 #include <signal.h>
 #endif  /*  HAVE_SIGNAL_H */
-#ifdef HAVE_NETINET_IN_H
-#include <netinet/in.h>
-#endif
-#ifdef HAVE_ARPA_INET_H
-#include <arpa/inet.h>
-#endif
 
 #include "opal/dss/dss.h"
 #include "opal/event/event.h"
@@ -32,26 +26,17 @@
 #include "mca/pnp/pnp.h"
 #include "runtime/runtime.h"
 
-#define ORCM_TEST_CLIENT_SERVER_TAG     12345
-
 static struct opal_event term_handler;
 static struct opal_event int_handler;
 static void abort_exit_callback(int fd, short flags, void *arg);
 static void send_data(int fd, short flags, void *arg);
-static void recv_input(int status,
-                       orte_process_name_t *sender,
-                       orcm_pnp_tag_t tag,
-                       struct iovec *msg, int count,
-                       void *cbdata);
-
-static int32_t flag=0;
-static int msg_num;
+static int msg_num=0;
 
 int main(int argc, char* argv[])
 {
     struct timespec tp;
-    int rc, delay;
-
+    int rc;
+    
     /* init the ORCM library - this includes registering
      * a multicast recv so we hear announcements and
      * their responses from other apps
@@ -73,31 +58,21 @@ int main(int argc, char* argv[])
     opal_signal_add(&int_handler, NULL);
     
     /* announce our existence */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("CLIENT", "1.0", "alpha"))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("TALKER_IOVEC", "1.0", "alpha"))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
     
-    /* for this application, register an input to hear direct responses */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("SERVER", "1.0", "alpha",
-                                                      ORCM_TEST_CLIENT_SERVER_TAG, recv_input))) {
-        ORTE_ERROR_LOG(rc);
-        goto cleanup;
-    }
-    
-    /* init the msg number */
-    msg_num = 0;
-    
-    /* wake up every delay microseconds and send something */
-    delay = (ORTE_PROC_MY_NAME->vpid + 1);
-    opal_output(0, "sending data every %d seconds", delay);
-    tp.tv_sec = delay;
-    tp.tv_nsec = 0;
+    /* for this application, there are no desired
+     * inputs, so we don't register any
+     */
+    tp.tv_sec = 0;
+    tp.tv_nsec = 100000000*(2*ORTE_PROC_MY_NAME->vpid + 1);
     while (1) {
         nanosleep(&tp, NULL);
         send_data(0, 0, NULL);
     }
-
+    
 cleanup:
     orcm_finalize();
     return rc;
@@ -116,6 +91,7 @@ static void cbfunc(int status, orte_process_name_t *name, orcm_pnp_tag_t tag,
     }
     free(msg);
 }
+
 static void send_data(int fd, short flags, void *arg)
 {
     int32_t count, *ptr;
@@ -136,12 +112,11 @@ static void send_data(int fd, short flags, void *arg)
     }
     
     /* output the values */
-    opal_output(0, "%s sending data for msg number %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
+    opal_output(0, "%s sending msg number %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
     if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(NULL, ORCM_PNP_TAG_OUTPUT, msg, count, cbfunc, NULL))) {
         ORTE_ERROR_LOG(rc);
     }
-    
-    /* increment the msg number */
+
     msg_num++;
 }
 
@@ -158,16 +133,5 @@ static void abort_exit_callback(int fd, short ign, void *arg)
     
     orcm_finalize();
     exit(1);
-}
-
-static void recv_input(int status,
-                       orte_process_name_t *sender,
-                       orcm_pnp_tag_t tag,
-                       struct iovec *msg, int count,
-                       void *cbdata)
-{
-    opal_output(0, "%s recvd message from server %s on tag %d",
-                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                ORTE_NAME_PRINT(sender), (int)tag);
 }
 

@@ -26,8 +26,6 @@
 #include "mca/leader/leader.h"
 #include "runtime/runtime.h"
 
-#define ORCM_TEST_CLIENT_SERVER_TAG     12345
-
 static struct opal_event term_handler;
 static struct opal_event int_handler;
 static void abort_exit_callback(int fd, short flags, void *arg);
@@ -36,8 +34,7 @@ static void abort_exit_callback(int fd, short flags, void *arg);
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
-                       struct iovec *msg,
-                       int count,
+                       struct iovec *msg, int count,
                        void *cbdata);
 
 static void ldr_failed(char *app,
@@ -72,20 +69,20 @@ int main(int argc, char* argv[])
     opal_signal_add(&int_handler, NULL);
     
     /* announce our existence */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("SERVER", "1.0", "alpha"))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("LISTENER_IOVEC", "1.0", "alpha"))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
     
-    /* we want to accept ALL input messages */
-    if (ORCM_SUCCESS != (rc = orcm_leader.set_leader("CLIENT", "1.0", "alpha",
+    /* accept ALL input messages */
+    if (ORCM_SUCCESS != (rc = orcm_leader.set_leader("TALKER_IOVEC", "1.0", "alpha",
                                                      ORCM_LEADER_WILDCARD, ldr_failed))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
     
-    /* we want to listen to the CLIENT app */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("CLIENT", "1.0", "alpha",
+    /* we want to listen to the TALKER app */
+    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("TALKER_IOVEC", "1.0", "alpha",
                                                       ORCM_PNP_TAG_OUTPUT, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
@@ -109,6 +106,11 @@ cleanup:
 
 static void abort_exit_callback(int fd, short ign, void *arg)
 {
+    int j;
+    orte_job_t *jdata;
+    opal_list_item_t *item;
+    int ret;
+    
     /* Remove the TERM and INT signal handlers */
     opal_signal_del(&term_handler);
     opal_signal_del(&int_handler);
@@ -117,77 +119,17 @@ static void abort_exit_callback(int fd, short ign, void *arg)
     exit(1);
 }
 
-static void cbfunc(int status, orte_process_name_t *name, orcm_pnp_tag_t tag,
-                   struct iovec *msg, int count, void *cbdata)
-{
-    int i;
-    
-    opal_output(0, "%s mesg sent", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-    for (i=0; i < count; i++) {
-        if (NULL != msg[i].iov_base) {
-            free(msg[i].iov_base);
-        }
-    }
-    free(msg);
-}
-
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
-                       struct iovec *msg,
-                       int count,
+                       struct iovec *msg, int count,
                        void *cbdata)
 {
-    int32_t i, j, n, *data, *ptr;
-    struct iovec *response;
     int rc;
     
-    opal_output(0, "%s recvd message from client %s on tag %d with %d iovecs",
+    opal_output(0, "%s recvd message from talker %s on tag %d",
                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                ORTE_VPID_PRINT(sender->vpid), (int)tag, count);
-    
-    /* loop over the iovecs */
-    for (i=0; i < count; i++) {
-        /* check the number of values */
-        if (20 != msg[i].iov_len) {
-            opal_output(0, "\tError: iovec has incorrect length %d", (int)msg[i].iov_len);
-            return;
-        }
-        
-        /* print the first value */
-        data = (int32_t*)msg[i].iov_base;
-        opal_output(0, "\tValue in first posn: %d", data[0]);
-        
-        /* now check the values */
-        for (n=1; n < 5; n++) {
-            if (data[n] != data[0]) {
-                opal_output(0, "\tError: invalid data %d at posn %d", data[n], n);
-                return;
-            }
-        }
-   }
-    
-    /* see if we want to respond directly to the client */
-    if (1 == (data[0] % 5)) {
-        response = (struct iovec*)malloc(count * sizeof(struct iovec));
-        for (j=0; j < count; j++) {
-            response[j].iov_base = (void*)malloc(5 * sizeof(int32_t));
-            ptr = response[j].iov_base;
-            for (n=0; n < 5; n++) {
-                *ptr = data[0];
-                ptr++;
-            }
-            response[j].iov_len = 5 * sizeof(int32_t);
-        }
-        
-        /* output the values */
-        opal_output(0, "%s sending response to %s for msg number %d",
-                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                    ORTE_NAME_PRINT(sender), data[0]);
-        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(sender, ORCM_TEST_CLIENT_SERVER_TAG, msg, count, cbfunc, NULL))) {
-            ORTE_ERROR_LOG(rc);
-        }
-    }
+                ORTE_NAME_PRINT(sender), (int)tag);
 }
 
 static void ldr_failed(char *app,
