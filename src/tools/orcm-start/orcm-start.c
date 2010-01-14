@@ -68,7 +68,7 @@ static struct {
     bool help;
     char *config_file;
     int num_procs;
-    bool add_procs;
+    int add_procs;
     char *hosts;
     bool constrained;
     bool gdb;
@@ -91,7 +91,7 @@ opal_cmd_line_init_t cmd_line_opts[] = {
 
     { NULL, NULL, NULL, 'a', "add", "add", 1,
       &my_globals.add_procs, OPAL_CMD_LINE_TYPE_BOOL,
-      "Number of instances to add to existing job" },
+      "Number of instances to be added to an existing job" },
     
     { NULL, NULL, NULL, '\0', "gdb", "gdb", 0,
       &my_globals.gdb, OPAL_CMD_LINE_TYPE_BOOL,
@@ -185,7 +185,7 @@ int main(int argc, char *argv[])
     my_globals.num_procs = 0;
     my_globals.hosts = NULL;
     my_globals.constrained = false;
-    my_globals.add_procs = false;
+    my_globals.add_procs = 0;
     my_globals.gdb = false;
     my_globals.hnp_uri = NULL;
     my_globals.max_restarts = -1;
@@ -208,6 +208,12 @@ int main(int argc, char *argv[])
         args = opal_cmd_line_get_usage_msg(&cmd_line);
         orte_show_help("help-orcm-start.txt", "usage", true, args);
         free(args);
+        return ORTE_ERROR;
+    }
+    
+    /* bozo check - cannot specify both add and num procs */
+    if (0 < my_globals.add_procs && 0 < my_globals.num_procs) {
+        opal_output(0, "Cannot specify both -a and -n options together");
         return ORTE_ERROR;
     }
     
@@ -290,8 +296,9 @@ int main(int argc, char *argv[])
     opal_dss.pack(&buf, &flag, 1, OPENRCM_TOOL_CMD_T);
     
     /* load the add procs flag */
-    if (my_globals.add_procs) {
+    if (0 < my_globals.add_procs) {
         constrain = 1;
+        my_globals.num_procs = my_globals.add_procs;
     } else {
         constrain = 0;
     }

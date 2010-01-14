@@ -579,8 +579,9 @@ static void spawn_app(int fd, short event, void *command)
     int np = spev->np;
     char *hosts = spev->hosts;
     bool constrain = spev->constrain;
-    int ret, i;
+    int ret, i, n;
     orte_job_t *jdata;
+    orte_proc_t *proc;
     orte_app_context_t *app;
     char *param, *value;
     orte_proc_state_t state;
@@ -593,6 +594,9 @@ static void spawn_app(int fd, short event, void *command)
     
     /* if we are adding procs, find the existing job object */
     if (spev->add_procs) {
+        OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
+                             "%s spawn: adding application",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         for (i=0; i < orte_job_data->size; i++) {
             if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
                 continue;
@@ -600,9 +604,25 @@ static void spawn_app(int fd, short event, void *command)
             if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, 0))) {
                 continue;
             }
-            if (0 == strcmp(spev->cmd, app->app)) {
+            if (0 == strcmp(cmd, app->app)) {
                 /* found it */
+                OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
+                                     "%s spawn: found job %s - adding %d proc(s)",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     ORTE_JOBID_PRINT(jdata->jobid), np));
+                /* add the required number of proc objects to the jdata object */
+                for (n=0; n < np; n++) {
+                    proc = OBJ_NEW(orte_proc_t);
+                    proc->name.jobid = jdata->jobid;
+                    proc->name.vpid = jdata->num_procs++;
+                    proc->app_idx = app->idx;
+                    proc->state = ORTE_PROC_STATE_RESTART;
+                    opal_pointer_array_set_item(jdata->procs, proc->name.vpid, proc);
+                }
+                /* increment num procs */
                 app->num_procs += np;
+                /* set the state to restart so we don't think it's a new job */
+                jdata->state = ORTE_JOB_STATE_RESTART;
                 goto launch;
             }
         }

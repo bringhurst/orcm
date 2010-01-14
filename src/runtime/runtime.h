@@ -78,10 +78,10 @@ typedef void (*orcm_spawn_fn_t)(int fd, short event, void *command);
         mev = OBJ_NEW(orcm_spawn_event_t);                                  \
         mev->cmd = strdup((comd));                                          \
         mev->np = (n);                                                      \
-        if ((adp)) {                                                        \
+        if (0 != (adp)) {                                                   \
             mev->add_procs = true;                                          \
         }                                                                   \
-        if ((dbg)) {                                                        \
+        if (0 != (dbg)) {                                                   \
             mev->debug = true;                                              \
         }                                                                   \
         mev->max_restarts = (rstrts);                                       \
