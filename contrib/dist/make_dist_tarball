@@ -43,14 +43,24 @@ else
 fi
 
 greekonly=0
-while test "$1" != ""; do
-    case $1 in
-        -greekonly) greekonly=1 ;;
-        --greekonly) greekonly=1 ;;
-        -highok) highok=1 ;;
-        --highok) highok=1 ;;
-    esac
-    shift
+withorte=" "
+var=$1
+while test "${var}" != ""; do
+    if [ "${var}" = "--greekonly" ]; then
+        greekonly=1
+    elif [ "${var}" = "-greekonly" ]; then
+        greekonly=1
+    elif [ "${var}" = "--highok" ]; then
+        highok=1
+    elif [ "${var}" = "-highok" ]; then
+        highok=1
+    elif [ "${var:0:11}" = "--with-orte" ]; then
+        withorte="${var}"
+    elif [ "${var:0:10}" = "-with-orte" ]; then
+        withorte="${var}"
+    fi
+    shift 1
+    var=$1
 done
 
 #
@@ -208,7 +218,8 @@ make_tarball() {
     #
     echo "*** Running configure..."
     rm -f success
-    (./configure --enable-dist --with-orte=${var} 2>&1 && touch success) | tee config.out
+    echo "${withorte}"
+    (./configure --enable-dist "${withorte}" 2>&1 && touch success) | tee config.out
     if test ! -f success; then
         echo "Configure failed.  Aborting"
         exit 1
