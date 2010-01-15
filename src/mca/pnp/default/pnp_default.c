@@ -1599,7 +1599,7 @@ static void* process_msgs(opal_object_t *obj)
                  itmreq = opal_list_get_next(itmreq)) {
                 request = (orcm_pnp_pending_request_t*)itmreq;
                 
-                if (request->tag == msgpkt->tag) {
+                if (ORCM_PNP_TAG_WILDCARD == request->tag || request->tag == msgpkt->tag) {
                     /* found it! deliver the msg */
                     if (NULL != msgpkt->buffer && NULL != request->cbfunc_buf) {
                         request->cbfunc_buf(ORCM_SUCCESS, &sender, msgpkt->tag, msgpkt->buffer, NULL);
