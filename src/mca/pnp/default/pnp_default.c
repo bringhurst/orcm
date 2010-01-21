@@ -623,7 +623,7 @@ static int default_output(orte_process_name_t *recipient,
             return ret;
         }        
         /* pack the bytes */
-        if (ORCM_SUCCESS != (ret = opal_dss.pack(&buf, &(msg[sz].iov_base), cnt, OPAL_UINT8))) {
+        if (ORCM_SUCCESS != (ret = opal_dss.pack(&buf, msg[sz].iov_base, cnt, OPAL_UINT8))) {
             ORTE_ERROR_LOG(ret);
             return ret;
         }        
@@ -725,7 +725,7 @@ static int default_output_nb(orte_process_name_t *recipient,
             return ret;
         }        
         /* pack the bytes */
-        if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, &(msg[sz].iov_base), cnt, OPAL_UINT8))) {
+        if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, msg[sz].iov_base, cnt, OPAL_UINT8))) {
             ORTE_ERROR_LOG(ret);
             return ret;
         }        
