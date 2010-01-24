@@ -12,6 +12,13 @@
 
 #include "openrcm.h"
 
+#ifdef HAVE_NETINET_IN_H
+#include <netinet/in.h>
+#endif
+#ifdef HAVE_ARPA_INET_H
+#include <arpa/inet.h>
+#endif
+
 #include "opal/dss/dss_types.h"
 #include "opal/class/opal_list.h"
 #include "opal/class/opal_value_array.h"
@@ -24,6 +31,35 @@
 #include "mca/leader/leader_types.h"
 
 #define ORCM_PNP_MAX_MSGS    4
+
+typedef int32_t orcm_pnp_tag_t;
+#define ORCM_PNP_TAG_T  OPAL_INT32
+
+/* inherited tag values */
+enum {
+    ORCM_PNP_TAG_WILDCARD       = ORTE_RMCAST_TAG_WILDCARD,
+    ORCM_PNP_TAG_INVALID        = ORTE_RMCAST_TAG_INVALID,
+    ORCM_PNP_TAG_BOOTSTRAP      = ORTE_RMCAST_TAG_BOOTSTRAP,
+    ORCM_PNP_TAG_ANNOUNCE       = ORTE_RMCAST_TAG_ANNOUNCE,
+    ORCM_PNP_TAG_OUTPUT         = ORTE_RMCAST_TAG_OUTPUT,
+    ORCM_PNP_TAG_PS             = ORTE_RMCAST_TAG_PS
+};
+
+#define ORCM_PNP_TAG_DYNAMIC    100
+
+/* callback function */
+typedef void (*orcm_pnp_callback_fn_t)(int status,
+                                       orte_process_name_t *sender,
+                                       orcm_pnp_tag_t tag,
+                                       struct iovec *msg,
+                                       int count,
+                                       void *cbdata);
+
+typedef void (*orcm_pnp_callback_buffer_fn_t)(int status,
+                                              orte_process_name_t *sender,
+                                              orcm_pnp_tag_t tag,
+                                              opal_buffer_t *buf,
+                                              void *cbdata);
 
 typedef struct {
     opal_list_item_t super;
@@ -46,7 +82,7 @@ typedef struct {
     char *version;
     char *release;
     char *string_id;
-    opal_value_array_t channels;
+    orte_rmcast_channel_t channel;
     opal_list_t requests;
     opal_list_t members;
     orcm_pnp_source_t *leader;
@@ -54,21 +90,6 @@ typedef struct {
     orcm_leader_cbfunc_t leader_failed_cbfunc;
 } orcm_pnp_group_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_group_t);
-
-typedef int32_t orcm_pnp_tag_t;
-#define ORCM_PNP_TAG_T  OPAL_INT32
-
-/* inherited tag values */
-enum {
-    ORCM_PNP_TAG_WILDCARD       = ORTE_RMCAST_TAG_WILDCARD,
-    ORCM_PNP_TAG_INVALID        = ORTE_RMCAST_TAG_INVALID,
-    ORCM_PNP_TAG_BOOTSTRAP      = ORTE_RMCAST_TAG_BOOTSTRAP,
-    ORCM_PNP_TAG_ANNOUNCE       = ORTE_RMCAST_TAG_ANNOUNCE,
-    ORCM_PNP_TAG_OUTPUT         = ORTE_RMCAST_TAG_OUTPUT,
-    ORCM_PNP_TAG_PS             = ORTE_RMCAST_TAG_PS
-};
-
-#define ORCM_PNP_TAG_DYNAMIC    100
 
 typedef struct {
     opal_list_item_t super;
@@ -78,55 +99,28 @@ typedef struct {
     orte_rmcast_tag_t tag;
     struct iovec *msg;
     int count;
+    orcm_pnp_callback_fn_t cbfunc;
     opal_buffer_t *buffer;
+    orcm_pnp_callback_buffer_fn_t cbfunc_buf;
     void *cbdata;
-} orcm_msg_packet_t;
-ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_msg_packet_t);
+} orcm_pnp_recv_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_recv_t);
 
-#define ORCM_PROCESS_PNP_IOVECS(rlist, lck, cond, gp, sndr,                         \
-                                chan, tg, mg, cnt, cbd)                             \
-    do {                                                                            \
-        int i;                                                                      \
-        struct iovec *m;                                                            \
-        orcm_msg_packet_t *pkt;                                                     \
-        pkt = OBJ_NEW(orcm_msg_packet_t);                                           \
-        pkt->grp = (gp);                                                            \
-        pkt->src = (sndr);                                                          \
-        pkt->channel = (chan);                                                      \
-        pkt->tag = (tg);                                                            \
-        if (NULL != (mg)) {                                                         \
-            m = mg;                                                                 \
-            pkt->msg = (struct iovec*)malloc((cnt)*sizeof(struct iovec));           \
-            for (i=0; i < (cnt); i++) {                                             \
-                pkt->msg[i].iov_len = m->iov_len;                                   \
-                pkt->msg[i].iov_base = (void*)malloc(m->iov_len);                   \
-                memcpy((char*)pkt->msg[i].iov_base, (char*)m->iov_base, m->iov_len);\
-                m++;                                                                \
-            }                                                                       \
-        }                                                                           \
-        pkt->count = (cnt);                                                         \
-        pkt->cbdata = (cbd);                                                        \
-        OPAL_THREAD_LOCK((lck));                                                    \
-        opal_list_append((rlist), &pkt->super);                                     \
-        opal_condition_broadcast((cond));                                           \
-        OPAL_THREAD_UNLOCK((lck));                                                  \
-    } while(0);
-
-#define ORCM_PROCESS_PNP_BUFFERS(rlist, lck, cond, gp, sndr,    \
-                                 chan, tg, buf, cbd)            \
-    do {                                                        \
-        orcm_msg_packet_t *pkt;                                 \
-        pkt = OBJ_NEW(orcm_msg_packet_t);                       \
-        pkt->grp = (gp);                                        \
-        pkt->src = (sndr);                                      \
-        pkt->channel = (chan);                                  \
-        pkt->tag = (tg);                                        \
-        pkt->buffer = OBJ_NEW(opal_buffer_t);                   \
-        opal_dss.copy_payload(pkt->buffer, (buf));              \
-        OPAL_THREAD_LOCK((lck));                                \
-        opal_list_append((rlist), &pkt->super);                 \
-        opal_condition_broadcast((cond));                       \
-        OPAL_THREAD_UNLOCK((lck));                              \
-    } while(0);
+typedef struct {
+    opal_list_item_t super;
+    orte_process_name_t target;
+    bool pending;
+    opal_mutex_t lock;
+    opal_condition_t cond;
+    orte_rmcast_channel_t channel;
+    orte_rmcast_tag_t tag;
+    struct iovec *msg;
+    int count;
+    orcm_pnp_callback_fn_t cbfunc;
+    opal_buffer_t *buffer;
+    orcm_pnp_callback_buffer_fn_t cbfunc_buf;
+    void *cbdata;
+} orcm_pnp_send_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_send_t);
 
 #endif /* ORCM_PNP_TYPES_H */

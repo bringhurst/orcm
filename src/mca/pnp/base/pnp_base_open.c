@@ -10,7 +10,6 @@
 #include "openrcm_config_private.h"
 #include "include/constants.h"
 
-#include "opal/class/opal_value_array.h"
 #include "opal/util/output.h"
 #include "opal/mca/mca.h"
 #include "opal/mca/base/base.h"
@@ -100,11 +99,12 @@ OBJ_CLASS_INSTANCE(orcm_pnp_source_t,
 
 static void group_constructor(orcm_pnp_group_t *ptr)
 {
+    orte_rmcast_channel_t chan=ORTE_RMCAST_INVALID_CHANNEL;
+    
     ptr->app = NULL;
     ptr->version = NULL;
     ptr->release = NULL;
-    OBJ_CONSTRUCT(&ptr->channels, opal_value_array_t);
-    opal_value_array_init(&ptr->channels, sizeof(orte_rmcast_channel_t));
+    ptr->channel = ORTE_RMCAST_INVALID_CHANNEL;
     OBJ_CONSTRUCT(&ptr->members, opal_list_t);
     OBJ_CONSTRUCT(&ptr->requests, opal_list_t);
     ptr->leader = NULL;
@@ -121,10 +121,6 @@ static void group_destructor(orcm_pnp_group_t *ptr)
     }
     if (NULL != ptr->release) {
         free(ptr->release);
-    }
-    OBJ_DESTRUCT(&ptr->channels);
-    while (NULL != (item = opal_list_remove_first(&ptr->members))) {
-        OBJ_RELEASE(item);
     }
     OBJ_DESTRUCT(&ptr->members);
     while (NULL != (item = opal_list_remove_first(&ptr->requests))) {
@@ -148,22 +144,7 @@ OBJ_CLASS_INSTANCE(orcm_pnp_pending_request_t,
                    opal_list_item_t,
                    request_constructor, NULL);
 
-static void send_constructor(orcm_pnp_send_t *ptr)
-{
-    ptr->tag = ORTE_RML_TAG_INVALID;
-    ptr->buffer = NULL;
-    ptr->cbfunc_buf = NULL;
-    ptr->msg = NULL;
-    ptr->count = 0;
-    ptr->cbfunc = NULL;
-    ptr->cbdata = NULL;
-}
-/* no destruct required here */
-OBJ_CLASS_INSTANCE(orcm_pnp_send_t,
-                   opal_object_t,
-                   send_constructor, NULL);
-
-static void msgpkt_constructor(orcm_msg_packet_t *ptr)
+static void recv_constructor(orcm_pnp_recv_t *ptr)
 {
     ptr->grp = NULL;
     ptr->src = NULL;
@@ -171,11 +152,37 @@ static void msgpkt_constructor(orcm_msg_packet_t *ptr)
     ptr->tag = ORTE_RML_TAG_INVALID;
     ptr->msg = NULL;
     ptr->count = 0;
+    ptr->cbfunc = NULL;
     ptr->buffer = NULL;
+    ptr->cbfunc_buf = NULL;
     ptr->cbdata = NULL;
 }
-/* no destruct required here */
-OBJ_CLASS_INSTANCE(orcm_msg_packet_t,
+OBJ_CLASS_INSTANCE(orcm_pnp_recv_t,
                    opal_list_item_t,
-                   msgpkt_constructor,
+                   recv_constructor,
                    NULL);
+
+static void send_constructor(orcm_pnp_send_t *ptr)
+{
+    ptr->target.jobid = ORTE_JOBID_INVALID;
+    ptr->target.vpid = ORTE_VPID_INVALID;
+    ptr->pending = false;
+    OBJ_CONSTRUCT(&ptr->lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&ptr->cond, opal_condition_t);
+    ptr->channel = ORTE_RMCAST_INVALID_CHANNEL;
+    ptr->tag = ORTE_RML_TAG_INVALID;
+    ptr->msg = NULL;
+    ptr->count = 0;
+    ptr->cbfunc = NULL;
+    ptr->buffer = NULL;
+    ptr->cbfunc_buf = NULL;
+    ptr->cbdata = NULL;
+}
+static void send_destructor(orcm_pnp_send_t *ptr) {
+    OBJ_DESTRUCT(&ptr->lock);
+    OBJ_DESTRUCT(&ptr->cond);
+}
+OBJ_CLASS_INSTANCE(orcm_pnp_send_t,
+                   opal_list_item_t,
+                   send_constructor,
+                   send_destructor);

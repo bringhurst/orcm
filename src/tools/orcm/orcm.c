@@ -824,11 +824,11 @@ static int kill_app(char *cmd, opal_value_array_t *replicas)
 void restart(orte_process_name_t *proc, orte_proc_state_t state, void *cbdata)
 {
     orte_job_t *jdata;
-    orte_job_t *newjob;
     orte_app_context_t *app=NULL, *newapp=NULL;
     orte_node_t *node, *newnode;
     orte_proc_t *daemon, *nodeproc, *pdata;
     opal_value_array_t jobs;
+    orte_jobid_t newjob;
     bool found;
     int i, j;
     int ret;

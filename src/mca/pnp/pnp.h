@@ -12,34 +12,12 @@
 
 #include "openrcm.h"
 
-#ifdef HAVE_NETINET_IN_H
-#include <netinet/in.h>
-#endif
-#ifdef HAVE_ARPA_INET_H
-#include <arpa/inet.h>
-#endif
-#include <errno.h>
-
 #include "opal/mca/mca.h"
 #include "opal/dss/dss_types.h"
 
 #include "orte/types.h"
 
 #include "pnp_types.h"
-
-/* callback function */
-typedef void (*orcm_pnp_callback_fn_t)(int status,
-                                       orte_process_name_t *sender,
-                                       orcm_pnp_tag_t tag,
-                                       struct iovec *msg,
-                                       int count,
-                                       void *cbdata);
-
-typedef void (*orcm_pnp_callback_buffer_fn_t)(int status,
-                                              orte_process_name_t *sender,
-                                              orcm_pnp_tag_t tag,
-                                              opal_buffer_t *buf,
-                                              void *cbdata);
 
 /* module functions */
 typedef int (*orcm_pnp_module_init_fn_t)(void);
@@ -151,8 +129,8 @@ ORCM_DECLSPEC extern orcm_pnp_base_module_t orcm_pnp;
 /*
  * Macro for use in components that are of type coll
  */
-#define ORCM_PNP_BASE_VERSION_2_0_0 \
+#define ORCM_PNP_BASE_VERSION_1_0_0 \
   MCA_BASE_VERSION_2_0_0, \
-  "pnp", 2, 0, 0
+  "pnp", 1, 0, 0
 
 #endif /* ORCM_PNP_H */

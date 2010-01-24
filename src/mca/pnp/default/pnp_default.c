@@ -20,7 +20,6 @@
 
 #include "opal/dss/dss.h"
 #include "opal/class/opal_list.h"
-#include "opal/class/opal_value_array.h"
 #include "opal/util/output.h"
 #include "opal/threads/condition.h"
 #include "opal/threads/mutex.h"
@@ -32,6 +31,7 @@
 #include "orte/runtime/orte_globals.h"
 
 #include "mca/leader/leader.h"
+#include "runtime/runtime.h"
 
 #include "mca/pnp/pnp.h"
 #include "mca/pnp/base/private.h"
@@ -94,10 +94,8 @@ orcm_pnp_base_module_t orcm_pnp_default_module = {
 
 /* Local functions */
 static void recv_announcements(int status,
-                               orte_rmcast_channel_t channel,
-                               orte_rmcast_tag_t tag,
                                orte_process_name_t *sender,
-                               orte_rmcast_seq_t seq_num,
+                               orcm_pnp_tag_t tag,
                                opal_buffer_t *buf, void *cbdata);
 static void recv_inputs(int status,
                         orte_rmcast_channel_t channel,
@@ -140,13 +138,11 @@ static void rml_callback_buffer(int status,
                                 orte_rml_tag_t tag,
                                 void* cbdata);
 
-static void process_direct_msgs(int fd, short event, void *cbdata);
+static void* recv_messages(opal_object_t *obj);
 
 static void recv_direct_msgs(int status, orte_process_name_t* sender,
                              opal_buffer_t* buffer, orte_rml_tag_t tag,
                              void* cbdata);
-
-static void* process_msgs(opal_object_t *obj);
 
 /* Local variables */
 static opal_list_t groups;
@@ -156,7 +152,6 @@ static char *my_app = NULL;
 static char *my_version = NULL;
 static char *my_release = NULL;
 static opal_list_t recvs;
-static orte_rmcast_channel_t my_channel;
 static orte_rmcast_channel_t my_channel;
 
 /* local thread support */
@@ -168,13 +163,15 @@ static opal_thread_t recv_thread;
 static int default_init(void)
 {
     int ret;
+    orcm_pnp_group_t *group;
+    orcm_pnp_pending_request_t *request;
+    orcm_pnp_source_t *src;
     
     /* init the list of known application groups */
     OBJ_CONSTRUCT(&groups, opal_list_t);
     
     /* setup the threading support */
     OBJ_CONSTRUCT(&lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&cond, opal_condition_t);
     OBJ_CONSTRUCT(&recvlock, opal_mutex_t);
     OBJ_CONSTRUCT(&recvcond, opal_condition_t);
     OBJ_CONSTRUCT(&recvs, opal_list_t);
@@ -182,33 +179,87 @@ static int default_init(void)
     /* record my channel */
     my_channel = orte_rmcast.query_channel();
     
-    /* record my channel */
-    my_channel = orte_rmcast.query_channel();
-    
     /* setup a recv to catch any announcements */
     if (!recv_on) {
-        if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(ORTE_RMCAST_APP_PUBLIC_CHANNEL,
-                                                              ORTE_RMCAST_TAG_ANNOUNCE,
-                                                              ORTE_RMCAST_PERSISTENT,
-                                                              recv_announcements, NULL))) {
-            ORTE_ERROR_LOG(ret);
-            return ret;
-        }
-        /* setup an RML recv to catch any direct messages */
-        if (ORTE_SUCCESS != (ret = orte_rml.recv_buffer_nb(ORTE_NAME_WILDCARD,
-                                                           ORTE_RML_TAG_MULTICAST_DIRECT,
-                                                           ORTE_RML_NON_PERSISTENT,
-                                                           recv_direct_msgs,
-                                                           NULL))) {
-            ORTE_ERROR_LOG(ret);
-            return ret;
+        /* setup the respective public address channel */
+        if (OPENRCM_PROC_IS_MASTER || OPENRCM_PROC_IS_DAEMON || OPENRCM_PROC_IS_TOOL) {
+            /* setup a group */
+            group = OBJ_NEW(orcm_pnp_group_t);
+            group->app = strdup("ORCM_SYSTEM");
+            group->channel = ORTE_RMCAST_SYS_CHANNEL;
+            group->leader = ORCM_SOURCE_WILDCARD;
+            /* add to the list of groups */
+            opal_list_append(&groups, &group->super);
+            /* everyone is a member of this group */
+            src = OBJ_NEW(orcm_pnp_source_t);
+            src->name.jobid = ORTE_NAME_WILDCARD->jobid;
+            src->name.vpid = ORTE_NAME_WILDCARD->vpid;
+            opal_list_append(&group->members, &src->super);
+            /* record the request for future use */
+            request = OBJ_NEW(orcm_pnp_pending_request_t);
+            request->tag = ORTE_RMCAST_TAG_WILDCARD;
+            request->cbfunc_buf = recv_announcements;
+            opal_list_append(&group->requests, &request->super);
+            /* open a channel to this group - will just return if
+             * the channel already exists
+             */
+            if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(&group->channel,
+                                                                group->app,
+                                                                NULL, -1, NULL,
+                                                                ORTE_RMCAST_RECV))) {
+                ORTE_ERROR_LOG(ret);
+                return ret;
+            }
+            /* setup to listen to it - will just return if we already are */
+            if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(group->channel, request->tag,
+                                                                  ORTE_RMCAST_PERSISTENT,
+                                                                  recv_input_buffers, NULL))) {
+                ORTE_ERROR_LOG(ret);
+                return ret;
+            }
+            
+        } else if (OPENRCM_PROC_IS_APP) {
+            /* setup a group */
+            group = OBJ_NEW(orcm_pnp_group_t);
+            group->app = strdup("ORCM_APP_ANNOUNCE");
+            group->channel = ORTE_RMCAST_APP_PUBLIC_CHANNEL;
+            group->leader = ORCM_SOURCE_WILDCARD;
+            /* add to the list of groups */
+            opal_list_append(&groups, &group->super);
+            /* everyone is a member of this group */
+            src = OBJ_NEW(orcm_pnp_source_t);
+            src->name.jobid = ORTE_NAME_WILDCARD->jobid;
+            src->name.vpid = ORTE_NAME_WILDCARD->vpid;
+            opal_list_append(&group->members, &src->super);
+            /* record the request for future use */
+            request = OBJ_NEW(orcm_pnp_pending_request_t);
+            request->tag = ORTE_RMCAST_TAG_ANNOUNCE;
+            request->cbfunc_buf = recv_announcements;
+            opal_list_append(&group->requests, &request->super);
+            
+            /* open the channel */
+            if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(group->channel, request->tag,
+                                                                  ORTE_RMCAST_PERSISTENT,
+                                                                  recv_input_buffers, NULL))) {
+                ORTE_ERROR_LOG(ret);
+                return ret;
+            }
+            /* setup an RML recv to catch any direct messages */
+            if (ORTE_SUCCESS != (ret = orte_rml.recv_buffer_nb(ORTE_NAME_WILDCARD,
+                                                               ORTE_RML_TAG_MULTICAST_DIRECT,
+                                                               ORTE_RML_NON_PERSISTENT,
+                                                               recv_direct_msgs,
+                                                               NULL))) {
+                ORTE_ERROR_LOG(ret);
+                return ret;
+            }
         }
         recv_on = true;
     }
     
     /* setup the message processing thread */
     OBJ_CONSTRUCT(&recv_thread, opal_thread_t);
-    recv_thread.t_run = process_msgs;
+    recv_thread.t_run = recv_messages;
     active = true;
     if (ORCM_SUCCESS != (ret = opal_thread_start(&recv_thread))) {
         ORTE_ERROR_LOG(ret);
@@ -249,6 +300,9 @@ static int announce(char *app, char *version, char *release)
     my_version = strdup(version);
     my_release = strdup(release);
     
+    /* no need to hold the lock any further */
+    OPAL_THREAD_UNLOCK(&lock);
+    
     /* assemble the announcement message */
     OBJ_CONSTRUCT(&buf, opal_buffer_t);
     
@@ -276,7 +330,6 @@ static int announce(char *app, char *version, char *release)
     
     /* cleanup */
     OBJ_DESTRUCT(&buf);
-    OPAL_THREAD_UNLOCK(&lock);
     
     return ret;
 }
@@ -289,9 +342,6 @@ static int register_input(char *app,
 {
     opal_list_item_t *item;
     orcm_pnp_group_t *group;
-    bool found;
-    size_t sz;
-    orte_rmcast_channel_t channel;
     orcm_pnp_pending_request_t *request;
     int ret;
     
@@ -312,7 +362,6 @@ static int register_input(char *app,
      */
     OPAL_THREAD_LOCK(&lock);
     
-    found = false;
     for (item = opal_list_get_first(&groups);
          item != opal_list_get_end(&groups);
          item = opal_list_get_next(item)) {
@@ -327,33 +376,28 @@ static int register_input(char *app,
             request->cbfunc = cbfunc;
             opal_list_append(&group->requests, &request->super);
             
-            /* ensure we are listening for this tag on all known channels */
-            for (sz=0; sz < opal_value_array_get_size(&group->channels); sz++) {
-                channel = OPAL_VALUE_ARRAY_GET_ITEM(&group->channels, orte_rmcast_channel_t, sz);
-                OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                     "%s pnp:default:register_input opening channel %d",
-                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), channel));
-                /* open a channel to this group - will just return if
-                 * the channel already exists
-                 */
-                if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(&channel,
-                                                                    group->app,
-                                                                    NULL, -1, NULL,
-                                                                    ORTE_RMCAST_RECV))) {
-                    ORTE_ERROR_LOG(ret);
-                    OPAL_THREAD_UNLOCK(&lock);
-                    return;
-                }
-                /* setup to listen to it - will just return if we already are */
-                if (ORTE_SUCCESS != (ret = orte_rmcast.recv_nb(channel, tag,
-                                                               ORTE_RMCAST_PERSISTENT,
-                                                               recv_inputs, cbfunc))) {
-                    ORTE_ERROR_LOG(ret);
-                    OPAL_THREAD_UNLOCK(&lock);
-                    return ret;
-                }
+            /* ensure we are listening for this tag */
+            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                                 "%s pnp:default:register_input opening channel %d",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), group->channel));
+            /* open a channel to this group - will just return if
+             * the channel already exists
+             */
+            if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(&group->channel,
+                                                                group->app,
+                                                                NULL, -1, NULL,
+                                                                ORTE_RMCAST_RECV))) {
+                ORTE_ERROR_LOG(ret);
+                goto cleanup;
             }
-            found = true;
+            /* setup to listen to it - will just return if we already are */
+            if (ORTE_SUCCESS != (ret = orte_rmcast.recv_nb(group->channel, tag,
+                                                           ORTE_RMCAST_PERSISTENT,
+                                                           recv_inputs, cbfunc))) {
+                ORTE_ERROR_LOG(ret);
+                goto cleanup;
+            }
+            goto cleanup;
         }
     }
     
@@ -361,28 +405,28 @@ static int register_input(char *app,
      * and indicate that we want to listen to it if/when
      * it is announced
      */
-    if (!found) {
-        group = OBJ_NEW(orcm_pnp_group_t);
-        group->app = strdup(app);
-        if (NULL != version) {
-            group->version = strdup(version);
-        }
-        if (NULL != release) {
-            group->release = strdup(release);
-        }
-        /* record the request */
-        request = OBJ_NEW(orcm_pnp_pending_request_t);
-        request->tag = tag;
-        request->cbfunc = cbfunc;
-        opal_list_append(&group->requests, &request->super);
-        /* add to the list of groups */
-        opal_list_append(&groups, &group->super);
+    group = OBJ_NEW(orcm_pnp_group_t);
+    group->app = strdup(app);
+    if (NULL != version) {
+        group->version = strdup(version);
     }
-
+    if (NULL != release) {
+        group->release = strdup(release);
+    }
+    /* record the request */
+    request = OBJ_NEW(orcm_pnp_pending_request_t);
+    request->tag = tag;
+    request->cbfunc = cbfunc;
+    opal_list_append(&group->requests, &request->super);
+    /* add to the list of groups */
+    opal_list_append(&groups, &group->super);
+    ret = ORCM_SUCCESS;
+    
+cleanup:
     /* clear the thread */
     OPAL_THREAD_UNLOCK(&lock);
     
-    return ORCM_SUCCESS;
+    return ret;
 }
 
 static int register_input_buffer(char *app,
@@ -393,11 +437,8 @@ static int register_input_buffer(char *app,
 {
     opal_list_item_t *item;
     orcm_pnp_group_t *group;
-    bool found;
-    size_t sz;
-    orte_rmcast_channel_t channel;
     orcm_pnp_pending_request_t *request;
-    int ret;
+    int ret=ORCM_SUCCESS;
     
     /* bozo check */
     if (NULL == app) {
@@ -416,7 +457,6 @@ static int register_input_buffer(char *app,
      */
     OPAL_THREAD_LOCK(&lock);
     
-    found = false;
     for (item = opal_list_get_first(&groups);
          item != opal_list_get_end(&groups);
          item = opal_list_get_next(item)) {
@@ -430,68 +470,69 @@ static int register_input_buffer(char *app,
             request->tag = tag;
             request->cbfunc_buf = cbfunc;
             opal_list_append(&group->requests, &request->super);
-            /* ensure we are listening on all previously-known channels */
-            for (sz=0; sz < opal_value_array_get_size(&group->channels); sz++) {
-                channel = OPAL_VALUE_ARRAY_GET_ITEM(&group->channels, orte_rmcast_channel_t, sz);
-                OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                     "%s pnp:default:register_input_buffer opening channel %d",
-                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), channel));
-                /* open a channel to this group - will just return if
-                 * the channel already exists
+            if (ORTE_RMCAST_INVALID_CHANNEL == group->channel) {
+                /* if we don't know the channel, then just move on - we'll
+                 * get it when we see the announcement
                  */
-                if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(&channel,
-                                                                    group->app,
-                                                                    NULL, -1, NULL,
-                                                                    ORTE_RMCAST_RECV))) {
-                    ORTE_ERROR_LOG(ret);
-                    OPAL_THREAD_UNLOCK(&lock);
-                    return;
-                }
-                /* setup to listen to it - will just return if we already are */
-                if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(channel, tag,
-                                                                      ORTE_RMCAST_PERSISTENT,
-                                                                      recv_input_buffers, cbfunc))) {
-                    ORTE_ERROR_LOG(ret);
-                    OPAL_THREAD_UNLOCK(&lock);
-                    return ret;
-                }
+                goto cleanup;
             }
-            found = true;
+            
+            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                                 "%s pnp:default:register_input_buffer opening channel %d",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), group->channel));
+            /* open a channel to this group - will just return if
+             * the channel already exists
+             */
+            if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(&group->channel,
+                                                                group->app,
+                                                                NULL, -1, NULL,
+                                                                ORTE_RMCAST_RECV))) {
+                ORTE_ERROR_LOG(ret);
+                goto cleanup;
+            }
+            /* setup to listen to it - will just return if we already are */
+            if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(group->channel, tag,
+                                                                  ORTE_RMCAST_PERSISTENT,
+                                                                  recv_input_buffers, cbfunc))) {
+                ORTE_ERROR_LOG(ret);
+                goto cleanup;
+            }
+            goto cleanup;
         }
     }
     
-    /* if we didn't find at least one, then create the group
+    /* if we didn't find a match, then create the group
      * and indicate that we want to listen to it if/when
      * it is announced
      */
-    if (!found) {
-        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:register_input_buffer adding group app %s version %s release %s tag %d",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             app, (NULL == version) ? "NULL" : version,
-                             (NULL == release) ? "NULL" : release, tag));
-        
-        group = OBJ_NEW(orcm_pnp_group_t);
-        group->app = strdup(app);
-        if (NULL != version) {
-            group->version = strdup(version);
-        }
-        if (NULL != release) {
-            group->release = strdup(release);
-        }
-        /* record the request */
-        request = OBJ_NEW(orcm_pnp_pending_request_t);
-        request->tag = tag;
-        request->cbfunc_buf = cbfunc;
-        opal_list_append(&group->requests, &request->super);
-        /* add to the list of groups */
-        opal_list_append(&groups, &group->super);
-    }
+    OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                         "%s pnp:default:register_input_buffer adding group app %s version %s release %s tag %d",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         app, (NULL == version) ? "NULL" : version,
+                         (NULL == release) ? "NULL" : release, tag));
     
+    group = OBJ_NEW(orcm_pnp_group_t);
+    group->app = strdup(app);
+    if (NULL != version) {
+        group->version = strdup(version);
+    }
+    if (NULL != release) {
+        group->release = strdup(release);
+    }
+    /* record the request */
+    request = OBJ_NEW(orcm_pnp_pending_request_t);
+    request->tag = tag;
+    request->cbfunc_buf = cbfunc;
+    opal_list_append(&group->requests, &request->super);
+    /* add to the list of groups */
+    opal_list_append(&groups, &group->super);
+    ret = ORCM_SUCCESS;
+    
+cleanup:
     /* clear the thread */
     OPAL_THREAD_UNLOCK(&lock);
     
-    return ORCM_SUCCESS;
+    return ret;
 }
 
 static int deregister_input(char *app,
@@ -501,8 +542,6 @@ static int deregister_input(char *app,
 {
     opal_list_item_t *item;
     orcm_pnp_group_t *group;
-    orte_rmcast_channel_t channel;
-    size_t sz;
     int ret;
     
     /* bozo check */
@@ -530,13 +569,10 @@ static int deregister_input(char *app,
         if (0 == strcasecmp(group->app, app) &&
             (NULL == version || 0 == strcasecmp(group->version, version)) &&
             (NULL == release || 0 == strcasecmp(group->release, release))) {
-            for (sz=0; sz < opal_value_array_get_size(&group->channels); sz++) {
-                channel = OPAL_VALUE_ARRAY_GET_ITEM(&group->channels, orte_rmcast_channel_t, sz);
-                OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                     "%s pnp:default:deregister_input closing channel %d",
-                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), channel));
-                orte_rmcast.cancel_recv(channel, tag);
-            }
+            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                                 "%s pnp:default:deregister_input closing channel %d",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), group->channel));
+            orte_rmcast.cancel_recv(group->channel, tag);
         }
     }
     
@@ -1003,10 +1039,8 @@ static int default_finalize(void)
 
 /****    LOCAL  FUNCTIONS    ****/
 static void recv_announcements(int status,
-                               orte_rmcast_channel_t channel,
-                               orte_rmcast_tag_t tag,
-                               orte_process_name_t *sender,
-                               orte_rmcast_seq_t seq_num,
+                               orte_process_name_t *fake,
+                               orcm_pnp_tag_t tag,
                                opal_buffer_t *buf, void *cbdata)
 {
     opal_list_item_t *item, *itm2;
@@ -1014,12 +1048,19 @@ static void recv_announcements(int status,
     orcm_pnp_source_t *source;
     char *app, *version, *release;
     orte_process_name_t originator;
-    size_t sz;
-    bool found;
     opal_buffer_t ann;
-    orte_rmcast_channel_t output;
     int rc, n;
     orcm_pnp_pending_request_t *request;
+    orte_rmcast_channel_t output;
+    orte_process_name_t sender;
+    orcm_pnp_send_t *pkt;
+    
+    /* unpack the name of the sender */
+    n=1;
+    if (ORCM_SUCCESS != (rc = opal_dss.unpack(buf, &sender, &n, ORTE_NAME))) {
+        ORTE_ERROR_LOG(rc);
+        return;
+    }
     
     /* unpack the app's name */
     n=1;
@@ -1072,20 +1113,8 @@ static void recv_announcements(int status,
             free(app);
             free(version);
             free(release);
-            /* record the channel it is on, if it is a new one */
-            found = false;
-            for (sz=0; sz < opal_value_array_get_size(&group->channels); sz++) {
-                if (output == OPAL_VALUE_ARRAY_GET_ITEM(&group->channels, orte_rmcast_channel_t, sz)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                     "%s pnp:default:recvd_ann adding new channel %d",
-                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), output));
-                opal_value_array_append_item(&group->channels, &output);
-            }
+            /* record the channel it is on */
+            group->channel = output;
             /* do we want to listen to this group? */
             if (0 == opal_list_get_size(&group->requests)) {
                 /* nope - move along */
@@ -1143,8 +1172,8 @@ static void recv_announcements(int status,
                     }
                 }
             }
+            goto senders;
         }
-        goto senders;
     }
     
     /* if we get here, then this is a new application
@@ -1158,14 +1187,14 @@ static void recv_announcements(int status,
     group->app = app;
     group->version = version;
     group->release = release;
-    opal_value_array_append_item(&group->channels, &output);
+    group->channel = output;
     opal_list_append(&groups, &group->super);
     
 senders:    
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:received announcement from source %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         ORTE_NAME_PRINT(sender)));
+                         ORTE_NAME_PRINT(&sender)));
     
     /* do we already know this source? */
     for (item = opal_list_get_first(&group->members);
@@ -1173,8 +1202,8 @@ senders:
          item = opal_list_get_next(item)) {
         source = (orcm_pnp_source_t*)item;
         
-        if (sender->jobid == source->name.jobid &&
-            sender->vpid == source->name.vpid) {
+        if (sender.jobid == source->name.jobid &&
+            sender.vpid == source->name.vpid) {
             goto response;
         }
     }
@@ -1182,14 +1211,14 @@ senders:
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:received adding source %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         ORTE_NAME_PRINT(sender)));
+                         ORTE_NAME_PRINT(&sender)));
     
     /* if we get here, then this is a new source - add
      * it to our list
      */
     source = OBJ_NEW(orcm_pnp_source_t);
-    source->name.jobid = sender->jobid;
-    source->name.vpid = sender->vpid;
+    source->name.jobid = sender.jobid;
+    source->name.vpid = sender.vpid;
     opal_list_append(&group->members, &source->super);
     
 response:
@@ -1225,7 +1254,7 @@ response:
                          "%s pnp:default:received announcement sending response",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
     
-    /* assemble the announcement message */
+    /* assemble the announcement response */
     OBJ_CONSTRUCT(&ann, opal_buffer_t);
     
     /* pack the common elements */
@@ -1238,7 +1267,7 @@ response:
     /* tell everyone we are responding to an announcement
      * so they don't respond back
      */
-    if (ORCM_SUCCESS != (rc = opal_dss.pack(&ann, sender, 1, ORTE_NAME))) {
+    if (ORCM_SUCCESS != (rc = opal_dss.pack(&ann, &sender, 1, ORTE_NAME))) {
         ORTE_ERROR_LOG(rc);
         OBJ_DESTRUCT(&ann);
         OPAL_THREAD_UNLOCK(&lock);
@@ -1268,8 +1297,6 @@ static void recv_inputs(int status,
     opal_list_item_t *item;
     orcm_pnp_group_t *group, *grp;
     orcm_pnp_source_t *source, *src;
-    bool found;
-    size_t sz;
     int rc;
     
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
@@ -1283,19 +1310,15 @@ static void recv_inputs(int status,
     OPAL_THREAD_LOCK(&lock);
     
     /* locate this sender on our list */
-    found = false;
     grp = NULL;
     for (item = opal_list_get_first(&groups);
-         item != opal_list_get_end(&groups) && !found;
+         item != opal_list_get_end(&groups);
          item = opal_list_get_next(item)) {
         group = (orcm_pnp_group_t*)item;
         
-        for (sz=0; sz < opal_value_array_get_size(&group->channels); sz++) {
-            if (channel == OPAL_VALUE_ARRAY_GET_ITEM(&group->channels, orte_rmcast_channel_t, sz)) {
-                grp = group;
-                found = true;
-                break;
-            }
+        if (channel == group->channel) {
+            grp = group;
+            break;
         }
     }
     if (NULL == grp) {
@@ -1309,6 +1332,13 @@ static void recv_inputs(int status,
          item != opal_list_get_end(&grp->members);
          item = opal_list_get_next(item)) {
         source = (orcm_pnp_source_t*)item;
+        
+        if (ORTE_JOBID_WILDCARD == source->name.jobid &&
+            ORTE_VPID_WILDCARD == source->name.vpid) {
+            /* everyone matches */
+            src = source;
+            break;
+        }
         
         if (sender->jobid == source->name.jobid &&
             sender->vpid == source->name.vpid) {
@@ -1366,8 +1396,6 @@ static void recv_input_buffers(int status,
     opal_list_item_t *item;
     orcm_pnp_group_t *group, *grp;
     orcm_pnp_source_t *source, *src;
-    bool found;
-    size_t sz;
     int rc;
     
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
@@ -1381,19 +1409,15 @@ static void recv_input_buffers(int status,
     OPAL_THREAD_LOCK(&lock);
     
     /* locate this sender on our list */
-    found = false;
     grp = NULL;
     for (item = opal_list_get_first(&groups);
-         item != opal_list_get_end(&groups) && !found;
+         item != opal_list_get_end(&groups);
          item = opal_list_get_next(item)) {
         group = (orcm_pnp_group_t*)item;
         
-        for (sz=0; sz < opal_value_array_get_size(&group->channels); sz++) {
-            if (channel == OPAL_VALUE_ARRAY_GET_ITEM(&group->channels, orte_rmcast_channel_t, sz)) {
-                grp = group;
-                found = true;
-                break;
-            }
+        if (channel == group->channel) {
+            grp = group;
+            break;
         }
     }
     if (NULL == grp) {
@@ -1411,6 +1435,13 @@ static void recv_input_buffers(int status,
          item != opal_list_get_end(&grp->members);
          item = opal_list_get_next(item)) {
         source = (orcm_pnp_source_t*)item;
+        
+        if (ORTE_JOBID_WILDCARD == source->name.jobid &&
+            ORTE_VPID_WILDCARD == source->name.vpid) {
+            /* everyone matches */
+            src = source;
+            break;
+        }
         
         if (sender->jobid == source->name.jobid &&
             sender->vpid == source->name.vpid) {
@@ -1484,6 +1515,10 @@ static int pack_announcement(opal_buffer_t *buf)
 {
     int ret;
     
+    if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, ORTE_PROC_MY_NAME, 1, ORTE_NAME))) {
+        ORTE_ERROR_LOG(ret);
+        return ret;
+    }
     if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, &my_app, 1, OPAL_STRING))) {
         ORTE_ERROR_LOG(ret);
         return ret;
@@ -1557,13 +1592,14 @@ static void rml_callback_buffer(int status,
 /* A message packet with NULL iovec and NULL buffer entry signals
  * that the thread should terminate
  */
-static void* process_msgs(opal_object_t *obj)
+static void* recv_messages(opal_object_t *obj)
 {
-    orcm_msg_packet_t *msgpkt;
+    orcm_pnp_recv_t *msgpkt;
     opal_list_item_t *itmreq;
     orte_process_name_t sender;
     orcm_pnp_group_t *group;
     orcm_pnp_pending_request_t *request;
+    int ret;
     
     while (1) {
         OPAL_THREAD_LOCK(&recvlock);
@@ -1572,13 +1608,20 @@ static void* process_msgs(opal_object_t *obj)
             opal_condition_wait(&recvcond, &recvlock);
         }
         
+        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                             "%s pnp:default processing recv list",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        
         /* process all messages on the list */
-        while (NULL != (msgpkt = (orcm_msg_packet_t*)opal_list_remove_first(&recvs))) {
+        while (NULL != (msgpkt = (orcm_pnp_recv_t*)opal_list_remove_first(&recvs))) {
             
             /* see if this is the terminator message */
             if (NULL == msgpkt->grp) {
                 /* time to exit! */
-                return PTHREAD_CANCELED;
+                OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                                     "%s pnp:default recv terminate msg recvd",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+                return OPAL_THREAD_CANCELLED;
             }
             
             sender.jobid = msgpkt->src->name.jobid;
@@ -1586,7 +1629,7 @@ static void* process_msgs(opal_object_t *obj)
             group = msgpkt->grp;
             
             OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                 "%s pnp:default processing msg from %s",
+                                 "%s pnp:default receiving msg from %s",
                                  ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                                  ORTE_NAME_PRINT(&sender)));
             
@@ -1621,16 +1664,14 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
                              void* cbdata)
 {
     int rc;
-    int32_t n, i, iovec_count;
+    int32_t n, i, sz, iovec_count;
     int8_t flag;
     orcm_pnp_tag_t tag;
     struct iovec *iovec_array;
     orcm_pnp_group_t *group, *grp;
     orcm_pnp_source_t *source, *src;
     opal_list_item_t *item;
-    size_t sz;
     orte_rmcast_channel_t channel;
-    bool found;
     
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default recvd direct msg from %s",
@@ -1650,19 +1691,15 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
     }
     
     /* locate this sender on our list */
-    found = false;
     grp = NULL;
     for (item = opal_list_get_first(&groups);
-         item != opal_list_get_end(&groups) && !found;
+         item != opal_list_get_end(&groups);
          item = opal_list_get_next(item)) {
         group = (orcm_pnp_group_t*)item;
         
-        for (sz=0; sz < opal_value_array_get_size(&group->channels); sz++) {
-            if (channel == OPAL_VALUE_ARRAY_GET_ITEM(&group->channels, orte_rmcast_channel_t, sz)) {
-                grp = group;
-                found = true;
-                break;
-            }
+        if (channel == group->channel) {
+            grp = group;
+            break;
         }
     }
     if (NULL == grp) {

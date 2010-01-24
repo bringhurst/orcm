@@ -89,11 +89,7 @@ int main(int argc, char* argv[])
     }
     
     /* just sit here */
-    while (1) {
-        for (i=0; i < 100000; i++) {
-            pi = 3.14159 * (double)i;
-        }
-    }
+    opal_event_dispatch();
 
 cleanup:
     /* Remove the TERM and INT signal handlers */

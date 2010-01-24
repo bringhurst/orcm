@@ -20,7 +20,7 @@ orcm_pnp_base_component_t mca_pnp_default_component = {
        information about the component itself */
     
     {
-        ORCM_PNP_BASE_VERSION_2_0_0,
+        ORCM_PNP_BASE_VERSION_1_0_0,
         
         "default",
         OPENRCM_MAJOR_VERSION,

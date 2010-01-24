@@ -89,7 +89,7 @@ int orcm_init(orcm_proc_type_t flags)
         /* apps are always started by the daemon, so
          * they will be told the right components to open
          */
-        if (ORTE_SUCCESS != (ret = orte_init(NULL, NULL, ORTE_PROC_APP))) {
+        if (ORTE_SUCCESS != (ret = orte_init(NULL, NULL, ORTE_PROC_NON_MPI))) {
             error = "orte_init";
             goto error;
         }
