@@ -54,7 +54,6 @@ int orcm_init(orcm_proc_type_t flags)
     if (OPENRCM_MASTER & flags) {
         /* add envars the master needs */
         putenv("OMPI_MCA_rmaps=resilient");
-        putenv("OMPI_MCA_ras=cm");
         putenv("OMPI_MCA_plm=rsh");
         
         /* if we are the master, then init us

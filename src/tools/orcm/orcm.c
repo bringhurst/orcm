@@ -154,8 +154,6 @@ static void recv_bootstrap(int status, orte_process_name_t* sender,
                            opal_buffer_t *buffer, orte_rml_tag_t tag,
                            void* cbdata);
 
-static int ssh_launch(char *host);
-
 #if ORTE_ENABLE_MULTICAST
 static void daemon_announce(int status,
                             orte_rmcast_channel_t channel,
@@ -203,14 +201,10 @@ int main(int argc, char *argv[])
 {
     int ret, i;
     opal_cmd_line_t cmd_line;
-    FILE *fp;
     char *cmd;
     orte_proc_state_t state;
     orte_job_t *daemons;
-    char **inpt, **xfer;
-    char *app;
-    char **hosts = NULL;
-    int num_apps;
+    orte_app_context_t *app;
     
     /***************
      * Initialize
@@ -380,54 +374,34 @@ int main(int argc, char *argv[])
         orte_trigger_event(&orteds_exit);
     }
     
-    /* if we were given hosts to startup, ssh a bootstrapping
-     * daemon onto each of them
+    /* if we were given hosts to startup, create an app for the
+     * daemon job so it can start the virtual machine
      */
-    if (NULL != my_globals.hosts) {
-        hosts = opal_argv_split(my_globals.hosts, ',');
-        for (i=0; NULL != hosts[i]; i++) {
-            if (ORCM_SUCCESS != (ret = ssh_launch(hosts[i]))) {
-                ORTE_ERROR_LOG(ret);
-                orte_trigger_event(&orte_exit);
-            }
+    if (NULL != my_globals.hosts || NULL != my_globals.hostfile) {
+        /* create an app */
+        app = OBJ_NEW(orte_app_context_t);
+        if (NULL != my_globals.hosts) {
+            app->dash_host = opal_argv_split(my_globals.hosts, ',');
         }
-    } else if (NULL != my_globals.hostfile) {
-        fp = fopen(my_globals.hostfile, "r");
-        if (NULL == fp) {
-            /* didn't find it or can't read it */
-            ret = 1;
-            orte_trigger_event(&orte_exit);
+        if (NULL != my_globals.hostfile) {
+            app->hostfile = strdup(my_globals.hostfile);
         }
-        while (NULL != (cmd = cm_getline(fp))) {
-            if (ORCM_SUCCESS != (ret = ssh_launch(cmd))) {
-                ORTE_ERROR_LOG(ret);
-                free(cmd);
-                orte_trigger_event(&orte_exit);
-            }
-            free(cmd);
-        }
-        fclose(fp);
-    } else if (NULL != orte_default_hostfile) {
-        fp = fopen(orte_default_hostfile, "r");
-        if (NULL == fp) {
-            /* didn't find it or can't read it */
-            ret = 1;
-            orte_trigger_event(&orte_exit);
-        }
-        while (NULL != (cmd = cm_getline(fp))) {
-            if (ORCM_SUCCESS != (ret = ssh_launch(cmd))) {
-                ORTE_ERROR_LOG(ret);
-                free(cmd);
-                orte_trigger_event(&orte_exit);
-            }
-            free(cmd);
-        }
-        fclose(fp);        
+        /* add it to the daemon job */
+        opal_pointer_array_add(daemons->apps, app);
+        daemons->num_apps = 1;
+        /* ensure our launched daemons do not bootstrap */
+        orte_daemon_bootstrap = false;
     }
     
     /* set the mapping policy to byslot */
     ORTE_SET_MAPPING_POLICY(ORTE_MAPPING_BYSLOT);
 
+    /* launch the virtual machine - this will launch a daemon on
+     * each node. It will simply return if there are no known
+     * nodes other than the one we are on
+     */
+    orte_plm.spawn(daemons);
+    
     opal_output(orte_clean_output, "\nCLUSTER MANAGER RUNNING...\n");
 
     /* tell the configuration interface to read our
@@ -1644,154 +1618,4 @@ static void ps_recv(int status,
         ORTE_ERROR_LOG(rc);
     }
     OBJ_DESTRUCT(&response);
-}
-
-static void set_handler_default(int sig)
-{
-    struct sigaction act;
-    
-    act.sa_handler = SIG_DFL;
-    act.sa_flags = 0;
-    sigemptyset(&act.sa_mask);
-    
-    sigaction(sig, &act, (struct sigaction *)0);
-}
-
-static int ssh_launch(char *host)
-{
-    long fd, fdmax = sysconf(_SC_OPEN_MAX);
-    pid_t pid;
-    char **argv=NULL, *rcmd, *sh_name;
-    struct passwd *p;
-    char *path, *ld_path, *opal_prefix;
-    char *lib_base, *bin_base;
-    sigset_t sigs;
-
-    /* get some critical envars */
-    path = getenv("PATH");
-    ld_path = getenv("LD_LIBRARY_PATH");
-    opal_prefix = getenv("OPAL_PREFIX");
-    if (NULL == opal_prefix) {
-        opal_output(0, "NULL opal_prefix");
-        return ORTE_ERR_FATAL;
-    }
-    lib_base = opal_basename(opal_install_dirs.libdir);
-    bin_base = opal_basename(opal_install_dirs.bindir);
-
-    /* get our shell */
-    p = getpwuid(getuid());
-    if( NULL == p ) {
-        /* This user is unknown to the system. Therefore, there is no reason we
-         * spawn whatsoever in his name. Give up with a HUGE error message.
-         */
-        opal_output(0, "No password entry found for you - sorry");
-        return ORTE_ERR_FATAL;
-    }
-    sh_name = rindex(p->pw_shell, '/');
-    if( NULL == sh_name ) {
-        /* Malformed shell */
-        opal_output(0, "No idea what shell you are running - sorry");
-        ORTE_ERROR_LOG(ORTE_ERR_FATAL);
-        return ORTE_ERR_FATAL;
-    }
-    ++sh_name; /* skip the '/' */
-
-    /* form command based on shell type */
-    if (0 == strcmp(sh_name, "bash") ||
-        0 == strcmp(sh_name, "sh") ||
-        0 == strcmp(sh_name, "ksh") ||
-        0 == strcmp(sh_name, "zsh")) {
-        asprintf (&rcmd,
-                  "OPAL_PREFIX=%s; export OPAL_PREFIX; PATH=%s/%s:$PATH ; export PATH ; "
-                  "LD_LIBRARY_PATH=%s/%s:$LD_LIBRARY_PATH ; export LD_LIBRARY_PATH ; "
-                  "%s/%s/orted",
-                  opal_prefix,
-                  opal_prefix, bin_base,
-                  opal_prefix, lib_base,
-                  opal_prefix, bin_base);
-    } else if (0 == strcmp(sh_name, "tcsh") ||
-               0 == strcmp(sh_name, "csh")) {
-        asprintf (&rcmd,
-                  "setenv OPAL_PREFIX %s ; set path = ( %s/%s $path ) ; "
-                  "if ( $?LD_LIBRARY_PATH == 1 ) "
-                  "set OMPI_have_llp ; "
-                  "if ( $?LD_LIBRARY_PATH == 0 ) "
-                  "setenv LD_LIBRARY_PATH %s/%s ; "
-                  "if ( $?OMPI_have_llp == 1 ) "
-                  "setenv LD_LIBRARY_PATH %s/%s:$LD_LIBRARY_PATH ; "
-                  "%s/%s/orted",
-                  opal_prefix,
-                  opal_prefix, bin_base,
-                  opal_prefix, lib_base,
-                  opal_prefix, lib_base,
-                  opal_prefix, bin_base);
-    } else {
-        opal_output(0, "No idea what shell you are running - sorry");
-        return ORTE_ERR_FATAL;
-    }
-    
-    /* setup the argv */
-    opal_argv_append_nosize(&argv, "ssh");
-    opal_argv_append_nosize(&argv, host);
-    opal_argv_append_nosize(&argv, rcmd);
-    free(rcmd);
-    /* add the cmd line options we need */
-    opal_argv_append_nosize(&argv, "-mca");
-    opal_argv_append_nosize(&argv, "routed");
-    opal_argv_append_nosize(&argv, "cm");
-    opal_argv_append_nosize(&argv, "-mca");
-    opal_argv_append_nosize(&argv, "ess");
-    opal_argv_append_nosize(&argv, "cm");
-    opal_argv_append_nosize(&argv, "-mca");
-    opal_argv_append_nosize(&argv, "rmcast_base_if_include");
-    opal_argv_append_nosize(&argv, "10.0");
-    opal_argv_append_nosize(&argv, "-bootstrap");
-    
-    /* fork a child to exec the rsh/ssh session */
-    pid = fork();
-    if (pid < 0) {
-        ORTE_ERROR_LOG(ORTE_ERR_SYS_LIMITS_CHILDREN);
-        return ORTE_ERR_SYS_LIMITS_CHILDREN;
-    }
-    
-    /* child */
-    if (pid == 0) {
-        /* close all file descriptors w/ exception of stdin/stdout/stderr */
-        for(fd=3; fd<fdmax; fd++)
-            close(fd);
-        
-        /* Set signal handlers back to the default.  Do this close
-         to the execve() because the event library may (and likely
-         will) reset them.  If we don't do this, the event
-         library may have left some set that, at least on some
-         OS's, don't get reset via fork() or exec().  Hence, the
-         orted could be unkillable (for example). */
-        
-        set_handler_default(SIGTERM);
-        set_handler_default(SIGINT);
-        set_handler_default(SIGHUP);
-        set_handler_default(SIGPIPE);
-        set_handler_default(SIGCHLD);
-        
-        /* Unblock all signals, for many of the same reasons that
-         we set the default handlers, above.  This is noticable
-         on Linux where the event library blocks SIGTERM, but we
-         don't want that blocked by the orted (or, more
-         specifically, we don't want it to be blocked by the
-         orted and then inherited by the ORTE processes that it
-         forks, making them unkillable by SIGTERM). */
-        sigprocmask(0, 0, &sigs);
-        sigprocmask(SIG_UNBLOCK, &sigs, 0);
-        
-        /* exec the slave */
-        execv("/usr/bin/ssh", argv);
-        opal_output(0, "plm:rsh: execv of ssh failed with errno=%s(%d)\n",
-                    strerror(errno), errno);
-        exit(-1);    
-    } else {
-        /* cleanup */
-        opal_argv_free(argv);
-    }
-    
-    return ORTE_SUCCESS;
 }
