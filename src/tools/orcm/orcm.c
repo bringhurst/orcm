@@ -1275,9 +1275,16 @@ static void daemon_announce(int status,
                 ORTE_ERROR_LOG(rc);
                 goto depart;
             }
+            /* unpack its uri */
+            n = 1;
+            if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &uri, &n, OPAL_STRING))) {
+                ORTE_ERROR_LOG(rc);
+                goto depart;
+            }
             name.jobid = ORTE_JOBID_INVALID;
             name.vpid = ORTE_VPID_INVALID;
-            setup_daemon(&name, nodename, NULL, buf);
+            setup_daemon(&name, nodename, uri, buf);
+            free(uri);
             OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
                                  "%s returning name %s",
                                  ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
