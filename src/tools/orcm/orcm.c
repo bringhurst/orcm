@@ -153,6 +153,7 @@ static void recv_boot_req(int status, orte_process_name_t* sender,
 static void recv_bootstrap(int status, orte_process_name_t* sender,
                            opal_buffer_t *buffer, orte_rml_tag_t tag,
                            void* cbdata);
+static char* regen_uri(char *old_uri, orte_process_name_t *name);
 
 #if ORTE_ENABLE_MULTICAST
 static void daemon_announce(int status,
@@ -1395,6 +1396,7 @@ static int setup_daemon(orte_process_name_t *name,
     int32_t num_values;
     opal_sysinfo_value_t *info;
     opal_list_item_t *item;
+    char *new_uri;
     
     /* find the node */
     node = NULL;
@@ -1495,18 +1497,20 @@ static int setup_daemon(orte_process_name_t *name,
             }
             /* update its rml contact info, if provided */
             if (NULL != rml_uri) {
-                node->daemon->rml_uri = strdup(rml_uri);
+                /* get it with the new name */
+                new_uri = regen_uri(rml_uri, name);
+                node->daemon->rml_uri = strdup(new_uri);
                 /* update in the rml too! */
                 OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
                                      "%s updating daemon %s rml to %s",
                                      ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                     ORTE_NAME_PRINT(name), rml_uri));
-                if (ORTE_SUCCESS != (rc = orte_rml.set_contact_info(rml_uri))) {
+                                     ORTE_NAME_PRINT(name), new_uri));
+                if (ORTE_SUCCESS != (rc = orte_rml.set_contact_info(new_uri))) {
                     ORTE_ERROR_LOG(rc);
-                    free(rml_uri);
+                    free(new_uri);
                     return(rc);
                 }                
-                free(rml_uri);
+                free(new_uri);
             }
         } else {
             /* no daemon was previously defined for it. make one */
@@ -1516,18 +1520,20 @@ static int setup_daemon(orte_process_name_t *name,
             name->jobid = proc->name.jobid;
             name->vpid = proc->name.vpid;
             if (NULL != rml_uri) {
-                proc->rml_uri = strdup(rml_uri);
+                /* get it with the new name */
+                new_uri = regen_uri(rml_uri, name);
+                proc->rml_uri = strdup(new_uri);
                 /* update in the rml too! */
                 OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
                                      "%s updating daemon %s rml to %s",
                                      ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                     ORTE_NAME_PRINT(name), rml_uri));
-                if (ORTE_SUCCESS != (rc = orte_rml.set_contact_info(rml_uri))) {
+                                     ORTE_NAME_PRINT(name), new_uri));
+                if (ORTE_SUCCESS != (rc = orte_rml.set_contact_info(new_uri))) {
                     ORTE_ERROR_LOG(rc);
-                    free(rml_uri);
+                    free(new_uri);
                     return(rc);
                 }
-                free(rml_uri);
+                free(new_uri);
             }
             OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
                                  "%s add daemon %s",
@@ -1562,10 +1568,8 @@ static int setup_daemon(orte_process_name_t *name,
                                      ORTE_NAME_PRINT(name), rml_uri));
                 if (ORTE_SUCCESS != (rc = orte_rml.set_contact_info(rml_uri))) {
                     ORTE_ERROR_LOG(rc);
-                    free(rml_uri);
                     return(rc);
                 }
-                free(rml_uri);
                 proc->rml_uri = strdup(rml_uri);
             }
             return ORTE_SUCCESS;
@@ -1589,10 +1593,8 @@ static int setup_daemon(orte_process_name_t *name,
                          ORTE_NAME_PRINT(name), rml_uri));
     if (ORTE_SUCCESS != (rc = orte_rml.set_contact_info(rml_uri))) {
         ORTE_ERROR_LOG(rc);
-        free(rml_uri);
         return(rc);
     }
-    free(rml_uri);
     node->daemon = proc;
     OBJ_RETAIN(proc);
     /* add the daemon to the daemon job object */
@@ -1677,4 +1679,14 @@ static void ps_recv(int status,
         ORTE_ERROR_LOG(rc);
     }
     OBJ_DESTRUCT(&response);
+}
+
+static char* regen_uri(char *old_uri, orte_process_name_t *name)
+{
+    char *tmp, *new;
+    
+    tmp = strchr(old_uri, ';');
+    tmp++;
+    asprintf(&new, "%s;%s", ORTE_NAME_PRINT(name), tmp);
+    return new;
 }
