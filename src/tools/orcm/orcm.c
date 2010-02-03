@@ -1289,6 +1289,9 @@ static void daemon_announce(int status,
             uri = orte_rml.get_contact_info();
             opal_dss.pack(&answer, &uri, 1, OPAL_STRING);
             free(uri);
+            /* tell it how many daemons exist */
+            n = orte_process_info.num_procs;
+            opal_dss.pack(&answer, &n, 1, OPAL_INT32);
             break;
         case ORTE_DAEMON_CHECKIN_CMD:
             /* unpack the node it is on */
@@ -1308,6 +1311,9 @@ static void daemon_announce(int status,
             uri = orte_rml.get_contact_info();
             opal_dss.pack(&answer, &uri, 1, OPAL_STRING);
             free(uri);
+            /* tell it how many daemons exist */
+            n = orte_process_info.num_procs;
+            opal_dss.pack(&answer, &n, 1, OPAL_INT32);
             break;
         case ORTE_TOOL_CHECKIN_CMD:
             /* unpack the node it is on */
@@ -1366,6 +1372,8 @@ static orte_proc_t* add_daemon(orte_job_t *daemons, orte_node_t *node)
     /* point the node to the daemon */
     node->daemon = proc;
     OBJ_RETAIN(proc);  /* maintain accounting */
+    /* ensure I know the correct count */
+    orte_process_info.num_procs++;
     return proc;
 }
 
