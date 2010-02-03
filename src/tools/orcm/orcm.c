@@ -1489,6 +1489,13 @@ static int setup_daemon(orte_process_name_t *name,
             /* update its rml contact info, if provided */
             if (NULL != rml_uri) {
                 node->daemon->rml_uri = strdup(rml_uri);
+                /* update in the rml too! */
+                if (ORTE_SUCCESS != (rc = orte_rml.set_contact_info(rml_uri))) {
+                    ORTE_ERROR_LOG(rc);
+                    free(rml_uri);
+                    return(rc);
+                }                
+                free(rml_uri);
             }
         } else {
             /* no daemon was previously defined for it. make one */
@@ -1499,6 +1506,13 @@ static int setup_daemon(orte_process_name_t *name,
             name->vpid = proc->name.vpid;
             if (NULL != rml_uri) {
                 proc->rml_uri = strdup(rml_uri);
+                /* update in the rml too! */
+                if (ORTE_SUCCESS != (rc = orte_rml.set_contact_info(rml_uri))) {
+                    ORTE_ERROR_LOG(rc);
+                    free(rml_uri);
+                    return(rc);
+                }
+                free(rml_uri);
             }
             OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
                                  "%s add daemon %s",
