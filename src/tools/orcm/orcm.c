@@ -1490,6 +1490,10 @@ static int setup_daemon(orte_process_name_t *name,
             if (NULL != rml_uri) {
                 node->daemon->rml_uri = strdup(rml_uri);
                 /* update in the rml too! */
+                OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
+                                     "%s updating daemon %s rml to %s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     ORTE_NAME_PRINT(name), rml_uri));
                 if (ORTE_SUCCESS != (rc = orte_rml.set_contact_info(rml_uri))) {
                     ORTE_ERROR_LOG(rc);
                     free(rml_uri);
@@ -1507,6 +1511,10 @@ static int setup_daemon(orte_process_name_t *name,
             if (NULL != rml_uri) {
                 proc->rml_uri = strdup(rml_uri);
                 /* update in the rml too! */
+                OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
+                                     "%s updating daemon %s rml to %s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     ORTE_NAME_PRINT(name), rml_uri));
                 if (ORTE_SUCCESS != (rc = orte_rml.set_contact_info(rml_uri))) {
                     ORTE_ERROR_LOG(rc);
                     free(rml_uri);
@@ -1540,6 +1548,17 @@ static int setup_daemon(orte_process_name_t *name,
                 if (NULL != proc->rml_uri) {
                     free(proc->rml_uri);
                 }
+                /* update in the rml too! */
+                OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
+                                     "%s updating daemon %s rml to %s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     ORTE_NAME_PRINT(name), rml_uri));
+                if (ORTE_SUCCESS != (rc = orte_rml.set_contact_info(rml_uri))) {
+                    ORTE_ERROR_LOG(rc);
+                    free(rml_uri);
+                    return(rc);
+                }
+                free(rml_uri);
                 proc->rml_uri = strdup(rml_uri);
             }
             return ORTE_SUCCESS;
@@ -1556,6 +1575,17 @@ static int setup_daemon(orte_process_name_t *name,
     if (NULL != rml_uri) {
         proc->rml_uri = strdup(rml_uri);
     }
+    /* update in the rml too! */
+    OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
+                         "%s updating daemon %s rml to %s",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         ORTE_NAME_PRINT(name), rml_uri));
+    if (ORTE_SUCCESS != (rc = orte_rml.set_contact_info(rml_uri))) {
+        ORTE_ERROR_LOG(rc);
+        free(rml_uri);
+        return(rc);
+    }
+    free(rml_uri);
     node->daemon = proc;
     OBJ_RETAIN(proc);
     /* add the daemon to the daemon job object */
