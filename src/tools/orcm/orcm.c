@@ -1498,7 +1498,10 @@ static int setup_daemon(orte_process_name_t *name,
             /* update its rml contact info, if provided */
             if (NULL != rml_uri) {
                 /* get it with the new name */
-                new_uri = regen_uri(rml_uri, name);
+                if (NULL == (new_uri = regen_uri(rml_uri, name))) {
+                    ORTE_ERROR_LOG(ORTE_ERR_FATAL);
+                    return ORTE_ERR_FATAL;
+                }
                 node->daemon->rml_uri = strdup(new_uri);
                 /* update in the rml too! */
                 OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
@@ -1521,7 +1524,10 @@ static int setup_daemon(orte_process_name_t *name,
             name->vpid = proc->name.vpid;
             if (NULL != rml_uri) {
                 /* get it with the new name */
-                new_uri = regen_uri(rml_uri, name);
+                if (NULL == (new_uri = regen_uri(rml_uri, name))) {
+                    ORTE_ERROR_LOG(ORTE_ERR_FATAL);
+                    return ORTE_ERR_FATAL;
+                }
                 proc->rml_uri = strdup(new_uri);
                 /* update in the rml too! */
                 OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
@@ -1683,10 +1689,16 @@ static void ps_recv(int status,
 
 static char* regen_uri(char *old_uri, orte_process_name_t *name)
 {
-    char *tmp, *new;
+    char *tmp, *new, *sname;
+    int rc;
     
     tmp = strchr(old_uri, ';');
     tmp++;
-    asprintf(&new, "%s;%s", ORTE_NAME_PRINT(name), tmp);
+    if (ORTE_SUCCESS != (rc = orte_util_convert_process_name_to_string(&sname, name))) {
+        ORTE_ERROR_LOG(rc);
+        return NULL;
+    }
+    asprintf(&new, "%s;%s", sname, tmp);
+    free(sname);
     return new;
 }
