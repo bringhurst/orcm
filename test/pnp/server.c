@@ -77,15 +77,15 @@ int main(int argc, char* argv[])
         goto cleanup;
     }
     
-    /* we want to accept ALL input messages */
-    if (ORCM_SUCCESS != (rc = orcm_leader.set_leader("CLIENT", "1.0", "alpha",
+    /* we want to accept ALL input messages from all versions and releases of client app */
+    if (ORCM_SUCCESS != (rc = orcm_leader.set_leader("CLIENT", NULL, NULL,
                                                      ORCM_LEADER_WILDCARD, ldr_failed))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
     
-    /* we want to listen to the CLIENT app */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("CLIENT", "1.0", "alpha",
+    /* we want to listen to all versions and releases of the CLIENT app */
+    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("CLIENT", NULL, NULL,
                                                       ORCM_PNP_TAG_OUTPUT, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
