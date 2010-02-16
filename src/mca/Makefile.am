@@ -13,7 +13,7 @@
 # foo, and then "make all" in this Makefile.am.  To be precise, if "."
 # is not in SUBDIRS, this Makefile.am is processed after all the dirs
 # listed in SUBDIRS).
-SUBDIRS = cfgi clip fddp leader pnp sensor
+SUBDIRS = cfgi clip leader pnp
 
 # The "noinst" prefix means that this library will not be installed,
 # but it will be built (i.e., its only purpose in life is to be
@@ -35,10 +35,8 @@ libopenrcm_mca_la_SOURCES =
 libopenrcm_mca_la_DEPENDENCIES = \
         cfgi/libmca_cfgi.la \
         clip/libmca_clip.la \
-        fddp/libmca_fddp.la \
         leader/libmca_leader.la \
-        pnp/libmca_pnp.la \
-        sensor/libmca_sensor.la
+        pnp/libmca_pnp.la
 
 # The LIBADD line is where you list the subdirectory convenience
 # libraries.  Hence, libopenrcm_mca.la will effectively be the union of

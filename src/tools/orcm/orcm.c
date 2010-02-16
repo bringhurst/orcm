@@ -72,6 +72,7 @@
 #include "orte/mca/odls/odls.h"
 #include "orte/mca/grpcomm/grpcomm.h"
 #include "orte/mca/rmcast/base/base.h"
+#include "orte/mca/recos/recos.h"
 
 /* ensure I can behave like a daemon */
 #include "orte/orted/orted.h"
@@ -144,8 +145,6 @@ static void just_quit(int fd, short ign, void *arg);
 static void spawn_app(int fd, short event, void *command);
 static int kill_app(char *cmd, opal_value_array_t *replicas);
 
-static void restart(orte_process_name_t *proc, orte_proc_state_t state, void *cbdata);
-
 static void recv_boot_req(int status, orte_process_name_t* sender,
                           opal_buffer_t *buffer, orte_rml_tag_t tag,
                           void* cbdata);
@@ -160,7 +159,6 @@ static void daemon_announce(int status,
                             orte_rmcast_channel_t channel,
                             orte_rmcast_tag_t tag,
                             orte_process_name_t *sender,
-                            orte_rmcast_seq_t seq_num,
                             opal_buffer_t *buf, void *cbdata);
 
 static int setup_daemon(orte_process_name_t *name,
@@ -171,7 +169,6 @@ static void ps_recv(int status,
                     orte_rmcast_channel_t channel,
                     orte_rmcast_tag_t tag,
                     orte_process_name_t *sender,
-                    orte_rmcast_seq_t seq_num,
                     opal_buffer_t *buf, void *cbdata);
 #endif
 
@@ -259,6 +256,9 @@ int main(int argc, char *argv[])
      */
     orte_launch_environ = opal_argv_copy(environ);
     
+    /* ensure we select the orcm recos module */
+    putenv("OMPI_MCA_recos=orcm");
+    
     /***************************
      * We need all of OPAL and ORTE
      ***************************/
@@ -313,22 +313,6 @@ int main(int argc, char *argv[])
         return 1;
     }
     
-    /* identify the states where we want callbacks */
-    state = ORTE_PROC_STATE_ABORTED | ORTE_PROC_STATE_FAILED_TO_START |
-            ORTE_PROC_STATE_ABORTED_BY_SIG | ORTE_PROC_STATE_TERM_WO_SYNC;
-    
-    
-    /* get the daemon job data object */
-    if (NULL == (daemons = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, 0))) {
-        opal_output(0, "FATAL: CANNOT GET DAEMON JOB OBJECT");
-        orcm_finalize();
-        return 1;
-    }
-    /* setup the daemon job to callback when daemons fail */
-    daemons->err_cbfunc = restart;
-    daemons->err_cbstates = state;
-    daemons->err_cbdata = daemons;
-
     /* setup the orted cmd line options to direct the
      * proper framework selections
      */
@@ -375,12 +359,19 @@ int main(int argc, char *argv[])
         orte_trigger_event(&orteds_exit);
     }
     
+    /* lookup the daemon job data object */
+    if (NULL == (daemons = orte_get_job_data_object(ORTE_PROC_MY_NAME->jobid))) {
+        opal_output(orte_clean_output, "COULD NOT GET DAEMON JOB OBJECT");
+        orte_trigger_event(&orteds_exit);
+    }
+    
     /* if we were given hosts to startup, create an app for the
      * daemon job so it can start the virtual machine
      */
     if (NULL != my_globals.hosts || NULL != my_globals.hostfile) {
         /* create an app */
         app = OBJ_NEW(orte_app_context_t);
+        app->app = strdup("ORCM");
         if (NULL != my_globals.hosts) {
             app->dash_host = opal_argv_split(my_globals.hosts, ',');
         }
@@ -392,6 +383,8 @@ int main(int argc, char *argv[])
         daemons->num_apps = 1;
         /* ensure our launched daemons do not bootstrap */
         orte_daemon_bootstrap = false;
+        /* ensure we always utilize the local node as well */
+        orte_hnp_is_allocated = true;
     }
     
     /* set the mapping policy to byslot */
@@ -661,10 +654,6 @@ static void spawn_app(int fd, short event, void *command)
     
     opal_pointer_array_add(jdata->apps, app);
     jdata->num_apps = 1;
-    /* setup the errmgr callback */
-    jdata->err_cbfunc = restart;
-    jdata->err_cbstates = state;
-    jdata->err_cbdata = jdata;
     /* indicate that this is to be a continuously operating job - i.e.,
      * don't wake us up and terminate us if all of this job's
      * procs terminate
@@ -754,8 +743,7 @@ static int kill_app(char *cmd, opal_value_array_t *replicas)
                  */
                 if (killall) {
                     /* turn off the restart for this job */
-                    jdata->err_cbfunc = NULL;
-                    jdata->err_cbstates = 0;
+                    orte_recos.detach_job(jdata);
                     /* indicate that this is no longer a continuously operating job */
                     jdata->controls &= ~ORTE_JOB_CONTROL_CONTINUOUS_OP;
                     /* kill this job */
@@ -794,171 +782,6 @@ static int kill_app(char *cmd, opal_value_array_t *replicas)
     }
 
     return ORTE_SUCCESS;
-}
-
-void restart(orte_process_name_t *proc, orte_proc_state_t state, void *cbdata)
-{
-    orte_job_t *jdata;
-    orte_app_context_t *app=NULL, *newapp=NULL;
-    orte_node_t *node, *newnode;
-    orte_proc_t *daemon, *nodeproc, *pdata;
-    opal_value_array_t jobs;
-    orte_jobid_t newjob;
-    bool found;
-    int i, j;
-    int ret;
-
-    OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
-                         "%s restart called on proc: %s",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         ORTE_NAME_PRINT(proc)));
-
-    /* if the proc failed to start or we killed it by cmd,
-     * don't attempt to restart it as this can lead to an
-     * infinite loop
-     */
-    if (ORTE_PROC_STATE_FAILED_TO_START == state &&
-        proc->jobid != ORTE_PROC_MY_NAME->jobid) {
-        /* it was an application process that failed to start */
-        jdata = (orte_job_t*)cbdata;
-        /* get the app - just for output purposes in case of error */
-        app = opal_pointer_array_get_item(jdata->apps, 0);
-        opal_output(0, "APPLICATION %s FAILED TO START", app->app);
-        return;
-    }
-    
-    /* if the proc was terminated by cmd, then do nothing */
-    if (ORTE_PROC_STATE_KILLED_BY_CMD == state &&
-        proc->jobid != ORTE_PROC_MY_NAME->jobid) {
-        /* it was an application process that failed to start */
-        jdata = (orte_job_t*)cbdata;
-        /* get the app - just for output purposes in case of error */
-        app = opal_pointer_array_get_item(jdata->apps, 0);
-        opal_output(0, "APPLICATION %s KILLED BY COMMAND", app->app);
-        return;
-    }
-    
-    /* if it was a daemon that failed, then we have to
-     * treat it differently
-     */
-    if (ORTE_PROC_MY_NAME->jobid == proc->jobid) {
-        OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
-                             "%s Daemon %s failed",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             ORTE_VPID_PRINT(proc->vpid)));
-        /* need to relaunch all the apps that were on
-         * the node where this daemon was running as
-         * they either died along with the node, or will
-         * have self-terminated when the daemon died
-         */
-        if (NULL == (jdata = orte_get_job_data_object(proc->jobid))) {
-            /* nothing we can do - abort things */
-            opal_output(0, "FAILED TO GET DAEMON JOB OBJECT");
-            orte_trigger_event(&orte_exit);
-            return;
-        }
-        if (NULL == (daemon = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, proc->vpid))) {
-            /* nothing we can do - abort things */
-            opal_output(0, "FAILED TO GET DAEMON OBJECT");
-            orte_trigger_event(&orte_exit);
-            return;
-        }
-        /* identify the node where the daemon was running */
-        node = daemon->node;
-        /* setup to track the jobs on this node */
-        OBJ_CONSTRUCT(&jobs, opal_value_array_t);
-        opal_value_array_init(&jobs, sizeof(orte_jobid_t));
-        /* cycle through the node's procs */
-        for (i=0; i < node->procs->size; i++) {
-            if (NULL == (nodeproc = (orte_proc_t*)opal_pointer_array_get_item(node->procs, i))) {
-                continue;
-            }
-            /* set the proc to abnormally terminated */
-            nodeproc->state = ORTE_PROC_STATE_ABORTED;
-            /* increment restarts */
-            nodeproc->restarts++;
-            /* check if this proc's jobid is already in array */
-            found = false;
-            for (j=0; j < opal_value_array_get_size(&jobs); j++) {
-                if (nodeproc->name.jobid == OPAL_VALUE_ARRAY_GET_ITEM(&jobs, orte_jobid_t, j)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                /* add it */
-                opal_value_array_append_item(&jobs, &nodeproc->name.jobid);
-            }
-        }
-        OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
-                             "%s RESTARTING APPS FROM NODE: %s",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             node->name));
-        for (j=0; j < opal_value_array_get_size(&jobs); j++) {
-            if (NULL == (jdata = orte_get_job_data_object(OPAL_VALUE_ARRAY_GET_ITEM(&jobs, orte_jobid_t, j)))) {
-                /* nothing we can do - abort things */
-                opal_output(0, "FAILED TO GET JOB OBJECT TO BE RESTARTED");
-                orte_trigger_event(&orte_exit);
-                return;
-            }
-            /* reset the job params for restart */
-            orte_plm_base_reset_job(jdata);
-            /* restart the job - the spawn function will remap and
-             * launch the replacement proc(s)
-             */
-            if (ORTE_SUCCESS != orte_plm.spawn(jdata)) {
-                opal_output(0, "FAILED TO RESTART APPS FROM NODE: %s", node->name);
-                orte_trigger_event(&orte_exit);
-                return;
-            }    
-        }
-        opal_output(0, "Daemon %s on node %s aborted - procs were restarted elsewhere\n\n",
-                    ORTE_NAME_PRINT(proc), node->name);
-        /* all done - cleanup and leave */
-        OBJ_DESTRUCT(&jobs);
-        return;
-    }
-
-    /* it was an application process that died */
-    jdata = (orte_job_t*)cbdata;
-    /* get the app - just for output purposes in case of error */
-    app = opal_pointer_array_get_item(jdata->apps, 0);
-    pdata = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, proc->vpid);
-    if (NULL == pdata) {
-        opal_output(0, "Data for proc %s could not be found", ORTE_NAME_PRINT(proc));
-        return;
-    }
-    /* save the node where this proc was located */
-    node = pdata->node;
-    /* increment restarts */
-    pdata->restarts++;
-    /* have we exceeded #restarts? */
-    if (jdata->max_restarts < pdata->restarts) {
-        opal_output(0, "Max restarts for proc %s of app %s has been exceeded - process will not be restarted",
-                    ORTE_NAME_PRINT(proc), app->app);
-        return;
-    }
-    /* reset the job params for restart */
-    orte_plm_base_reset_job(jdata);
-    
-    /* restart the job - the spawn function will remap and
-     * launch the replacement proc(s)
-     */
-    OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
-                         "%s RESTARTING APP: %s",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         ORTE_NAME_PRINT(proc)));
-    
-    if (ORTE_SUCCESS != orte_plm.spawn(jdata)) {
-        opal_output(0, "FAILED TO RESTART APP %s", app->app);
-        orte_trigger_event(&orte_exit);
-        return;
-    }
-    /* get the new node */
-    newnode = pdata->node;
-    /* report what we did */
-    opal_output(0, "Proc %s:%s aborted on node %s and was restarted on node %s\n\n",
-                app->app, ORTE_NAME_PRINT(proc), node->name, newnode->name);
 }
 
 static void process_boot_req(int fd, short event, void *data)
@@ -1241,7 +1064,6 @@ static void daemon_announce(int status,
                             orte_rmcast_channel_t channel,
                             orte_rmcast_tag_t tag,
                             orte_process_name_t *sender,
-                            orte_rmcast_seq_t seq_num,
                             opal_buffer_t *buf, void *cbdata)
 {
     int32_t n;
@@ -1633,7 +1455,6 @@ static void ps_recv(int status,
                     orte_rmcast_channel_t channel,
                     orte_rmcast_tag_t tag,
                     orte_process_name_t *sender,
-                    orte_rmcast_seq_t seq_num,
                     opal_buffer_t *buf, void *cbdata)
 {
     opal_buffer_t response;

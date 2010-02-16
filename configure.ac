@@ -318,10 +318,6 @@ AC_CONFIG_FILES([Makefile
                  src/mca/clip/base/Makefile
                  src/mca/clip/default/Makefile
 
-		 src/mca/fddp/Makefile
-                 src/mca/fddp/base/Makefile
-                 src/mca/fddp/trend/Makefile
-
 		 src/mca/leader/Makefile
                  src/mca/leader/base/Makefile
                  src/mca/leader/fifl/Makefile
@@ -329,10 +325,6 @@ AC_CONFIG_FILES([Makefile
 		 src/mca/pnp/Makefile
                  src/mca/pnp/base/Makefile
                  src/mca/pnp/default/Makefile
-
-		 src/mca/sensor/Makefile
-                 src/mca/sensor/base/Makefile
-                 src/mca/sensor/pru/Makefile
 
                  src/tools/Makefile
 		 src/tools/orcm/Makefile

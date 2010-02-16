@@ -96,7 +96,6 @@ static void pretty_print(opal_buffer_t *buf);
 static void ps_recv(int status,
                     int channel, orte_rmcast_tag_t tag,
                     orte_process_name_t *sender,
-                    orte_rmcast_seq_t seq_num,
                     opal_buffer_t *buf, void *cbdata);
 
 /* update data function */
@@ -387,7 +386,6 @@ static void pretty_print(opal_buffer_t *buf)
 static void ps_recv(int status,
                     int channel, orte_rmcast_tag_t tag,
                     orte_process_name_t *sender,
-                    orte_rmcast_seq_t seq_num,
                     opal_buffer_t *buf, void *cbdata)
 {
     char *app;

@@ -16,8 +16,6 @@
 #include "orte/mca/errmgr/errmgr.h"
 
 #include "mca/pnp/base/public.h"
-#include "mca/fddp/base/public.h"
-#include "mca/sensor/base/public.h"
 #include "runtime/runtime.h"
 
 const char openrcm_version_string[] = "OPENRCM 0.1";
@@ -117,32 +115,6 @@ int orcm_init(orcm_proc_type_t flags)
         goto error;
     }
     
-    if (ORTE_PROC_IS_HNP || ORTE_PROC_IS_DAEMON) {
-        /* setup the sensors */
-        if (ORTE_SUCCESS != (ret = orcm_sensor_base_open())) {
-            ORTE_ERROR_LOG(ret);
-            error = "orcm_sensor_open";
-            goto error;
-        }
-        if (ORTE_SUCCESS != (ret = orcm_sensor_base_select())) {
-            ORTE_ERROR_LOG(ret);
-            error = "orcm_sensor_select";
-            goto error;
-        }
-        
-        /* setup the fddp */
-        if (ORTE_SUCCESS != (ret = orcm_fddp_base_open())) {
-            ORTE_ERROR_LOG(ret);
-            error = "orcm_sensor_open";
-            goto error;
-        }
-        if (ORTE_SUCCESS != (ret = orcm_fddp_base_select())) {
-            ORTE_ERROR_LOG(ret);
-            error = "orcm_sensor_select";
-            goto error;
-        }
-    }
-    
     orcm_initialized = true;
     
     return ORCM_SUCCESS;
@@ -217,28 +189,4 @@ OBJ_CLASS_INSTANCE(orcm_spawn_event_t,
                    opal_object_t,
                    spawn_construct,
                    spawn_destruct);
-
-static void orcm_sensor_data_construct(orcm_sensor_data_t *ptr)
-{
-    ptr->sensor = NULL;
-    ptr->scaling_law = ORCM_SENSOR_SCALE_LINEAR;
-    ptr->min = 0.0;
-    ptr->max = 100.0;
-    ptr->gain = 1.0;
-    ptr->data.size = 0;
-    ptr->data.bytes = NULL;
-}
-static void orcm_sensor_data_destruct(orcm_sensor_data_t *ptr)
-{
-    if (NULL != ptr->sensor) {
-        free(ptr->sensor);
-    }
-    if (NULL != ptr->data.bytes) {
-        free(ptr->data.bytes);
-    }
-}
-OBJ_CLASS_INSTANCE(orcm_sensor_data_t,
-                   opal_object_t,
-                   orcm_sensor_data_construct,
-                   orcm_sensor_data_destruct);
 

@@ -101,13 +101,11 @@ static void recv_inputs(int status,
                         orte_rmcast_channel_t channel,
                         orte_rmcast_tag_t tag,
                         orte_process_name_t *sender,
-                        orte_rmcast_seq_t seq_num,
                         struct iovec *msg, int count, void *cbdata);
 static void recv_input_buffers(int status,
                                orte_rmcast_channel_t channel,
                                orte_rmcast_tag_t tag,
                                orte_process_name_t *sender,
-                               orte_rmcast_seq_t seq_num,
                                opal_buffer_t *buf, void *cbdata);
 static int pack_announcement(opal_buffer_t *buf);
 
@@ -115,14 +113,12 @@ static void rmcast_callback_buffer(int status,
                                    orte_rmcast_channel_t channel,
                                    orte_rmcast_tag_t tag,
                                    orte_process_name_t *sender,
-                                   orte_rmcast_seq_t seq_num,
                                    opal_buffer_t *buf, void* cbdata);
 
 static void rmcast_callback(int status,
                             orte_rmcast_channel_t channel,
                             orte_rmcast_tag_t tag,
                             orte_process_name_t *sender,
-                            orte_rmcast_seq_t seq_num,
                             struct iovec *msg, int count, void* cbdata);
 
 static void rml_callback(int status,
@@ -1321,13 +1317,13 @@ static void recv_inputs(int status,
                         orte_rmcast_channel_t channel,
                         orte_rmcast_tag_t tag,
                         orte_process_name_t *sender,
-                        orte_rmcast_seq_t seq_num,
                         struct iovec *msg, int count, void *cbdata)
 {
     opal_list_item_t *item;
     orcm_pnp_group_t *group, *grp;
     orcm_pnp_source_t *source, *src;
     int rc;
+    orte_rmcast_seq_t seq_num;
     
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:received input on channel %d from sender %s",
@@ -1420,13 +1416,13 @@ static void recv_input_buffers(int status,
                                orte_rmcast_channel_t channel,
                                orte_rmcast_tag_t tag,
                                orte_process_name_t *sender,
-                               orte_rmcast_seq_t seq_num,
                                opal_buffer_t *buf, void *cbdata)
 {
     opal_list_item_t *item;
     orcm_pnp_group_t *group, *grp;
     orcm_pnp_source_t *source, *src;
     int rc;
+    orte_rmcast_seq_t seq_num;
     
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:received input buffer on channel %d from sender %s",
@@ -1575,7 +1571,6 @@ static void rmcast_callback_buffer(int status,
                                    orte_rmcast_channel_t channel,
                                    orte_rmcast_tag_t tag,
                                    orte_process_name_t *sender,
-                                   orte_rmcast_seq_t seq_num,
                                    opal_buffer_t *buf, void* cbdata)
 {
     orcm_pnp_send_t *send = (orcm_pnp_send_t*)cbdata;
@@ -1590,7 +1585,6 @@ static void rmcast_callback(int status,
                             orte_rmcast_channel_t channel,
                             orte_rmcast_tag_t tag,
                             orte_process_name_t *sender,
-                            orte_rmcast_seq_t seq_num,
                             struct iovec *msg, int count, void* cbdata)
 {
     orcm_pnp_send_t *send = (orcm_pnp_send_t*)cbdata;
