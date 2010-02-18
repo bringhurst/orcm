@@ -68,10 +68,6 @@ else
                     OPENRCM_SVN_R=r`svnversion "$srcdir"`
                 elif test -d "$srcdir/.hg" ; then
                     OPENRCM_SVN_R=hg`hg -v -R "$srcdir" tip | grep changeset | cut -d: -f3`
-                elif test "$srcdir/../.hg" ; then
-                    # Note that openrcm is not at the top of the hg
-                    # tree, so also check for ../.hg
-                    OPENRCM_SVN_R=hg`hg -v -R "$srcdir/.." tip | grep changeset | cut -d: -f3`
                 fi
                 if test "OPENRCM_SVN_R" = ""; then
                     OPENRCM_SVN_R=svn`date '+%m%d%Y'`
