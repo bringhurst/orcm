@@ -25,10 +25,20 @@ typedef int (*orcm_pnp_module_finalize_fn_t)(void);
 
 /*
  * Announce my existence, specifying my application's name, version
- * and release. The application name MUST be provided. However, the
- * remaining info can be NULL if desired
+ * and release. All three fields MUST be provided or an error will
+ * be returned. If non-NULL, the cbfunc will be called whenever a new
+ * group announcement is received. The callback will return the
+ * app/version/release triplet of the new group, along with its
+ * pnp channel id.
  */
-typedef int (*orcm_pnp_module_announce_fn_t)(char *app, char *version, char *release);
+typedef int (*orcm_pnp_module_announce_fn_t)(char *app, char *version, char *release,
+                                             orcm_pnp_announce_fn_t cbfunc);
+
+/*
+ * Open a channel to another app/version/release triplet. All three
+ * fields MUST be provided or ORCM_PNP_INVALID_CHANNEL will be returned
+ */
+typedef orcm_pnp_channel_t (*orcm_pnp_module_open_channel_fn_t)(char *app, char *version, char *release);
 
 /*
  * Register to receive messages from the specified app/version/release.
@@ -68,31 +78,36 @@ typedef int (*orcm_pnp_module_deregister_input_fn_t)(char *app,
  * the message will be multicast to the proper recipients. If the name is a specific one, then
  * the message will be directly sent to that process via an available point-to-point
  * protocol
+ *
+ * NOTE: only processes that have registered_input from this app/version/release
+ * will actually receive the message. Thus, it should NOT be assumed that a process
+ * on the given channel actually received all prior messages.
  */
-typedef int (*orcm_pnp_module_output_fn_t)(orte_process_name_t *recipient,
+typedef int (*orcm_pnp_module_output_fn_t)(orcm_pnp_channel_t channel,
+                                           orte_process_name_t *recipient,
                                            orcm_pnp_tag_t tag,
                                            struct iovec *msg, int count);
 
-typedef int (*orcm_pnp_module_output_nb_fn_t)(orte_process_name_t *recipient,
+typedef int (*orcm_pnp_module_output_nb_fn_t)(orcm_pnp_channel_t channel,
+                                              orte_process_name_t *recipient,
                                               orcm_pnp_tag_t tag,
                                               struct iovec *msg, int count,
                                               orcm_pnp_callback_fn_t cbfunc,
                                               void *cbdata);
 /*
- * Send a buffer from this process
+ * Send a buffer from this process, subject to same notes as above
  */
-typedef int (*orcm_pnp_module_output_buffer_fn_t)(orte_process_name_t *recipient,
+typedef int (*orcm_pnp_module_output_buffer_fn_t)(orcm_pnp_channel_t channel,
+                                                  orte_process_name_t *recipient,
                                                   orcm_pnp_tag_t tag,
                                                   opal_buffer_t *buffer);
 
-typedef int (*orcm_pnp_module_output_buffer_nb_fn_t)(orte_process_name_t *recipient,
+typedef int (*orcm_pnp_module_output_buffer_nb_fn_t)(orcm_pnp_channel_t channel,
+                                                     orte_process_name_t *recipient,
                                                      orcm_pnp_tag_t tag,
                                                      opal_buffer_t *buffer,
                                                      orcm_pnp_callback_buffer_fn_t cbfunc,
                                                      void *cbdata);
-
-/* get the multicast group object for the specified app-triplet */
-typedef orcm_pnp_group_t* (*orcm_pnp_module_get_group_fn_t)(char *app, char *version, char *release);
 
 /* dynamically define a new tag */
 typedef orcm_pnp_tag_t (*orcm_pnp_module_define_new_tag_fn_t)(void);
@@ -111,6 +126,7 @@ typedef orcm_pnp_base_component_2_0_0_t orcm_pnp_base_component_t;
 typedef struct {
     orcm_pnp_module_init_fn_t                       init;
     orcm_pnp_module_announce_fn_t                   announce;
+    orcm_pnp_module_open_channel_fn_t               open_channel;
     orcm_pnp_module_register_input_fn_t             register_input;
     orcm_pnp_module_register_input_buffer_fn_t      register_input_buffer;
     orcm_pnp_module_deregister_input_fn_t           deregister_input;
@@ -118,7 +134,6 @@ typedef struct {
     orcm_pnp_module_output_nb_fn_t                  output_nb;
     orcm_pnp_module_output_buffer_fn_t              output_buffer;
     orcm_pnp_module_output_buffer_nb_fn_t           output_buffer_nb;
-    orcm_pnp_module_get_group_fn_t                  get_group;
     orcm_pnp_module_define_new_tag_fn_t             define_new_tag;
     orcm_pnp_module_finalize_fn_t                   finalize;
 } orcm_pnp_base_module_t;

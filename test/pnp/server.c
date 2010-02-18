@@ -26,7 +26,7 @@
 #include "mca/leader/leader.h"
 #include "runtime/runtime.h"
 
-#define ORCM_TEST_CLIENT_SERVER_TAG     12345
+#define ORCM_TEST_CLIENT_SERVER_TAG     15
 
 static struct opal_event term_handler;
 static struct opal_event int_handler;
@@ -72,7 +72,7 @@ int main(int argc, char* argv[])
     opal_signal_add(&int_handler, NULL);
     
     /* announce our existence */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("SERVER", "1.0", "alpha"))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("SERVER", "1.0", "alpha", NULL))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -184,7 +184,8 @@ static void recv_input(int status,
         opal_output(0, "%s sending response to %s for msg number %d",
                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                     ORTE_NAME_PRINT(sender), data[0]);
-        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(sender, ORCM_TEST_CLIENT_SERVER_TAG, msg, count, cbfunc, NULL))) {
+        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, sender,
+                                                     ORCM_TEST_CLIENT_SERVER_TAG, msg, count, cbfunc, NULL))) {
             ORTE_ERROR_LOG(rc);
         }
     }

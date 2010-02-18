@@ -41,6 +41,17 @@ typedef struct {
 } orcm_pnp_pending_request_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_pending_request_t);
 
+typedef struct {
+    opal_object_t super;
+    char *app;
+    char *version;
+    char *release;
+    orcm_pnp_channel_t channel;
+    opal_pointer_array_t groups;
+    opal_pointer_array_t requests;
+} orcm_pnp_channel_tracker_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_channel_tracker_t);
+
 /* we have to copy the data across here because
  * the underlying delivery mechanism "owns" the memory and will release
  * it once we return. Thus, we must do the copy to ensure that we "own"

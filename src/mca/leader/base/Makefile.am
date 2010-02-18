@@ -15,7 +15,6 @@ libmca_leader_base_la_SOURCES = \
         components.h \
         leader_base_open.c \
         leader_base_close.c \
-        leader_base_select.c \
-        leader_base_fns.c
+        leader_base_select.c
 
 

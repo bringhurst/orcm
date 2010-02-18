@@ -58,7 +58,7 @@ int main(int argc, char* argv[])
     opal_signal_add(&int_handler, NULL);
     
     /* announce our existence */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("TALKER_IOVEC", "1.0", "alpha"))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("TALKER_IOVEC", "1.0", "alpha", NULL))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -101,7 +101,8 @@ static void send_data(int fd, short flags, void *arg)
     
     /* output the values */
     opal_output(0, "%s sending msg number %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output(NULL, ORCM_PNP_TAG_OUTPUT, msg, count))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_GROUP_OUTPUT_CHANNEL, NULL,
+                                              ORCM_PNP_TAG_OUTPUT, msg, count))) {
         ORTE_ERROR_LOG(rc);
     }
 

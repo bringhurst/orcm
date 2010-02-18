@@ -12,8 +12,9 @@
 
 #include "openrcm.h"
 
+#include "orte/types.h"
 
-#define ORCM_LEADER_WILDCARD    -1
+#define ORCM_LEADER_WILDCARD    ORTE_VPID_WILDCARD
 
 typedef void (*orcm_leader_cbfunc_t)(char *app,
                                      char *version,

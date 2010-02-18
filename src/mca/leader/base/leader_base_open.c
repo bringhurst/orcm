@@ -9,6 +9,7 @@
 
 #include "openrcm_config_private.h"
 #include "include/constants.h"
+#include "orte/types.h"
 
 #include "opal/class/opal_value_array.h"
 #include "opal/util/output.h"
@@ -53,3 +54,31 @@ int orcm_leader_base_open(void)
     /* All done */
     return ORCM_SUCCESS;
 }
+
+
+/****    INSTANTIATE CLASSES    ****/
+
+static void leader_constructor(orcm_leader_t *ptr)
+{
+    ptr->app = NULL;
+    ptr->version = NULL;
+    ptr->release = NULL;
+    ptr->lead_rank = ORTE_VPID_WILDCARD;
+    ptr->cbfunc = NULL;
+}
+static void leader_destructor(orcm_leader_t *ptr)
+{
+    if (NULL != ptr->app) {
+        free(ptr->app);
+    }
+    if (NULL != ptr->version) {
+        free(ptr->version);
+    }
+    if (NULL != ptr->release) {
+        free(ptr->release);
+    }
+}
+OBJ_CLASS_INSTANCE(orcm_leader_t,
+                   opal_list_item_t,
+                   leader_constructor,
+                   leader_destructor);

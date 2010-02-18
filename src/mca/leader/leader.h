@@ -40,8 +40,7 @@ typedef int (*orcm_leader_module_finalize_fn_t)(void);
  * it wants to make this determination
  */
 typedef bool (*orcm_leader_module_has_leader_failed_fn_t)(orcm_pnp_group_t *grp,
-                                                          orcm_pnp_source_t *src,
-                                                          orte_rmcast_seq_t seq_num);
+                                                          orcm_pnp_source_t *src);
 
 /* Manually set the leader for a given application triplet. A value
  * of ORCM_LEADER_WILDCARD will cause data from all siblings to be
@@ -62,13 +61,16 @@ typedef bool (*orcm_leader_module_has_leader_failed_fn_t)(orcm_pnp_group_t *grp,
 typedef int (*orcm_leader_module_set_leader_fn_t)(char *app,
                                                   char *version,
                                                   char *release,
-                                                  int sibling,
+                                                  orte_vpid_t sibling,
                                                   orcm_leader_cbfunc_t cbfunc);
 /*
  * Given a list of members of an application group, select a leader
  * who will provide the "official" input.
  */
 typedef int (*orcm_leader_module_select_leader_fn_t)(orcm_pnp_group_t *grp);
+
+/* Get the current leader of a group */
+typedef orcm_pnp_source_t* (*orcm_leader_module_get_leader_fn_t)(orcm_pnp_group_t *grp);
 
 /* component struct */
 typedef struct {
@@ -86,6 +88,7 @@ typedef struct {
     orcm_leader_module_set_leader_fn_t          set_leader;
     orcm_leader_module_select_leader_fn_t       select_leader;
     orcm_leader_module_has_leader_failed_fn_t   has_leader_failed;
+    orcm_leader_module_get_leader_fn_t          get_leader;
     orcm_leader_module_finalize_fn_t            finalize;
 } orcm_leader_base_module_t;
 

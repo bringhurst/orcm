@@ -69,7 +69,7 @@ int main(int argc, char* argv[])
     opal_signal_add(&int_handler, NULL);
     
     /* announce our existence */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("LISTENER_IOVEC", "1.0", "alpha"))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("LISTENER_IOVEC", "1.0", "alpha", NULL))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }

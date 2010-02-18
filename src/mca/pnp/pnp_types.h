@@ -21,7 +21,7 @@
 
 #include "opal/dss/dss_types.h"
 #include "opal/class/opal_list.h"
-#include "opal/class/opal_value_array.h"
+#include "opal/class/opal_pointer_array.h"
 #include "opal/threads/condition.h"
 #include "opal/threads/mutex.h"
 
@@ -47,7 +47,24 @@ enum {
 
 #define ORCM_PNP_TAG_DYNAMIC    100
 
-/* callback function */
+typedef int32_t orcm_pnp_channel_t;
+#define ORCM_PNP_CHANNEL_T  OPAL_INT32
+
+/* inherited channels */
+enum {
+    ORCM_PNP_GROUP_OUTPUT_CHANNEL   = ORTE_RMCAST_GROUP_OUTPUT_CHANNEL,
+    ORCM_PNP_WILDCARD_CHANNEL       = ORTE_RMCAST_WILDCARD_CHANNEL,
+    ORCM_PNP_INVALID_CHANNEL        = ORTE_RMCAST_INVALID_CHANNEL,
+    ORCM_PNP_SYS_CHANNEL            = ORTE_RMCAST_SYS_CHANNEL,
+    ORCM_PNP_APP_PUBLIC_CHANNEL     = ORTE_RMCAST_APP_PUBLIC_CHANNEL
+};
+
+#define ORCM_PNP_DYNAMIC_CHANNELS   ORTE_RMCAST_DYNAMIC_CHANNELS
+
+/* callback functions */
+typedef void (*orcm_pnp_announce_fn_t)(char *app, char *version, char *release,
+                                       orcm_pnp_channel_t channel);
+
 typedef void (*orcm_pnp_callback_fn_t)(int status,
                                        orte_process_name_t *sender,
                                        orcm_pnp_tag_t tag,
@@ -62,7 +79,7 @@ typedef void (*orcm_pnp_callback_buffer_fn_t)(int status,
                                               void *cbdata);
 
 typedef struct {
-    opal_list_item_t super;
+    opal_object_t super;
     orte_process_name_t name;
     bool failed;
     opal_buffer_t *msgs[ORCM_PNP_MAX_MSGS];
@@ -77,17 +94,14 @@ ORCM_DECLSPEC extern orcm_pnp_source_t orcm_pnp_wildcard;
 
 
 typedef struct {
-    opal_list_item_t super;
+    opal_object_t super;
     char *app;
     char *version;
     char *release;
     char *string_id;
     orte_rmcast_channel_t channel;
-    opal_list_t requests;
-    opal_list_t members;
-    orcm_pnp_source_t *leader;
-    bool leader_set;
-    orcm_leader_cbfunc_t leader_failed_cbfunc;
+    opal_pointer_array_t members;
+    opal_pointer_array_t requests;
 } orcm_pnp_group_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_group_t);
 

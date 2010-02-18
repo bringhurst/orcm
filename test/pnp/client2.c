@@ -32,7 +32,8 @@
 #include "mca/pnp/pnp.h"
 #include "runtime/runtime.h"
 
-#define ORCM_TEST_CLIENT_SERVER_TAG     12345
+#define ORCM_TEST_CLIENT_SERVER_TAG     15
+#define ORCM_TEST_CLIENT_CLIENT_TAG     16
 
 static struct opal_event term_handler;
 static struct opal_event int_handler;
@@ -46,6 +47,7 @@ static void recv_input(int status,
 
 static int32_t flag=0;
 static int msg_num;
+static orcm_pnp_channel_t peer;
 
 int main(int argc, char* argv[])
 {
@@ -73,7 +75,7 @@ int main(int argc, char* argv[])
     opal_signal_add(&int_handler, NULL);
     
     /* announce our existence */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("CLIENT", "2.0", "beta"))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("CLIENT", "2.0", "beta", NULL))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -81,6 +83,12 @@ int main(int argc, char* argv[])
     /* for this application, register an input to hear direct responses */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("SERVER", "1.0", "alpha",
                                                       ORCM_TEST_CLIENT_SERVER_TAG, recv_input))) {
+        ORTE_ERROR_LOG(rc);
+        goto cleanup;
+    }
+    
+    /* open a channel to any client 1.0 peers */
+    if (ORCM_PNP_INVALID_CHANNEL == (peer = orcm_pnp.open_channel("client", "1.0", NULL))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -137,7 +145,14 @@ static void send_data(int fd, short flags, void *arg)
     
     /* output the values */
     opal_output(0, "%s sending data for msg number %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(NULL, ORCM_PNP_TAG_OUTPUT, msg, count, cbfunc, NULL))) {
+#if 0
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, NULL,
+                                                 ORCM_PNP_TAG_OUTPUT, msg, count, NULL, NULL))) {
+        ORTE_ERROR_LOG(rc);
+    }
+#endif
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(peer, NULL,
+                                                 ORCM_TEST_CLIENT_CLIENT_TAG, msg, count, cbfunc, NULL))) {
         ORTE_ERROR_LOG(rc);
     }
     
@@ -166,7 +181,7 @@ static void recv_input(int status,
                        struct iovec *msg, int count,
                        void *cbdata)
 {
-    opal_output(0, "%s recvd message from server %s on tag %d",
+    opal_output(0, "%s recvd message from %s on tag %d",
                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                 ORTE_NAME_PRINT(sender), (int)tag);
 }

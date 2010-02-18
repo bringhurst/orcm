@@ -93,25 +93,26 @@ static void source_destructor(orcm_pnp_source_t *ptr)
     }
 }
 OBJ_CLASS_INSTANCE(orcm_pnp_source_t,
-                   opal_list_item_t,
+                   opal_object_t,
                    source_constructor,
                    source_destructor);
 
 static void group_constructor(orcm_pnp_group_t *ptr)
 {
-    orte_rmcast_channel_t chan=ORTE_RMCAST_INVALID_CHANNEL;
-    
     ptr->app = NULL;
     ptr->version = NULL;
     ptr->release = NULL;
     ptr->channel = ORTE_RMCAST_INVALID_CHANNEL;
-    OBJ_CONSTRUCT(&ptr->members, opal_list_t);
-    OBJ_CONSTRUCT(&ptr->requests, opal_list_t);
-    ptr->leader = NULL;
+    OBJ_CONSTRUCT(&ptr->members, opal_pointer_array_t);
+    opal_pointer_array_init(&ptr->members, 8, INT_MAX, 8);
+    OBJ_CONSTRUCT(&ptr->requests, opal_pointer_array_t);
+    opal_pointer_array_init(&ptr->requests, 8, INT_MAX, 8);
 }
 static void group_destructor(orcm_pnp_group_t *ptr)
 {
-    opal_list_item_t *item;
+    int i;
+    orcm_pnp_pending_request_t *req;
+    orcm_pnp_source_t *src;
     
     if (NULL != ptr->app) {
         free(ptr->app);
@@ -122,16 +123,67 @@ static void group_destructor(orcm_pnp_group_t *ptr)
     if (NULL != ptr->release) {
         free(ptr->release);
     }
+    for (i=0; i < ptr->members.size; i++) {
+        if (NULL != (src = (orcm_pnp_source_t*)opal_pointer_array_get_item(&ptr->members, i))) {
+            OBJ_RELEASE(src);
+        }
+    }
     OBJ_DESTRUCT(&ptr->members);
-    while (NULL != (item = opal_list_remove_first(&ptr->requests))) {
-        OBJ_RELEASE(item);
+    for (i=0; i < ptr->requests.size; i++) {
+        if (NULL != (req = (orcm_pnp_pending_request_t*)opal_pointer_array_get_item(&ptr->requests, i))) {
+            OBJ_RELEASE(req);
+        }
     }
     OBJ_DESTRUCT(&ptr->requests);
 }
 OBJ_CLASS_INSTANCE(orcm_pnp_group_t,
-                   opal_list_item_t,
+                   opal_object_t,
                    group_constructor,
                    group_destructor);
+
+static void tracker_constructor(orcm_pnp_channel_tracker_t *ptr)
+{
+    ptr->app = NULL;
+    ptr->version = NULL;
+    ptr->release = NULL;
+    ptr->channel = ORCM_PNP_INVALID_CHANNEL;
+    OBJ_CONSTRUCT(&ptr->groups, opal_pointer_array_t);
+    opal_pointer_array_init(&ptr->groups, 8, INT_MAX, 8);
+    OBJ_CONSTRUCT(&ptr->requests, opal_pointer_array_t);
+    opal_pointer_array_init(&ptr->requests, 8, INT_MAX, 8);
+}
+static void tracker_destructor(orcm_pnp_channel_tracker_t *ptr)
+{
+    int i;
+    orcm_pnp_group_t *grp;
+    orcm_pnp_pending_request_t *req;
+
+    if (NULL != ptr->app) {
+        free(ptr->app);
+    }
+    if (NULL != ptr->version) {
+        free(ptr->version);
+    }
+    if (NULL != ptr->release) {
+        free(ptr->release);
+    }
+    for (i=0; i < ptr->groups.size; i++) {
+        if (NULL != (grp = (orcm_pnp_group_t*)opal_pointer_array_get_item(&ptr->groups, i))) {
+            OBJ_RELEASE(grp);
+        }
+    }
+    OBJ_DESTRUCT(&ptr->groups);
+    for (i=0; i < ptr->requests.size; i++) {
+        if (NULL != (req = (orcm_pnp_pending_request_t*)opal_pointer_array_get_item(&ptr->requests, i))) {
+            OBJ_RELEASE(req);
+        }
+    }
+    OBJ_DESTRUCT(&ptr->requests);
+}
+OBJ_CLASS_INSTANCE(orcm_pnp_channel_tracker_t,
+                   opal_object_t,
+                   tracker_constructor,
+                   tracker_destructor);
 
 static void request_constructor(orcm_pnp_pending_request_t *ptr)
 {
