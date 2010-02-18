@@ -48,7 +48,7 @@ typedef struct {
     char *release;
     orcm_pnp_channel_t channel;
     opal_pointer_array_t groups;
-    opal_pointer_array_t requests;
+    opal_list_t requests;
 } orcm_pnp_channel_tracker_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_channel_tracker_t);
 

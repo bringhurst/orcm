@@ -101,7 +101,7 @@ typedef struct {
     char *string_id;
     orte_rmcast_channel_t channel;
     opal_pointer_array_t members;
-    opal_pointer_array_t requests;
+    opal_list_t requests;
 } orcm_pnp_group_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_group_t);
 

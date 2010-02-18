@@ -10,6 +10,8 @@
 #include "openrcm_config_private.h"
 #include "include/constants.h"
 
+#include "opal/class/opal_list.h"
+#include "opal/class/opal_pointer_array.h"
 #include "opal/util/output.h"
 #include "opal/mca/mca.h"
 #include "opal/mca/base/base.h"
@@ -105,13 +107,12 @@ static void group_constructor(orcm_pnp_group_t *ptr)
     ptr->channel = ORTE_RMCAST_INVALID_CHANNEL;
     OBJ_CONSTRUCT(&ptr->members, opal_pointer_array_t);
     opal_pointer_array_init(&ptr->members, 8, INT_MAX, 8);
-    OBJ_CONSTRUCT(&ptr->requests, opal_pointer_array_t);
-    opal_pointer_array_init(&ptr->requests, 8, INT_MAX, 8);
+    OBJ_CONSTRUCT(&ptr->requests, opal_list_t);
 }
 static void group_destructor(orcm_pnp_group_t *ptr)
 {
     int i;
-    orcm_pnp_pending_request_t *req;
+    opal_list_item_t *item;
     orcm_pnp_source_t *src;
     
     if (NULL != ptr->app) {
@@ -129,10 +130,8 @@ static void group_destructor(orcm_pnp_group_t *ptr)
         }
     }
     OBJ_DESTRUCT(&ptr->members);
-    for (i=0; i < ptr->requests.size; i++) {
-        if (NULL != (req = (orcm_pnp_pending_request_t*)opal_pointer_array_get_item(&ptr->requests, i))) {
-            OBJ_RELEASE(req);
-        }
+    while (NULL != (item = opal_list_remove_first(&ptr->requests))) {
+        OBJ_RELEASE(item);
     }
     OBJ_DESTRUCT(&ptr->requests);
 }
@@ -149,14 +148,13 @@ static void tracker_constructor(orcm_pnp_channel_tracker_t *ptr)
     ptr->channel = ORCM_PNP_INVALID_CHANNEL;
     OBJ_CONSTRUCT(&ptr->groups, opal_pointer_array_t);
     opal_pointer_array_init(&ptr->groups, 8, INT_MAX, 8);
-    OBJ_CONSTRUCT(&ptr->requests, opal_pointer_array_t);
-    opal_pointer_array_init(&ptr->requests, 8, INT_MAX, 8);
+    OBJ_CONSTRUCT(&ptr->requests, opal_list_t);
 }
 static void tracker_destructor(orcm_pnp_channel_tracker_t *ptr)
 {
     int i;
     orcm_pnp_group_t *grp;
-    orcm_pnp_pending_request_t *req;
+    opal_list_item_t *item;
 
     if (NULL != ptr->app) {
         free(ptr->app);
@@ -173,10 +171,8 @@ static void tracker_destructor(orcm_pnp_channel_tracker_t *ptr)
         }
     }
     OBJ_DESTRUCT(&ptr->groups);
-    for (i=0; i < ptr->requests.size; i++) {
-        if (NULL != (req = (orcm_pnp_pending_request_t*)opal_pointer_array_get_item(&ptr->requests, i))) {
-            OBJ_RELEASE(req);
-        }
+    while (NULL != (item = opal_list_remove_first(&ptr->requests))) {
+        OBJ_RELEASE(item);
     }
     OBJ_DESTRUCT(&ptr->requests);
 }

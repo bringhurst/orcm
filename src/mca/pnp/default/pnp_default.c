@@ -157,6 +157,9 @@ static void setup_recv_request(orcm_pnp_channel_tracker_t *tracker,
                                orcm_pnp_callback_fn_t cbfunc,
                                orcm_pnp_callback_buffer_fn_t cbfunc_buf);
 
+static orcm_pnp_pending_request_t* find_request(opal_list_t *list,
+                                                orcm_pnp_tag_t tag);
+
 /* Local variables */
 static opal_pointer_array_t groups, channels;
 static int32_t packet_number = 0;
@@ -222,7 +225,7 @@ static int default_init(void)
             request = OBJ_NEW(orcm_pnp_pending_request_t);
             request->tag = ORTE_RMCAST_TAG_WILDCARD;
             request->cbfunc_buf = recv_announcements;
-            opal_pointer_array_set_item(&group->requests, request->tag, request);
+            opal_list_append(&group->requests, &request->super);
             /* open a channel to this group - will just return if
              * the channel already exists
              */
@@ -259,7 +262,7 @@ static int default_init(void)
             request = OBJ_NEW(orcm_pnp_pending_request_t);
             request->tag = ORTE_RMCAST_TAG_ANNOUNCE;
             request->cbfunc_buf = recv_announcements;
-            opal_pointer_array_set_item(&group->requests, request->tag, request);
+            opal_list_append(&group->requests, &request->super);
             
             /* open the channel */
             if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(group->channel, request->tag,
@@ -387,7 +390,8 @@ static orcm_pnp_channel_t open_channel(char *app, char *version, char *release)
     orcm_pnp_channel_tracker_t *tracker;
     orcm_pnp_group_t *grp;
     orcm_pnp_pending_request_t *request;
-    int i, j, rc;
+    opal_list_item_t *item;
+    int i, rc;
     
     /* bozo check */
     if (NULL == app) {
@@ -422,11 +426,7 @@ static orcm_pnp_channel_t open_channel(char *app, char *version, char *release)
             break;
         }
         /* if there are any pending requests, setup a recv for them */
-        /* do we want to listen to this group? */
-        for (j=0; j < grp->requests.size; j++) {
-            if (NULL == (request = (orcm_pnp_pending_request_t*)opal_pointer_array_get_item(&grp->requests, j))) {
-                continue;
-            }
+        if (0 < opal_list_get_size(&grp->requests)) {
             /* open the channel */
             OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                                  "%s pnp:default:open_channel setup recv for channel %d",
@@ -437,19 +437,15 @@ static orcm_pnp_channel_t open_channel(char *app, char *version, char *release)
                                                           ORTE_RMCAST_PERSISTENT,
                                                           recv_inputs, NULL))) {
                 ORTE_ERROR_LOG(rc);
-                break;
+                continue;
             }
             if (ORTE_SUCCESS != (rc = orte_rmcast.recv_buffer_nb(grp->channel,
                                                                  ORTE_RMCAST_TAG_WILDCARD,
                                                                  ORTE_RMCAST_PERSISTENT,
                                                                  recv_input_buffers, NULL))) {
                 ORTE_ERROR_LOG(rc);
-                break;
+                continue;
             }
-            /* we only need to do this once - we'll sort out the
-             * deliveries when we recv a message
-             */
-            break;
         }
     }
     
@@ -610,6 +606,7 @@ static int deregister_input(char *app,
     orcm_pnp_group_t *group;
     orcm_pnp_channel_tracker_t *tracker;
     orcm_pnp_pending_request_t *request;
+    opal_list_item_t *item;
     int i, j, k;
     
     /* bozo check */
@@ -632,28 +629,34 @@ static int deregister_input(char *app,
     /* get the tracker object for this triplet */
     tracker = get_channel(app, version, release);
 
-    /* cycle through requests to match this one */
-    for (i=0; i < tracker->requests.size; i++) {
-        if (NULL == (request = (orcm_pnp_pending_request_t*)opal_pointer_array_get_item(&tracker->requests, i))) {
+    /* if this is a wildcard tag, remove all recvs */
+    if (ORCM_PNP_TAG_WILDCARD == tag) {
+        while (NULL != (item = opal_list_remove_first(&tracker->requests))) {
+            OBJ_RELEASE(item);
+        }
+    } else {
+        /* remove the recv for this tag, if it exists */
+        if (NULL != (request = find_request(&tracker->requests, tag))) {
+            opal_list_remove_item(&tracker->requests, &request->super);
+            OBJ_RELEASE(request);
+        }
+    }
+    
+    /* now cycle through the groups and remove the corresponding
+     * recvs from them
+     */
+    for (j=0; j < tracker->groups.size; j++) {
+        if (NULL == (group = (orcm_pnp_group_t*)opal_pointer_array_get_item(&tracker->groups, j))) {
             continue;
         }
-        if (ORCM_PNP_TAG_WILDCARD == tag || tag == request->tag) {
-            OBJ_RELEASE(request);
-            for (j=0; j < tracker->groups.size; j++) {
-                if (NULL == (group = (orcm_pnp_group_t*)opal_pointer_array_get_item(&tracker->groups, j))) {
-                    continue;
-                }
-                if (ORCM_PNP_TAG_WILDCARD == tag) {
-                    for (k=0; k < group->requests.size; k++) {
-                        if (NULL != (request = (orcm_pnp_pending_request_t*)opal_pointer_array_get_item(&group->requests, k))) {
-                            OBJ_RELEASE(request);
-                        }
-                    }
-                } else {
-                    if (NULL != (request = (orcm_pnp_pending_request_t*)opal_pointer_array_get_item(&group->requests, tag))) {
-                        OBJ_RELEASE(request);
-                    }
-                }
+        if (ORCM_PNP_TAG_WILDCARD == tag) {
+            while (NULL != (item = opal_list_remove_first(&group->requests))) {
+                OBJ_RELEASE(item);
+            }
+        } else {
+            if (NULL != (request = find_request(&group->requests, tag))) {
+                opal_list_remove_item(&group->requests, &request->super);
+                OBJ_RELEASE(request);
             }
         }
     }
@@ -1187,7 +1190,7 @@ static void recv_announcements(int status,
     orte_process_name_t originator;
     opal_buffer_t ann;
     int rc, n, i, j;
-    orcm_pnp_pending_request_t *request;
+    orcm_pnp_pending_request_t *request, *req;
     orte_rmcast_channel_t output;
     orte_process_name_t sender;
     orcm_pnp_send_t *pkt;
@@ -1315,25 +1318,26 @@ static void recv_announcements(int status,
             return;
         }
         /* add any pending requests associated with this channel */
-        for (j=0; j < tracker->requests.size; j++) {
-            if (NULL == (request = (orcm_pnp_pending_request_t*)opal_pointer_array_get_item(&tracker->requests, j))) {
-                continue;
-            }
-            if (NULL != opal_pointer_array_get_item(&group->requests, request->tag)) {
+        for (itm2 = opal_list_get_first(&tracker->requests);
+             itm2 != opal_list_get_end(&tracker->requests);
+             itm2 = opal_list_get_next(itm2)) {
+            req = (orcm_pnp_pending_request_t*)itm2;
+            if (NULL != find_request(&group->requests, req->tag)) {
                 /* already assigned */
                 continue;
             }
-            OBJ_RETAIN(request);
-            opal_pointer_array_set_item(&group->requests, request->tag, request);
+            /* add it */
+            request = OBJ_NEW(orcm_pnp_pending_request_t);
+            request->tag = req->tag;
+            request->cbfunc = req->cbfunc;
+            request->cbfunc_buf = req->cbfunc_buf;
+            opal_list_append(&group->requests, &request->super);
         }
     }
     
 recvs:
     /* do we want to listen to this group? */
-    for (j=0; j < group->requests.size; j++) {
-        if (NULL == (request = (orcm_pnp_pending_request_t*)opal_pointer_array_get_item(&group->requests, j))) {
-            continue;
-        }
+    if (0 < opal_list_get_size(&group->requests)) {
         /* open the channel */
         OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                              "%s pnp:default:recvd_ann setup recv for channel %d",
@@ -1355,10 +1359,6 @@ recvs:
             OPAL_THREAD_UNLOCK(&lock);
             return;
         }
-        /* we only need to do this once - we'll sort out the
-         * deliveries when we recv a message
-         */
-        break;
     }
 
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
@@ -1747,9 +1747,9 @@ static void* recv_messages(opal_object_t *obj)
                                  ORTE_NAME_PRINT(&sender)));
             
             /* extract the request object for this tag */
-            if (NULL == (request = (orcm_pnp_pending_request_t*)opal_pointer_array_get_item(&group->requests, msgpkt->tag))) {
+            if (NULL == (request = find_request(&group->requests, msgpkt->tag))) {
                 /* if there isn't one for this specific tag, is there one for the wildcard tag? */
-                if (NULL == (request = (orcm_pnp_pending_request_t*)opal_pointer_array_get_item(&group->requests, ORCM_PNP_TAG_WILDCARD))) {
+                if (NULL == (request = find_request(&group->requests, ORCM_PNP_TAG_WILDCARD))) {
                     /* no available requests - just move on */
                     OBJ_RELEASE(msgpkt);
                     continue;
@@ -1897,7 +1897,8 @@ static orcm_pnp_channel_tracker_t* get_channel(char *app,
     int i, j;
     orcm_pnp_channel_tracker_t *tracker;
     orcm_pnp_group_t *group;
-    orcm_pnp_pending_request_t *request;
+    orcm_pnp_pending_request_t *request, *req;
+    opal_list_item_t *itm2;
     
     for (i=0; i < channels.size; i++) {
         if (NULL == (tracker = (orcm_pnp_channel_tracker_t*)opal_pointer_array_get_item(&channels, i))) {
@@ -1954,16 +1955,20 @@ static orcm_pnp_channel_tracker_t* get_channel(char *app,
         OBJ_RETAIN(group);
         opal_pointer_array_add(&tracker->groups, group);
         /* add any pending requests associated with this channel */
-        for (j=0; j < group->requests.size; j++) {
-            if (NULL == (request = (orcm_pnp_pending_request_t*)opal_pointer_array_get_item(&group->requests, j))) {
-                continue;
-            }
-            if (NULL != opal_pointer_array_get_item(&tracker->requests, request->tag)) {
+        for (itm2 = opal_list_get_first(&group->requests);
+             itm2 != opal_list_get_end(&group->requests);
+             itm2 = opal_list_get_next(itm2)) {
+            req = (orcm_pnp_pending_request_t*)itm2;
+            if (NULL != find_request(&tracker->requests, req->tag)) {
                 /* already assigned */
                 continue;
             }
-            OBJ_RETAIN(request);
-            opal_pointer_array_set_item(&tracker->requests, request->tag, request);
+            /* add it */
+            request = OBJ_NEW(orcm_pnp_pending_request_t);
+            request->tag = req->tag;
+            request->cbfunc = req->cbfunc;
+            request->cbfunc_buf = req->cbfunc_buf;
+            opal_list_append(&tracker->requests, &request->super);
         }
     }
     
@@ -2004,30 +2009,58 @@ static void setup_recv_request(orcm_pnp_channel_tracker_t *tracker,
     orcm_pnp_group_t *group;
     int i;
     
-    if (NULL == (request = (orcm_pnp_pending_request_t*)opal_pointer_array_get_item(&tracker->requests, tag))) {
+    if (NULL == (request = find_request(&tracker->requests, tag))) {
         request = OBJ_NEW(orcm_pnp_pending_request_t);
         request->tag = tag;
-        opal_pointer_array_set_item(&tracker->requests, request->tag, request);
+        opal_list_append(&tracker->requests, &request->super);
     }
     
-    /* setup the callback functions */
-    if (NULL == request->cbfunc) {
+    /* setup the callback functions - since the request may
+     * be pre-existing, we need to be careful that we only
+     * update the functions that were provided
+     */
+    if (NULL != cbfunc) {
         request->cbfunc = cbfunc;
     }
-    if (NULL == request->cbfunc_buf) {
+    if (NULL != cbfunc_buf) {
         request->cbfunc_buf = cbfunc_buf;
     }
     
-    /* indicate these groups are active */
+    /* set it up for the associated groups */
     for (i=0; i < tracker->groups.size; i++) {
         if (NULL == (group = (orcm_pnp_group_t*)opal_pointer_array_get_item(&tracker->groups, i))) {
             continue;
         }
-        if (NULL != opal_pointer_array_get_item(&group->requests, request->tag)) {
+        if (NULL != find_request(&group->requests, request->tag)) {
             /* already assigned */
             continue;
         }
-        OBJ_RETAIN(request);
-        opal_pointer_array_set_item(&group->requests, request->tag, request);
+        /* add it - since this is new, we can just use
+         * whatever cbfuncs that were given
+         */
+        request = OBJ_NEW(orcm_pnp_pending_request_t);
+        request->tag = tag;
+        request->cbfunc = cbfunc;
+        request->cbfunc_buf = cbfunc_buf;
+        opal_list_append(&group->requests, &request->super);
     }
+}
+
+static orcm_pnp_pending_request_t* find_request(opal_list_t *list,
+                                                orcm_pnp_tag_t tag)
+{
+    orcm_pnp_pending_request_t *req;
+    opal_list_item_t *item;
+    
+    for (item = opal_list_get_first(list);
+         item != opal_list_get_end(list);
+         item = opal_list_get_next(item)) {
+        req = (orcm_pnp_pending_request_t*)item;
+        
+        if (tag == req->tag) {
+            return req;
+        }
+    }
+    
+    return NULL;
 }
