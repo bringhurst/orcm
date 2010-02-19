@@ -140,6 +140,11 @@ ORCM_DECLSPEC int orcm_init_util(void);
  */
 ORCM_DECLSPEC int orcm_finalize(void);
 
+/*
+ * Cleanup signal handlers
+ */
+void orcm_remove_signal_handlers(void);
+
 /**
  * Spawn an application under the CM
  */

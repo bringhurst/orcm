@@ -330,17 +330,6 @@ int main(int argc, char *argv[])
         goto cleanup;
     }
     
-    /** setup callbacks for abort signals - from this point
-     * forward, we need to abort in a manner that allows us
-     * to cleanup
-     */
-    opal_signal_set(&term_handler, SIGTERM,
-                    abort_signal_callback, &term_handler);
-    opal_signal_add(&term_handler, NULL);
-    opal_signal_set(&int_handler, SIGINT,
-                    abort_signal_callback, &int_handler);
-    opal_signal_add(&int_handler, NULL);
-
     /* setup a recv so we can "hear" daemons as they startup */
     if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(ORTE_RMCAST_SYS_CHANNEL,
                                                           ORTE_RMCAST_TAG_BOOTSTRAP,
@@ -423,9 +412,8 @@ static void just_quit(int fd, short ign, void *arg)
         free(orted_exit_event);
     }
     
-    /* Remove the TERM and INT signal handlers */
-    opal_signal_del(&term_handler);
-    opal_signal_del(&int_handler);
+    /* Remove the signal handlers */
+    orcm_remove_signal_handlers();
     
     /* whack any lingering session directory files from our jobs */
     orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
@@ -434,89 +422,6 @@ static void just_quit(int fd, short ign, void *arg)
     orcm_finalize();
     
     exit(orte_exit_status);
-}
-
-/*
- * Attempt to terminate the job and wait for callback indicating
- * the job has been aborted.
- */
-static void abort_signal_callback(int fd, short flags, void *arg)
-{
-    /* if we have already ordered this once, don't keep
-     * doing it to avoid race conditions
-     */
-    if (!opal_atomic_trylock(&orte_abort_inprogress_lock)) { /* returns 1 if already locked */
-        if (forcibly_die) {
-            /* kill any local procs */
-            orte_odls.kill_local_procs(NULL, false);
-            
-            /* whack any lingering session directory files from our jobs */
-            orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
-            
-            /* exit with a non-zero status */
-            exit(ORTE_ERROR_DEFAULT_EXIT_CODE);
-        }
-        opal_output(0, "open-cm: abort is already in progress...hit ctrl-c again to forcibly terminate\n\n");
-        forcibly_die = true;
-        return;
-    }
-    
-    /* set the global abnormal exit flag so we know not to
-     * use the standard xcast for terminating orteds
-     */
-    orte_abnormal_term_ordered = true;
-    /* ensure that the forwarding of stdin stops */
-    orte_job_term_ordered = true;
-    
-    /* We are in an event handler; the exit procedure
-     * will delete the signal handler that is currently running
-     * (which is a Bad Thing), so we can't call it directly.
-     * Instead, we have to exit this handler and setup to call
-     * abort_exit_callback after this.
-     */
-    ORTE_TIMER_EVENT(0, 0, abort_exit_callback);
-}
-
-static void abort_exit_callback(int fd, short ign, void *arg)
-{
-    int j;
-    orte_job_t *jdata;
-    int ret;
-    
-    /* since we are being terminated by a user's signal, be
-     * sure to exit with a non-zero exit code - but don't
-     * overwrite any error code from a proc that might have
-     * failed, in case that is why the user ordered us
-     * to terminate
-     */
-    ORTE_UPDATE_EXIT_STATUS(ORTE_ERROR_DEFAULT_EXIT_CODE);
-    
-    for (j=0; j < orte_job_data->size; j++) {
-        if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, j))) {
-            continue;
-        }
-        /* turn off the restart for this job */
-        jdata->err_cbfunc = NULL;
-        jdata->err_cbstates = 0;
-        /* indicate that this is no longer a continuously operating job */
-        jdata->controls &= ~ORTE_JOB_CONTROL_CONTINUOUS_OP;
-    }
-    
-    /* terminate the orteds - they will automatically kill
-     * their local procs
-     */
-    ret = orte_plm.terminate_orteds();
-    if (ORTE_SUCCESS != ret) {
-        /* If we failed the terminate_orteds() above, then we
-         * need to just die
-         */
-        just_quit(fd, ign, arg);
-    }
-    /* ensure all the orteds depart together */
-    orte_grpcomm.onesided_barrier();
-
-    ORTE_UPDATE_EXIT_STATUS(ret);
-    just_quit(0, 0, NULL);
 }
 
 static void job_complete(int fd, short ign, void *arg)
