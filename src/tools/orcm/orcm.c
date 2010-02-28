@@ -154,7 +154,6 @@ static void recv_bootstrap(int status, orte_process_name_t* sender,
                            void* cbdata);
 static char* regen_uri(char *old_uri, orte_process_name_t *name);
 
-#if ORTE_ENABLE_MULTICAST
 static void daemon_announce(int status,
                             orte_rmcast_channel_t channel,
                             orte_rmcast_tag_t tag,
@@ -170,7 +169,6 @@ static void ps_recv(int status,
                     orte_rmcast_tag_t tag,
                     orte_process_name_t *sender,
                     opal_buffer_t *buf, void *cbdata);
-#endif
 
 #define CM_MAX_LINE_LENGTH  1024
 
