@@ -139,7 +139,7 @@ int orcm_init(orcm_proc_type_t flags)
         ret = ORTE_ERR_FATAL;
         goto error;
     }
-    
+
     trap_signals();
 
     orcm_initialized = true;
@@ -211,9 +211,9 @@ static void trap_signals(void)
 
 static void just_quit(int fd, short flags, void*arg)
 {
-    /* remove all signal handlers */
-    orcm_remove_signal_handlers();
-    
+
+    opal_output(0, "JUST QUIT");
+
     if (OPENRCM_PROC_IS_APP || OPENRCM_PROC_IS_TOOL) {
         /* whack any lingering session directory files from our job */
         orte_session_dir_cleanup(ORTE_PROC_MY_NAME->jobid);
@@ -222,6 +222,7 @@ static void just_quit(int fd, short flags, void*arg)
         orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
     }
     
+    opal_output(0, "ORCM FINALIZE");
     /* cleanup and leave */
     orcm_finalize();
     
@@ -234,6 +235,7 @@ static void abort_callback(int fd, short flags, void*arg)
     orte_job_t *jdata;
     int ret;
     
+    opal_output(0, "ABORT CALLBACK");
     /* since we are being terminated by a user's signal, be
      * sure to exit with a non-zero exit code - but don't
      * overwrite any error code from a proc that might have
@@ -274,6 +276,8 @@ static void signal_trap(int fd, short flags, void *arg)
 {
     int i;
 
+    opal_output(0, "SIGNAL TRAPPED");
+    
     /* We are in an event handler; the exit procedure
      * will delete the signal handler that is currently running
      * (which is a Bad Thing), so we can't call it directly.
@@ -282,10 +286,12 @@ static void signal_trap(int fd, short flags, void *arg)
      */
     /* if we are an app, just cleanly terminate */
     if (OPENRCM_PROC_IS_APP || OPENRCM_PROC_IS_TOOL) {
-        if (opal_atomic_trylock(&orte_abort_inprogress_lock)) { /* returns 1 if already locked */
+        if (!opal_atomic_trylock(&orte_abort_inprogress_lock)) { /* returns 1 if already locked */
+            opal_output(0, "SIGNAL TRAPPED - APP LOCK DETECTED");
             return;
         }
         ORTE_TIMER_EVENT(0, 0, just_quit);
+        return;
     }
     
     /* if we are a daemon or HNP, allow for a forced term */
@@ -314,6 +320,7 @@ static void signal_trap(int fd, short flags, void *arg)
     /* ensure that the forwarding of stdin stops */
     orte_job_term_ordered = true;
     
+    opal_output(0, "SIGNAL TRAPPED - SETTING TIMER EVENT");
     ORTE_TIMER_EVENT(0, 0, abort_callback);
  }
 

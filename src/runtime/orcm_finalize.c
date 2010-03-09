@@ -29,6 +29,9 @@ int orcm_finalize(void)
         return ORCM_SUCCESS;
     }
     
+    /* remove all signal handlers */
+    orcm_remove_signal_handlers();
+
     if (ORTE_PROC_IS_APP) {
         orcm_pnp_base_close();
         orcm_leader_base_close(); 

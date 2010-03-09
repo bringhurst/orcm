@@ -10,9 +10,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
-#ifdef HAVE_SIGNAL_H
-#include <signal.h>
-#endif  /*  HAVE_SIGNAL_H */
 #ifdef HAVE_NETINET_IN_H
 #include <netinet/in.h>
 #endif
@@ -27,7 +24,6 @@
 #include "orte/mca/errmgr/errmgr.h"
 #include "orte/util/name_fns.h"
 #include "orte/runtime/orte_globals.h"
-#include "orte/runtime/orte_wait.h"
 
 #include "mca/pnp/pnp.h"
 #include "runtime/runtime.h"
@@ -35,9 +31,6 @@
 #define ORCM_TEST_CLIENT_SERVER_TAG     15
 #define ORCM_TEST_CLIENT_CLIENT_TAG     16
 
-static struct opal_event term_handler;
-static struct opal_event int_handler;
-static void abort_exit_callback(int fd, short flags, void *arg);
 static void send_data(int fd, short flags, void *arg);
 static void recv_input(int status,
                        orte_process_name_t *sender,
@@ -62,17 +55,6 @@ int main(int argc, char* argv[])
         fprintf(stderr, "Failed to init: error %d\n", rc);
         exit(1);
     }
-    
-    /** setup callbacks for abort signals - from this point
-     * forward, we need to abort in a manner that allows us
-     * to cleanup
-     */
-    opal_signal_set(&term_handler, SIGTERM,
-                    abort_exit_callback, &term_handler);
-    opal_signal_add(&term_handler, NULL);
-    opal_signal_set(&int_handler, SIGINT,
-                    abort_exit_callback, &int_handler);
-    opal_signal_add(&int_handler, NULL);
     
     /* announce our existence */
     if (ORCM_SUCCESS != (rc = orcm_pnp.announce("CLIENT", "2.0", "beta", NULL))) {
@@ -158,21 +140,6 @@ static void send_data(int fd, short flags, void *arg)
     
     /* increment the msg number */
     msg_num++;
-}
-
-static void abort_exit_callback(int fd, short ign, void *arg)
-{
-    int j;
-    orte_job_t *jdata;
-    opal_list_item_t *item;
-    int ret;
-    
-    /* Remove the TERM and INT signal handlers */
-    opal_signal_del(&term_handler);
-    opal_signal_del(&int_handler);
-    
-    orcm_finalize();
-    exit(1);
 }
 
 static void recv_input(int status,
