@@ -42,7 +42,10 @@ enum {
     ORCM_PNP_TAG_BOOTSTRAP      = ORTE_RMCAST_TAG_BOOTSTRAP,
     ORCM_PNP_TAG_ANNOUNCE       = ORTE_RMCAST_TAG_ANNOUNCE,
     ORCM_PNP_TAG_OUTPUT         = ORTE_RMCAST_TAG_OUTPUT,
-    ORCM_PNP_TAG_PS             = ORTE_RMCAST_TAG_PS
+    ORCM_PNP_TAG_PS             = ORTE_RMCAST_TAG_PS,
+    ORCM_PNP_TAG_MSG            = ORTE_RMCAST_TAG_MSG,
+    ORCM_PNP_TAG_TOOL           = ORTE_RMCAST_TAG_TOOL,
+    ORCM_PNP_HEARTBEAT
 };
 
 #define ORCM_PNP_TAG_DYNAMIC    100
@@ -107,6 +110,9 @@ ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_group_t);
 
 typedef struct {
     opal_list_item_t super;
+    bool pending;
+    opal_mutex_t lock;
+    opal_condition_t cond;
     orcm_pnp_group_t *grp;
     orcm_pnp_source_t *src;
     orte_rmcast_channel_t channel;

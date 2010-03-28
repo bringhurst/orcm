@@ -32,10 +32,10 @@ int orcm_debug_output = -1;
 int orcm_debug_verbosity = 0;
 
 /* signal trap support */
-static int signals[] = {
+/* available signals
     SIGHUP,
-    SIGINT,
-    SIGQUIT,
+    SIGINT,     <=== trapped
+    SIGQUIT,    <=== trapped
     SIGILL,
     SIGTRAP,
     SIGABRT,
@@ -43,13 +43,22 @@ static int signals[] = {
     SIGBUS,
     SIGSEGV,
     SIGSYS,
-    SIGPIPE,
-    SIGTERM
+    SIGPIPE,    <=== trapped, ignored
+    SIGTERM     <=== trapped
+*/
+
+static int signals[] = {
+    SIGTERM,
+    SIGINT,
+    SIGQUIT,
+    SIGPIPE
 };
-static struct opal_event trap_handler[12];
-static int num_signals=12;
+static struct opal_event trap_handler[4];
+static int num_signals=4;
+
 static void trap_signals(void);
 static void signal_trap(int fd, short flags, void *arg);
+static void ignore_trap(int fd, short flags, void *arg);
 static bool forcibly_die=false;
 
 int orcm_init(orcm_proc_type_t flags)
@@ -79,8 +88,9 @@ int orcm_init(orcm_proc_type_t flags)
     
     if (OPENRCM_MASTER & flags) {
         /* add envars the master needs */
-        putenv("OMPI_MCA_rmaps=resilient");
-        putenv("OMPI_MCA_plm=rsh");
+        if (NULL == getenv("OMPI_MCA_rmaps")) {
+            putenv("OMPI_MCA_rmaps=resilient");
+        }
         
         /* if we are the master, then init us
          * with ORTE as the HNP
@@ -104,7 +114,9 @@ int orcm_init(orcm_proc_type_t flags)
         /* tools start independently, so we have to
          * ensure they get the correct ess module
          */
-        putenv("OMPI_MCA_ess=cm");
+        if (NULL == getenv("OMPI_MCA_ess=cm")) {
+            putenv("OMPI_MCA_ess=cm");
+        }
         if (ORTE_SUCCESS != (ret = orte_init(NULL, NULL, ORTE_PROC_TOOL))) {
             error = "orte_init";
             goto error;
@@ -119,27 +131,28 @@ int orcm_init(orcm_proc_type_t flags)
             goto error;
         }
         
-        /* setup the pnp framework */
-        if (ORCM_SUCCESS != (ret = orcm_pnp_base_open())) {
-            error = "pnp_open";
-            goto error;
-        }
-        if (ORCM_SUCCESS != (ret = orcm_pnp_base_select())) {
-            error = "pnp_select";
-            goto error;
-        }
-        /* setup the leader framework */
-        if (ORCM_SUCCESS != (ret = orcm_leader_base_open())) {
-            error = "pnp_open";
-            goto error;
-        }
-        if (ORCM_SUCCESS != (ret = orcm_leader_base_select())) {
-            error = "pnp_select";
-            goto error;
-        }
     } else {
         error = "unknown flag";
         ret = ORTE_ERR_FATAL;
+        goto error;
+    }
+
+    /* setup the pnp framework */
+    if (ORCM_SUCCESS != (ret = orcm_pnp_base_open())) {
+        error = "pnp_open";
+        goto error;
+    }
+    if (ORCM_SUCCESS != (ret = orcm_pnp_base_select())) {
+        error = "pnp_select";
+        goto error;
+    }
+    /* setup the leader framework */
+    if (ORCM_SUCCESS != (ret = orcm_leader_base_open())) {
+        error = "pnp_open";
+        goto error;
+    }
+    if (ORCM_SUCCESS != (ret = orcm_leader_base_select())) {
+        error = "pnp_select";
         goto error;
     }
 
@@ -206,8 +219,14 @@ static void trap_signals(void)
     int i;
     
     for (i=0; i < num_signals; i++) {
-        opal_signal_set(&trap_handler[i], signals[i],
-                        signal_trap, &trap_handler[i]);
+        if (SIGPIPE == signals[i]) {
+            /* ignore this signal */
+            opal_signal_set(&trap_handler[i], signals[i],
+                            ignore_trap, &trap_handler[i]);
+        } else {
+            opal_signal_set(&trap_handler[i], signals[i],
+                            signal_trap, &trap_handler[i]);
+        }
         opal_signal_add(&trap_handler[i], NULL);
     }
 }
@@ -275,6 +294,9 @@ static void signal_trap(int fd, short flags, void *arg)
 {
     int i;
 
+    opal_output(0, "%s trapped signal %s",
+                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), strsignal(fd));
+
     /* We are in an event handler; the exit procedure
      * will delete the signal handler that is currently running
      * (which is a Bad Thing), so we can't call it directly.
@@ -319,6 +341,13 @@ static void signal_trap(int fd, short flags, void *arg)
     ORTE_TIMER_EVENT(0, 0, abort_callback);
  }
 
+static void ignore_trap(int fd, short flags, void *arg)
+{
+    opal_output(0, "%s ignoring signal %s",
+                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), strsignal(fd));
+    
+    return;
+}
 
 /**   INSTANTIATE OPENRCM OBJECTS **/
 static void spawn_construct(orcm_spawn_event_t *ptr)

@@ -11,6 +11,7 @@
 
 /* add the openrcm definitions */
 #include "src/runtime/runtime.h"
+#include "include/constants.h"
 
 #include "orte_config.h"
 #include "orte/constants.h"
@@ -50,17 +51,15 @@
 #include "opal/mca/base/base.h"
 #include "opal/mca/base/mca_base_param.h"
 #include "opal/runtime/opal.h"
-#include "opal/mca/installdirs/installdirs.h"
+#include "opal/threads/threads.h"
 
-#include "orte/runtime/runtime.h"
 #include "orte/util/show_help.h"
-#include "orte/util/parse_options.h"
 #include "orte/mca/errmgr/errmgr.h"
 #include "orte/runtime/orte_globals.h"
-#include "orte/mca/rml/rml.h"
 #include "orte/util/name_fns.h"
-#include "orte/util/parse_options.h"
 #include "orte/util/proc_info.h"
+
+#include "mca/pnp/pnp.h"
 
 /*****************************************
  * Global Vars for Command line Arguments
@@ -69,6 +68,7 @@ static struct {
     bool help;
     char *replicas;
     char *hnp_uri;
+    int master;
 } my_globals;
 
 opal_cmd_line_init_t cmd_line_opts[] = {
@@ -82,7 +82,11 @@ opal_cmd_line_init_t cmd_line_opts[] = {
     
     { NULL, NULL, NULL, '\0', "uri", "uri", 1,
       &my_globals.hnp_uri, OPAL_CMD_LINE_TYPE_STRING,
-      "The uri of the CM" },
+      "The uri of the ORCM master [for TCP multicast only]" },
+    
+    { NULL, NULL, NULL, 'm', "master", "master", 1,
+      &my_globals.master, OPAL_CMD_LINE_TYPE_INT,
+      "ID of ORCM master to be contacted" },
     
     /* End of list */
     { NULL, NULL, NULL, '\0', NULL, NULL, 
@@ -93,11 +97,6 @@ opal_cmd_line_init_t cmd_line_opts[] = {
 /*
  * Local variables & functions
  */
-static void abort_exit_callback(int fd, short flags, void *arg);
-static struct opal_event term_handler;
-static struct opal_event int_handler;
-static opal_event_t *orted_exit_event;
-
 #define CM_MAX_LINE_LENGTH  1024
 
 static char *cm_getline(FILE *fp)
@@ -120,6 +119,15 @@ retry:
     return NULL;
 }
 
+static opal_mutex_t lock;
+static opal_condition_t cond;
+static bool waiting=true;
+
+static void ack_recv(int status,
+                     orte_process_name_t *sender,
+                     orcm_pnp_tag_t tag,
+                     opal_buffer_t *buf, void *cbdata);
+
 
 int main(int argc, char *argv[])
 {
@@ -131,7 +139,8 @@ int main(int argc, char *argv[])
     int count;
     char cwd[OPAL_PATH_MAX];
     orcm_tool_cmd_t flag = OPENRCM_TOOL_STOP_CMD;
-
+    char *mstr;
+    
     /***************
      * Initialize
      ***************/
@@ -149,6 +158,10 @@ int main(int argc, char *argv[])
     my_globals.help = false;
     my_globals.replicas = NULL;
     my_globals.hnp_uri = NULL;
+    my_globals.master = -1;
+
+    OBJ_CONSTRUCT(&lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&cond, opal_condition_t);
     
     /* Parse the command line options */
     opal_cmd_line_create(&cmd_line, cmd_line_opts);
@@ -171,15 +184,19 @@ int main(int argc, char *argv[])
         return ORTE_ERROR;
     }
     
+    /* need to specify master */
+    if (my_globals.master < 0) {
+        opal_output(0, "Must specify ORCM master");
+        return ORTE_ERROR;
+    }
+    asprintf(&mstr, "OMPI_MCA_orte_ess_job_family=%d", my_globals.master);
+    putenv(mstr);
+    
     /* get the current working directory */
     if (OPAL_SUCCESS != opal_getcwd(cwd, sizeof(cwd))) {
         opal_output(orte_clean_output, "failed to get cwd\n");
         return ORTE_ERR_NOT_FOUND;
     }
-    
-    /* setup the exit triggers */
-    OBJ_CONSTRUCT(&orte_exit, orte_trigger_event_t);
-    OBJ_CONSTRUCT(&orteds_exit, orte_trigger_event_t);
     
     /* if we were given HNP contact info, parse it and
      * setup the process_info struct with that info
@@ -236,6 +253,15 @@ int main(int argc, char *argv[])
         return 1;
     }
     
+    /* register to receive responses */
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm", "0.1", "alpha",
+                                                              ORCM_PNP_SYS_CHANNEL,
+                                                              ORCM_PNP_TAG_TOOL,
+                                                              ack_recv))) {
+        ORTE_ERROR_LOG(ret);
+        goto cleanup;
+    }
+    
     /* setup the buffer to send our cmd */
     OBJ_CONSTRUCT(&buf, opal_buffer_t);
     
@@ -277,50 +303,64 @@ int main(int argc, char *argv[])
     }
     opal_argv_free(inpt);
     
-    if (0 > (ret = orte_rml.send_buffer(ORTE_PROC_MY_HNP, &buf, ORTE_RML_TAG_TOOL, 0))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL,
+                                                      NULL, ORCM_PNP_TAG_TOOL,
+                                                      &buf))) {
         ORTE_ERROR_LOG(ret);
     }
     OBJ_DESTRUCT(&buf);
     
     /* now wait for ack */
-    OBJ_CONSTRUCT(&buf, opal_buffer_t);
-    if (0 > (ret = orte_rml.recv_buffer(ORTE_NAME_WILDCARD, &buf, ORTE_RML_TAG_TOOL, 0))) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
-    }
-    i=1;
-    opal_dss.unpack(&buf, &ret, &i, OPAL_INT32);
-    if (ORTE_SUCCESS != ret) {
-        ORTE_ERROR_LOG(ret);
-    }
-    OBJ_DESTRUCT(&buf);
+    OPAL_ACQUIRE_THREAD(&lock, &cond, &waiting);
     
     /***************
      * Cleanup
      ***************/
 cleanup:
-    /* Remove the TERM and INT signal handlers */
-    opal_signal_del(&term_handler);
-    opal_signal_del(&int_handler);
-    OBJ_DESTRUCT(&orte_exit);
-    
-    /* cleanup orte */
-    
+    OBJ_DESTRUCT(&lock);
+    OBJ_DESTRUCT(&cond);
     orcm_finalize();
     
     return ret;
 }
 
-static void abort_exit_callback(int fd, short ign, void *arg)
+static void send_complete(int status,
+                          orte_process_name_t *sender,
+                          orcm_pnp_tag_t tag,
+                          opal_buffer_t *buf, void *cbdata)
 {
-    opal_list_item_t *item;
-    int ret;
+    OBJ_RELEASE(buf);
     
-    /* Remove the TERM and INT signal handlers */
-    opal_signal_del(&term_handler);
-    opal_signal_del(&int_handler);
-    OBJ_DESTRUCT(&orte_exit);
+    /* release the wait */
+    OPAL_RELEASE_THREAD(&lock, &cond, &waiting);
+}
+
+static void ack_recv(int status,
+                     orte_process_name_t *sender,
+                     orcm_pnp_tag_t tag,
+                     opal_buffer_t *buf, void *cbdata)
+{
+    orcm_tool_cmd_t flag;
+    int32_t n;
+    int rc;
+    opal_buffer_t *ans;
+
+    /* unpack the cmd */
+    n=1;
+    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &flag, &n, OPENRCM_TOOL_CMD_T))) {
+        ORTE_ERROR_LOG(rc);
+        return;
+    }
+    /* if this isn't a response to us, ignore it */
+    if (OPENRCM_TOOL_STOP_CMD != flag) {
+        return;
+    }
     
-    orcm_finalize();
-    exit(1);
+    /* disconnect */
+    flag = OPENRCM_TOOL_DISCONNECT_CMD;
+    ans = OBJ_NEW(opal_buffer_t);
+    opal_dss.pack(ans, &flag, 1, OPENRCM_TOOL_CMD_T);
+    orcm_pnp.output_buffer_nb(ORCM_PNP_SYS_CHANNEL,
+                              NULL, ORCM_PNP_TAG_TOOL,
+                              ans, send_complete, NULL);
 }

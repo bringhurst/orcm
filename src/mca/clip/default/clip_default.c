@@ -50,6 +50,7 @@ static int default_finalize(void)
 
 static int default_replicate(void)
 {
+#if 0
     char *file, *cmd;
     int i, nreps=0;
     FILE *fp;
@@ -77,6 +78,8 @@ static int default_replicate(void)
     fclose(fp);
     
     return nreps;
+#endif
+    return -1;
 }
 
 #define CM_MAX_LINE_LENGTH  1024

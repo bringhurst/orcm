@@ -46,9 +46,10 @@ typedef uint8_t orcm_proc_type_t;
 typedef uint8_t orcm_tool_cmd_t;
 #define OPENRCM_TOOL_CMD_T OPAL_UINT8
 
-#define OPENRCM_TOOL_START_CMD  1
-#define OPENRCM_TOOL_STOP_CMD   2
-#define OPENRCM_TOOL_PS_CMD     3
+#define OPENRCM_TOOL_START_CMD          1
+#define OPENRCM_TOOL_STOP_CMD           2
+#define OPENRCM_TOOL_PS_CMD             3
+#define OPENRCM_TOOL_DISCONNECT_CMD     4
 
 /* define an object to hold spawn info */
 typedef struct {

@@ -68,6 +68,7 @@ int main(int argc, char* argv[])
     
     /* we want to listen to all versions and releases of the CLIENT app */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("CLIENT", NULL, NULL,
+                                                      ORCM_PNP_GROUP_OUTPUT_CHANNEL,
                                                       ORCM_PNP_TAG_OUTPUT, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;

@@ -331,6 +331,7 @@ AC_CONFIG_FILES([Makefile
 		 src/tools/orcm-start/Makefile
 		 src/tools/orcm-stop/Makefile
 		 src/tools/orcm-ps/Makefile
+                 src/tools/orcmd/Makefile
 		 src/tools/wrappers/Makefile
 		 src/tools/wrappers/orcmcc-wrapper-data.txt
 		 src/tools/wrappers/orcm_wrapper_script

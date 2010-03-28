@@ -30,8 +30,15 @@ typedef struct {
     int output;
     opal_list_t opened;
 } orcm_pnp_base_t;
-
 ORCM_DECLSPEC extern orcm_pnp_base_t orcm_pnp_base;
+
+typedef struct {
+    opal_mutex_t lock;
+    opal_condition_t cond;
+    opal_buffer_t msgs;
+    bool msg_pending;
+} orcm_pnp_heartbeat_t;
+ORCM_DECLSPEC extern orcm_pnp_heartbeat_t orcm_pnp_heartbeat;
 
 typedef struct {
     opal_list_item_t super;
@@ -51,57 +58,6 @@ typedef struct {
     opal_list_t requests;
 } orcm_pnp_channel_tracker_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_channel_tracker_t);
-
-/* we have to copy the data across here because
- * the underlying delivery mechanism "owns" the memory and will release
- * it once we return. Thus, we must do the copy to ensure that we "own"
- * the memory that is subsequently passed back to our caller
- */
-#define ORCM_PROCESS_PNP_IOVECS(rlist, lck, cond, gp, sndr,                         \
-                                chan, tg, mg, cnt, cbd)                             \
-    do {                                                                            \
-        int i;                                                                      \
-        struct iovec *m;                                                            \
-        orcm_pnp_recv_t *pkt;                                                       \
-        pkt = OBJ_NEW(orcm_pnp_recv_t);                                             \
-        pkt->grp = (gp);                                                            \
-        pkt->src = (sndr);                                                          \
-        pkt->channel = (chan);                                                      \
-        pkt->tag = (tg);                                                            \
-        if (NULL != (mg)) {                                                         \
-            m = mg;                                                                 \
-            pkt->msg = (struct iovec*)malloc((cnt)*sizeof(struct iovec));           \
-            for (i=0; i < (cnt); i++) {                                             \
-                pkt->msg[i].iov_len = m->iov_len;                                   \
-                pkt->msg[i].iov_base = (void*)malloc(m->iov_len);                   \
-                memcpy((char*)pkt->msg[i].iov_base, (char*)m->iov_base, m->iov_len);\
-                m++;                                                                \
-            }                                                                       \
-        }                                                                           \
-        pkt->count = (cnt);                                                         \
-        pkt->cbdata = (cbd);                                                        \
-        OPAL_THREAD_LOCK((lck));                                                    \
-        opal_list_append((rlist), &pkt->super);                                     \
-        opal_condition_broadcast((cond));                                           \
-        OPAL_THREAD_UNLOCK((lck));                                                  \
-    } while(0);
-
-#define ORCM_PROCESS_PNP_BUFFERS(rlist, lck, cond, gp, sndr,    \
-                                 chan, tg, buf, cbd)            \
-    do {                                                        \
-        orcm_pnp_recv_t *pkt;                                   \
-        pkt = OBJ_NEW(orcm_pnp_recv_t);                         \
-        pkt->grp = (gp);                                        \
-        pkt->src = (sndr);                                      \
-        pkt->channel = (chan);                                  \
-        pkt->tag = (tg);                                        \
-        pkt->buffer = OBJ_NEW(opal_buffer_t);                   \
-        opal_dss.copy_payload(pkt->buffer, (buf));              \
-        OPAL_THREAD_LOCK((lck));                                \
-        opal_list_append((rlist), &pkt->super);                 \
-        opal_condition_broadcast((cond));                       \
-        OPAL_THREAD_UNLOCK((lck));                              \
-    } while(0);
 
 ORCM_DECLSPEC void orcm_pnp_base_push_data(orcm_pnp_source_t *src, opal_buffer_t *buf);
 ORCM_DECLSPEC opal_buffer_t* orcm_pnp_base_pop_data(orcm_pnp_source_t *src);

@@ -63,6 +63,7 @@ int main(int argc, char* argv[])
     
     /* for this application, register an input to hear direct responses */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("SERVER", "1.0", "alpha",
+                                                      ORCM_PNP_GROUP_OUTPUT_CHANNEL,
                                                       ORCM_TEST_CLIENT_SERVER_TAG, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
@@ -70,6 +71,7 @@ int main(int argc, char* argv[])
     
     /* for this application, register to recv anything sent to my input  */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("client", "1.0", NULL,
+                                                      ORCM_PNP_GROUP_OUTPUT_CHANNEL,
                                                       ORCM_PNP_TAG_WILDCARD, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;

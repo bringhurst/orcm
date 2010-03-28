@@ -11,6 +11,7 @@
 
 /* add the openrcm definitions */
 #include "src/runtime/runtime.h"
+#include "include/constants.h"
 
 #include "orte_config.h"
 #include "orte/constants.h"
@@ -33,16 +34,14 @@
 #include "opal/util/cmd_line.h"
 #include "opal/util/argv.h"
 #include "opal/runtime/opal.h"
+#include "opal/util/opal_environ.h"
+#include "opal/threads/threads.h"
 
-#include "orte/runtime/runtime.h"
 #include "orte/util/show_help.h"
-#include "orte/util/parse_options.h"
 #include "orte/mca/errmgr/errmgr.h"
-#include "orte/runtime/orte_globals.h"
-#include "orte/mca/rml/rml.h"
 #include "orte/util/name_fns.h"
-#include "orte/mca/odls/odls_types.h"
-#include "orte/mca/rmcast/rmcast.h"
+
+#include "mca/pnp/pnp.h"
 
 /*****************************************
  * Global Vars for Command line Arguments
@@ -51,9 +50,8 @@ static struct {
     bool help;
     bool monitor;
     int update_rate;
-    char *scope;
-    int scope_flag;
     char *hnp_uri;
+    int master;
 } my_globals;
 
 opal_cmd_line_init_t cmd_line_opts[] = {
@@ -65,18 +63,18 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       &my_globals.monitor, OPAL_CMD_LINE_TYPE_BOOL,
       "Provide a regularly updated picture of the system (default: single snapshot)" },
     
-    { NULL, NULL, NULL, '\0', "scope", "scope", 1,
-      &my_globals.scope, OPAL_CMD_LINE_TYPE_STRING,
-      "Scope of the data [CM | node | app] (default: CM)" },
-    
     { NULL, NULL, NULL, '\0', "update-rate", "update-rate", 1,
       &my_globals.update_rate, OPAL_CMD_LINE_TYPE_INT,
       "Update rate in seconds (default: 5)" },
     
     { NULL, NULL, NULL, '\0', "uri", "uri", 1,
       &my_globals.hnp_uri, OPAL_CMD_LINE_TYPE_STRING,
-      "The uri of the CM that you wish to query/monitor" },
-
+      "The uri of the ORCM master [for TCP multicast only]" },
+    
+    { NULL, NULL, NULL, 'm', "master", "master", 1,
+      &my_globals.master, OPAL_CMD_LINE_TYPE_INT,
+      "ID of ORCM master to be contacted" },
+    
     /* End of list */
     { NULL, NULL, NULL, '\0', NULL, NULL, 0,
       NULL, OPAL_CMD_LINE_TYPE_NULL,
@@ -86,16 +84,15 @@ opal_cmd_line_init_t cmd_line_opts[] = {
 /*
  * Local variables & functions
  */
-static void abort_exit_callback(int fd, short flags, void *arg);
-static struct opal_event term_handler;
-static struct opal_event int_handler;
-static opal_event_t *orted_exit_event;
+static opal_mutex_t lock;
+static opal_condition_t cond;
+static bool waiting=true;
 
 static void pretty_print(opal_buffer_t *buf);
 
 static void ps_recv(int status,
-                    int channel, orte_rmcast_tag_t tag,
                     orte_process_name_t *sender,
+                    orcm_pnp_tag_t tag,
                     opal_buffer_t *buf, void *cbdata);
 
 /* update data function */
@@ -105,7 +102,6 @@ static void update_data(int fd, short flg, void *arg)
     opal_event_t *tmp;
     struct timeval now;
     int32_t ret;
-    orte_daemon_cmd_flag_t cmd;
     time_t mytime;
     orcm_tool_cmd_t flag = OPENRCM_TOOL_PS_CMD;
 
@@ -118,52 +114,21 @@ static void update_data(int fd, short flg, void *arg)
 
     /* setup the buffer to send our cmd */
     OBJ_CONSTRUCT(&buf, opal_buffer_t);
-
-    switch (my_globals.scope_flag) {
-        case 1:
-            /* point-to-point query of the CM */
-            if (ORTE_SUCCESS != (ret = opal_dss.pack(&buf, &flag, 1, OPENRCM_TOOL_CMD_T))) {
-                ORTE_ERROR_LOG(ret);
-                goto cleanup;
-            }
-            
-            if (0 > (ret = orte_rml.send_buffer(ORTE_PROC_MY_HNP, &buf, ORTE_RML_TAG_TOOL, 0))) {
-                ORTE_ERROR_LOG(ret);
-                goto cleanup;
-            }
-            OBJ_DESTRUCT(&buf);
-            
-            /* now wait for info */
-            OBJ_CONSTRUCT(&buf, opal_buffer_t);
-            if (0 > (ret = orte_rml.recv_buffer(ORTE_NAME_WILDCARD, &buf, ORTE_RML_TAG_TOOL, 0))) {
-                ORTE_ERROR_LOG(ret);
-                goto cleanup;
-            }
-            pretty_print(&buf);
-            break;
-        
-        case 2:
-            /* multicast query of the daemons, including the CM - we
-             * don't need anything in the buffer as the cmd's arrival
-             * is enough to trigger the response
-             */
-            if (ORTE_SUCCESS != (ret = orte_rmcast.send_buffer(ORTE_RMCAST_SYS_CHANNEL,
-                                                               ORTE_RMCAST_TAG_PS,
-                                                               &buf))) {
-                ORTE_ERROR_LOG(ret);
-            }
-            break;
-        
-        case 3:
-            /* multicast query for info from the apps themselves,
-             * including who their pnp leader is
-             */
-            break;
-        
-        default:
-            break;
+    
+    if (ORTE_SUCCESS != (ret = opal_dss.pack(&buf, &flag, 1, OPENRCM_TOOL_CMD_T))) {
+        ORTE_ERROR_LOG(ret);
+        goto cleanup;
     }
     
+    if (ORCM_SUCCESS != (ret = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL,
+                                                      NULL, ORCM_PNP_TAG_TOOL,
+                                                      &buf))) {
+        ORTE_ERROR_LOG(ret);
+    }
+    
+    /* now wait for response */
+    OPAL_ACQUIRE_THREAD(&lock, &cond, &waiting);
+
 cleanup:
     OBJ_DESTRUCT(&buf);
     if (NULL != arg) {
@@ -180,7 +145,8 @@ int main(int argc, char *argv[])
     int32_t ret;
     opal_cmd_line_t cmd_line;
     char *args = NULL;
-
+    char *mstr;
+    
     /***************
      * Initialize
      ***************/
@@ -197,9 +163,12 @@ int main(int argc, char *argv[])
     /* initialize the globals */
     my_globals.help = false;
     my_globals.monitor = false;
-    my_globals.scope = NULL;
     my_globals.update_rate = 5;
     my_globals.hnp_uri = NULL;
+    my_globals.master = -1;
+
+    OBJ_CONSTRUCT(&lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&cond, opal_condition_t);
     
     /* Parse the command line options */
     opal_cmd_line_create(&cmd_line, cmd_line_opts);
@@ -221,24 +190,14 @@ int main(int argc, char *argv[])
         return ORTE_ERROR;
     }
     
-    if (NULL == my_globals.scope || 0 == strcasecmp(my_globals.scope, "cm")) {
-        my_globals.scope_flag = 1;
-    } else if (0 == strcasecmp(my_globals.scope, "node")) {
-        my_globals.scope_flag = 2;
-    } else if (0 == strcasecmp(my_globals.scope, "app")) {
-        my_globals.scope_flag = 3;
-    } else {
-        fprintf(stderr, "Unknown value %s for scope\n", my_globals.scope);
-        args = opal_cmd_line_get_usage_msg(&cmd_line);
-        orte_show_help("help-orcm-ps.txt", "usage", true, args);
-        free(args);
+    /* need to specify master */
+    if (my_globals.master < 0) {
+        opal_output(0, "Must specify ORCM master");
         return ORTE_ERROR;
     }
+    asprintf(&mstr, "OMPI_MCA_orte_ess_job_family=%d", my_globals.master);
+    putenv(mstr);
     
-    /* setup the exit triggers */
-    OBJ_CONSTRUCT(&orte_exit, orte_trigger_event_t);
-    OBJ_CONSTRUCT(&orteds_exit, orte_trigger_event_t);
-
     /* if we were given HNP contact info, parse it and
      * setup the process_info struct with that info
      */
@@ -289,7 +248,16 @@ int main(int argc, char *argv[])
      * We need all of OPAL and ORTE - this will
      * automatically connect us to the CM
      ***************************/
-    if (ORTE_SUCCESS != (ret = orcm_init(OPENRCM_TOOL))) {
+    if (ORCM_SUCCESS != (ret = orcm_init(OPENRCM_TOOL))) {
+        goto cleanup;
+    }
+
+    /* register to receive responses */
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm", "0.1", "alpha",
+                                                              ORCM_PNP_SYS_CHANNEL,
+                                                              ORCM_PNP_TAG_TOOL,
+                                                              ps_recv))) {
+        ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
 
@@ -297,16 +265,6 @@ int main(int argc, char *argv[])
     update_data(0, 0, NULL);
     
     if (my_globals.monitor) {
-        if (1 < my_globals.scope_flag) {
-            /* if we are using multicast, setup the recv */
-            if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(ORTE_RMCAST_SYS_CHANNEL,
-                                                                  ORTE_RMCAST_TAG_PS,
-                                                                  ORTE_RMCAST_PERSISTENT,
-                                                                  ps_recv, NULL))) {
-                ORTE_ERROR_LOG(ret);
-                goto cleanup;
-            }
-        }
         /* setup a timer event to tell us when to do it next */
         ORTE_TIMER_EVENT(my_globals.update_rate, 0, update_data);
     } else {
@@ -320,30 +278,18 @@ int main(int argc, char *argv[])
      * Cleanup
      ***************/
  cleanup:
-    /* Remove the TERM and INT signal handlers */
-    opal_signal_del(&term_handler);
-    opal_signal_del(&int_handler);
-    OBJ_DESTRUCT(&orte_exit);
-
-    /* cleanup orte */
+    /* cancel the recv */
+    orcm_pnp.deregister_input("orcm", "0.1", "alpha",
+                              ORCM_PNP_SYS_CHANNEL,
+                              ORCM_PNP_TAG_TOOL);
     
+    OBJ_DESTRUCT(&lock);
+    OBJ_DESTRUCT(&cond);
+    
+    /* cleanup orcm */
     orcm_finalize();
 
     return ret;
-}
-
-static void abort_exit_callback(int fd, short ign, void *arg)
-{
-    opal_list_item_t *item;
-    int ret;
-    
-    /* Remove the TERM and INT signal handlers */
-    opal_signal_del(&term_handler);
-    opal_signal_del(&int_handler);
-    OBJ_DESTRUCT(&orte_exit);
-
-    orcm_finalize();
-    exit(1);
 }
 
 static void pretty_print(opal_buffer_t *buf)
@@ -384,20 +330,37 @@ static void pretty_print(opal_buffer_t *buf)
     } }
 
 static void ps_recv(int status,
-                    int channel, orte_rmcast_tag_t tag,
                     orte_process_name_t *sender,
+                    orcm_pnp_tag_t tag,
                     opal_buffer_t *buf, void *cbdata)
 {
+    orcm_tool_cmd_t flag;
     char *app;
     int32_t n, j;
     orte_vpid_t vpid;
     char *node;
     int rc;
 
+    /* unpack the cmd */
+    n=1;
+    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &flag, &n, OPENRCM_TOOL_CMD_T))) {
+        ORTE_ERROR_LOG(rc);
+        return;
+    }
+    /* if this isn't a response to us, ignore it */
+    if (OPENRCM_TOOL_PS_CMD != flag) {
+        return;
+    }
+    
     n=1;
     if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &node, &n, OPAL_STRING))) {
         ORTE_ERROR_LOG(rc);
-        return;
+        goto cleanup;
+    }
+    n=1;
+    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &node, &n, OPAL_STRING))) {
+        ORTE_ERROR_LOG(rc);
+        goto cleanup;
     }
     fprintf(stderr, "NODE: %s\n", node);
     free(node);
@@ -408,7 +371,7 @@ static void ps_recv(int status,
         n=1;
         if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &vpid, &n, ORTE_VPID))) {
             ORTE_ERROR_LOG(rc);
-            return;
+            goto cleanup;
         }
         fprintf(stderr, "      Instances: ");
         while (ORTE_VPID_INVALID != vpid) {
@@ -416,10 +379,14 @@ static void ps_recv(int status,
             n=1;
             if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &vpid, &n, ORTE_VPID))) {
                 ORTE_ERROR_LOG(rc);
-                return;
+                goto cleanup;
             }
         }
         fprintf(stderr, "\n");
     }
     fprintf(stderr, "\n");
+
+cleanup:
+    /* release the wait */
+    OPAL_RELEASE_THREAD(&lock, &cond, &waiting);
 }

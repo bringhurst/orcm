@@ -13,5 +13,6 @@ SUBDIRS = \
 	orcm-start \
 	orcm-stop \
 	orcm-ps \
+        orcmd \
 	wrappers
 

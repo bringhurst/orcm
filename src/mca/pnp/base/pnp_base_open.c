@@ -51,11 +51,20 @@ orcm_pnp_source_t orcm_pnp_wildcard;
 /* instantiate the globals */
 orcm_pnp_base_t orcm_pnp_base;
 
+/* instantiate the heartbeat */
+orcm_pnp_heartbeat_t orcm_pnp_heartbeat;
+
 int orcm_pnp_base_open(void)
 {
     /* setup the source wildcard */
     orcm_pnp_wildcard.name.jobid = ORTE_JOBID_WILDCARD;
     orcm_pnp_wildcard.name.vpid = ORTE_VPID_WILDCARD;
+    
+    /* setup the heartbeat */
+    OBJ_CONSTRUCT(&orcm_pnp_heartbeat.lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&orcm_pnp_heartbeat.cond, opal_condition_t);
+    OBJ_CONSTRUCT(&orcm_pnp_heartbeat.msgs, opal_buffer_t);
+    orcm_pnp_heartbeat.msg_pending = false;
     
     /* Debugging / verbose output.  Always have stream open, with
      verbose set by the mca open system... */
@@ -194,6 +203,9 @@ OBJ_CLASS_INSTANCE(orcm_pnp_pending_request_t,
 
 static void recv_constructor(orcm_pnp_recv_t *ptr)
 {
+    ptr->pending = false;
+    OBJ_CONSTRUCT(&ptr->lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&ptr->cond, opal_condition_t);
     ptr->grp = NULL;
     ptr->src = NULL;
     ptr->channel = ORTE_RMCAST_INVALID_CHANNEL;
@@ -205,10 +217,14 @@ static void recv_constructor(orcm_pnp_recv_t *ptr)
     ptr->cbfunc_buf = NULL;
     ptr->cbdata = NULL;
 }
+static void recv_destructor(orcm_pnp_recv_t *ptr) {
+    OBJ_DESTRUCT(&ptr->lock);
+    OBJ_DESTRUCT(&ptr->cond);
+}
 OBJ_CLASS_INSTANCE(orcm_pnp_recv_t,
                    opal_list_item_t,
                    recv_constructor,
-                   NULL);
+                   recv_destructor);
 
 static void send_constructor(orcm_pnp_send_t *ptr)
 {
