@@ -11,5 +11,6 @@ libmca_cfgi_la_SOURCES = $(headers)
 libmca_cfgi_la_DEPENDENCIES = \
         base/libmca_cfgi_base.la \
         file/libmca_cfgi_file.la
+#        file/libmca_cfgi_tool.la
 libmca_cfgi_la_LIBADD = $(libmca_cfgi_la_DEPENDENCIES)
 

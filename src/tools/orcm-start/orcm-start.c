@@ -75,7 +75,7 @@ static struct {
     bool gdb;
     char *hnp_uri;
     int max_restarts;
-    int master;
+    char *master;
 } my_globals;
 
 opal_cmd_line_init_t cmd_line_opts[] = {
@@ -116,8 +116,8 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       "Maximum number of times a process in this job can be restarted (default: unbounded)" },
 
     { NULL, NULL, NULL, 'm', "master", "master", 1,
-      &my_globals.master, OPAL_CMD_LINE_TYPE_INT,
-      "ID of ORCM master to be contacted" },
+      &my_globals.master, OPAL_CMD_LINE_TYPE_STRING,
+      "ID of ORCM master to be contacted [number or file:name of file containing it" },
     
     /* End of list */
     { NULL, NULL, NULL, 
@@ -175,6 +175,7 @@ int main(int argc, char *argv[])
     char *app;
     orcm_tool_cmd_t flag = OPENRCM_TOOL_START_CMD;
     int8_t constrain;
+    int master;
     
     /***************
      * Initialize
@@ -199,7 +200,7 @@ int main(int argc, char *argv[])
     my_globals.gdb = false;
     my_globals.hnp_uri = NULL;
     my_globals.max_restarts = -1;
-    my_globals.master = -1;
+    my_globals.master = NULL;
     
     OBJ_CONSTRUCT(&lock, opal_mutex_t);
     OBJ_CONSTRUCT(&cond, opal_condition_t);
@@ -226,11 +227,52 @@ int main(int argc, char *argv[])
     }
     
     /* need to specify master */
-    if (my_globals.master < 0) {
+    if (NULL == my_globals.master) {
         opal_output(0, "Must specify ORCM master");
         return ORTE_ERROR;
     }
-    asprintf(&mstr, "OMPI_MCA_orte_ess_job_family=%d", my_globals.master);
+    if (0 == strncmp(my_globals.master, "file", strlen("file")) ||
+        0 == strncmp(my_globals.master, "FILE", strlen("FILE"))) {
+        char input[1024], *filename;
+        FILE *fp;
+        
+        /* it is a file - get the filename */
+        filename = strchr(my_globals.master, ':');
+        if (NULL == filename) {
+            /* filename is not correctly formatted */
+            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "master", my_globals.master);
+            return ORTE_ERROR;
+        }
+        ++filename; /* space past the : */
+        
+        if (0 >= strlen(filename)) {
+            /* they forgot to give us the name! */
+            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "master", my_globals.master);
+            return ORTE_ERROR;
+        }
+        
+        /* open the file and extract the pid */
+        fp = fopen(filename, "r");
+        if (NULL == fp) { /* can't find or read file! */
+            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, "master", filename);
+            return ORTE_ERROR;
+        }
+        if (NULL == fgets(input, 1024, fp)) {
+            /* something malformed about file */
+            fclose(fp);
+            orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", "master", true, filename);
+            return ORTE_ERROR;
+        }
+        fclose(fp);
+        input[strlen(input)-1] = '\0';  /* remove newline */
+        /* convert the pid */
+        master = strtoul(input, NULL, 10);
+    } else {
+        /* should just be the master itself */
+        master = strtoul(my_globals.master, NULL, 10);
+    }
+    
+    asprintf(&mstr, "OMPI_MCA_orte_ess_job_family=%d", master);
     putenv(mstr);
     
     /* bozo check - cannot specify both add and num procs */

@@ -51,7 +51,7 @@ static struct {
     bool monitor;
     int update_rate;
     char *hnp_uri;
-    int master;
+    char *master;
 } my_globals;
 
 opal_cmd_line_init_t cmd_line_opts[] = {
@@ -72,8 +72,8 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       "The uri of the ORCM master [for TCP multicast only]" },
     
     { NULL, NULL, NULL, 'm', "master", "master", 1,
-      &my_globals.master, OPAL_CMD_LINE_TYPE_INT,
-      "ID of ORCM master to be contacted" },
+      &my_globals.master, OPAL_CMD_LINE_TYPE_STRING,
+      "ID of ORCM master to be contacted [number or file:name of file containing it" },
     
     /* End of list */
     { NULL, NULL, NULL, '\0', NULL, NULL, 0,
@@ -146,6 +146,7 @@ int main(int argc, char *argv[])
     opal_cmd_line_t cmd_line;
     char *args = NULL;
     char *mstr;
+    int master;
     
     /***************
      * Initialize
@@ -165,11 +166,8 @@ int main(int argc, char *argv[])
     my_globals.monitor = false;
     my_globals.update_rate = 5;
     my_globals.hnp_uri = NULL;
-    my_globals.master = -1;
+    my_globals.master = NULL;
 
-    OBJ_CONSTRUCT(&lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&cond, opal_condition_t);
-    
     /* Parse the command line options */
     opal_cmd_line_create(&cmd_line, cmd_line_opts);
     
@@ -191,11 +189,52 @@ int main(int argc, char *argv[])
     }
     
     /* need to specify master */
-    if (my_globals.master < 0) {
+    if (NULL == my_globals.master) {
         opal_output(0, "Must specify ORCM master");
         return ORTE_ERROR;
     }
-    asprintf(&mstr, "OMPI_MCA_orte_ess_job_family=%d", my_globals.master);
+    if (0 == strncmp(my_globals.master, "file", strlen("file")) ||
+        0 == strncmp(my_globals.master, "FILE", strlen("FILE"))) {
+        char input[1024], *filename;
+        FILE *fp;
+        
+        /* it is a file - get the filename */
+        filename = strchr(my_globals.master, ':');
+        if (NULL == filename) {
+            /* filename is not correctly formatted */
+            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "master", my_globals.master);
+            return ORTE_ERROR;
+        }
+        ++filename; /* space past the : */
+        
+        if (0 >= strlen(filename)) {
+            /* they forgot to give us the name! */
+            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "master", my_globals.master);
+            return ORTE_ERROR;
+        }
+        
+        /* open the file and extract the pid */
+        fp = fopen(filename, "r");
+        if (NULL == fp) { /* can't find or read file! */
+            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, "master", filename);
+            return ORTE_ERROR;
+        }
+        if (NULL == fgets(input, 1024, fp)) {
+            /* something malformed about file */
+            fclose(fp);
+            orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", "master", true, filename);
+            return ORTE_ERROR;
+        }
+        fclose(fp);
+        input[strlen(input)-1] = '\0';  /* remove newline */
+        /* convert the pid */
+        master = strtoul(input, NULL, 10);
+    } else {
+        /* should just be the master itself */
+        master = strtoul(my_globals.master, NULL, 10);
+    }
+    
+    asprintf(&mstr, "OMPI_MCA_orte_ess_job_family=%d", master);
     putenv(mstr);
     
     /* if we were given HNP contact info, parse it and
@@ -212,27 +251,27 @@ int main(int argc, char *argv[])
             if (NULL == filename) {
                 /* filename is not correctly formatted */
                 orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "uri", my_globals.hnp_uri);
-                goto cleanup;
+                return ORTE_ERROR;
             }
             ++filename; /* space past the : */
             
             if (0 >= strlen(filename)) {
                 /* they forgot to give us the name! */
                 orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "uri", my_globals.hnp_uri);
-                goto cleanup;
+                return ORTE_ERROR;
             }
             
             /* open the file and extract the uri */
             fp = fopen(filename, "r");
             if (NULL == fp) { /* can't find or read file! */
                 orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, filename);
-                goto cleanup;
+                return ORTE_ERROR;
             }
             if (NULL == fgets(input, 1024, fp)) {
                 /* something malformed about file */
                 fclose(fp);
                 orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", true, filename);
-                goto cleanup;
+                return ORTE_ERROR;
             }
             fclose(fp);
             input[strlen(input)-1] = '\0';  /* remove newline */
@@ -243,6 +282,9 @@ int main(int argc, char *argv[])
             orte_process_info.my_hnp_uri = strdup(my_globals.hnp_uri);
         }
     }
+    
+    OBJ_CONSTRUCT(&lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&cond, opal_condition_t);
     
     /***************************
      * We need all of OPAL and ORTE - this will

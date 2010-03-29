@@ -106,6 +106,37 @@ AS_IF([test "$happy" = 0],
        AC_MSG_WARN([their location.])
        AC_MSG_ERROR([Cannot continue.])])
 
+AC_MSG_CHECKING([for ORTE plugins])
+AC_ARG_WITH([orte-plugin-dir],
+    [AC_HELP_STRING([--with-orte-plugin-dir],
+                    [Directory where ORTE's plugin files are located])])
+happy=0
+ORTE_PLUGIN_DIR="not found"
+AS_IF([test "$with_orte_plugin_dir" != ""],
+      [AS_IF([test -d "$with_orte_plugin_dir"],
+             [happy=1
+              ORTE_PLUGIN_DIR=$with_orte_plugin_dir])],
+      [AS_IF([test -d "$with_orte/lib/openmpi-rte"],
+             [happy=1
+	      ORTE_PLUGIN_DIR="$with_orte/lib/openmpi-rte"])
+       AS_IF([test "$happy" = "0" -a -d "$with_orte/lib64/openmpi-rte"],
+             [happy=1
+	      ORTE_PLUGIN_DIR="$with_orte/lib64/openmpi-rte"])
+       AS_IF([test "$happy" = "0" -a -d "$with_orte/lib/openmpi"],
+             [happy=1
+	      ORTE_PLUGIN_DIR="$with_orte/lib/openmpi"])
+       AS_IF([test "$happy" = "0" -a -d "$with_orte/lib64/openmpi"],
+             [happy=1
+	      ORTE_PLUGIN_DIR="$with_orte/lib64/openmpi"])
+      ])
+AC_MSG_RESULT([$ORTE_PLUGIN_DIR])
+AC_SUBST(ORTE_PLUGIN_DIR)
+AS_IF([test "$happy" = 0],
+      [AC_MSG_WARN([Unable to find ORTE plugin directory.])
+       AC_MSG_WARN([Please use the --with-orte-plugin-dir option to specify])
+       AC_MSG_WARN([their location.])
+       AC_MSG_ERROR([Cannot continue.])])
+
 #
 # Do we want to use script wrapper compilers
 #

@@ -88,6 +88,7 @@ static struct {
     int verbosity;
     char *hostfile;
     char *hosts;
+    char *report_master;
     char *report_uri;
 } my_globals;
 
@@ -117,6 +118,10 @@ opal_cmd_line_init_t cmd_line_opts[] = {
     { "rmaps", "base", "no_schedule_local", '\0', "nolocal", "nolocal", 0,
       NULL, OPAL_CMD_LINE_TYPE_BOOL,
       "Do not run any applications on the local node" },
+
+    { NULL, NULL, NULL, '\0', "report-master", "report-master", 1,
+      &my_globals.report_master, OPAL_CMD_LINE_TYPE_STRING,
+      "Printout master ID on stdout [-], stderr [+], or a file [anything else]" },
 
     { NULL, NULL, NULL, '\0', "report-uri", "report-uri", 1,
       &my_globals.report_uri, OPAL_CMD_LINE_TYPE_STRING,
@@ -205,6 +210,7 @@ int main(int argc, char *argv[])
     my_globals.verbosity = 0;
     my_globals.hostfile = NULL;
     my_globals.hosts = NULL;
+    my_globals.report_master = NULL;
     my_globals.report_uri = NULL;
     
     /* Parse the command line options */
@@ -255,6 +261,27 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    /* check for request to report master */
+    if (NULL != my_globals.report_master) {
+        FILE *fp;
+        if (0 == strcmp(my_globals.report_master, "-")) {
+            /* if '-', then output to stdout */
+            printf("%s\n", ORTE_JOB_FAMILY_PRINT(ORTE_PROC_MY_NAME->jobid));
+        } else if (0 == strcmp(my_globals.report_master, "+")) {
+            /* if '+', output to stderr */
+            fprintf(stderr, "%s\n", ORTE_JOB_FAMILY_PRINT(ORTE_PROC_MY_NAME->jobid));
+        } else {
+            fp = fopen(my_globals.report_master, "w");
+            if (NULL == fp) {
+                orte_show_help("help-orcm.txt", "orcm:write_file", false,
+                               "orcm", "uri", my_globals.report_master);
+                exit(0);
+            }
+            fprintf(fp, "%s\n", ORTE_JOB_FAMILY_PRINT(ORTE_PROC_MY_NAME->jobid));
+            fclose(fp);
+        }
+    }
+
     /* check for request to report uri */
     if (NULL != my_globals.report_uri) {
         FILE *fp;
@@ -270,7 +297,7 @@ int main(int argc, char *argv[])
             fp = fopen(my_globals.report_uri, "w");
             if (NULL == fp) {
                 orte_show_help("help-orcm.txt", "orcm:write_file", false,
-                               "orcm", "uri", my_globals.report_uri);
+                               "orcm", "master", my_globals.report_uri);
                 exit(0);
             }
             fprintf(fp, "%s\n", (NULL == rml_uri) ? "NULL" : rml_uri);
@@ -280,7 +307,7 @@ int main(int argc, char *argv[])
             free(rml_uri);
         }        
     }
-
+    
     /* setup the exit events */
     if (ORTE_SUCCESS != (ret = orte_wait_event(&orted_exit_event, &orteds_exit, "orted_exit", just_quit))) {
         ORTE_ERROR_LOG(ret);
