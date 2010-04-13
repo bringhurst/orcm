@@ -21,11 +21,6 @@
 #include "mca/leader/base/private.h"
 #include "mca/leader/base/components.h"
 
-const mca_base_component_t *orcm_leader_base_components[] = {
-    &mca_leader_fifl_component.super.leaderc_version,
-    NULL
-};
-
 /* instantiate the module */
 orcm_leader_base_module_t orcm_leader = {
     NULL,
@@ -45,8 +40,7 @@ int orcm_leader_base_open(void)
     
     /* Open up all available components */
     if (ORCM_SUCCESS != 
-        mca_base_components_open("leader", orcm_leader_base.output,
-                                 orcm_leader_base_components, 
+        mca_base_components_open("orcm_leader", orcm_leader_base.output, NULL,
                                  &orcm_leader_base.opened, true)) {
             return ORCM_ERROR;
         }

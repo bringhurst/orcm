@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved. 
+# Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
 #
 # $COPYRIGHT$
 # 
@@ -8,18 +8,18 @@
 # $HEADER$
 #
 
-SUBDIRS = base fifl
-
-headers = leader.h leader_types.h
-
-# install the header files where they can be found
-nobase_openrcm_HEADERS = $(headers)
-openrcmdir = $(includedir)/openrcm/mca/leader
-
+# Main library
 noinst_LTLIBRARIES = libmca_leader.la
-libmca_leader_la_SOURCES = $(headers)
-libmca_leader_la_DEPENDENCIES = \
-        base/libmca_leader_base.la \
-        fifl/libmca_leader_fifl.la
-libmca_leader_la_LIBADD = $(libmca_leader_la_DEPENDENCIES)
+headers = leader.h leader_types.h
+sources =
 
+include base/Makefile.include
+
+libmca_leader_la_SOURCES = $(headers) $(sources)
+
+# Install the header files where they can be found
+openrcmdir = $(includedir)/openrcm/mca/leader
+nobase_openrcm_HEADERS = $(headers)
+
+distclean-local:
+	rm -f base/static-components.h

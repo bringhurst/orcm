@@ -1,0 +1,23 @@
+# -*- makefile -*-
+#
+# Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
+#
+# $COPYRIGHT$
+# 
+# Additional copyrights may follow
+# 
+# $HEADER$
+#
+
+headers += \
+        base/public.h \
+        base/private.h \
+        base/components.h
+
+sources += \
+        base/pnp_base_open.c \
+        base/pnp_base_close.c \
+        base/pnp_base_select.c \
+        base/pnp_base_fns.c
+
+

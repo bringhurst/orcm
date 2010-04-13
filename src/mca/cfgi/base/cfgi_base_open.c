@@ -21,11 +21,6 @@
 #include "mca/cfgi/base/private.h"
 #include "mca/cfgi/base/components.h"
 
-const mca_base_component_t *orcm_cfgi_base_components[] = {
-    &mca_cfgi_file_component.super.cfgic_version,
-    NULL
-};
-
 /* stubs */
 static int orcm_stub_init(void);
 static void orcm_stub_read_config(orcm_spawn_fn_t spawn_apps);
@@ -36,7 +31,6 @@ orcm_cfgi_base_module_t orcm_cfgi = {
     orcm_stub_init,
     orcm_stub_read_config,
     orcm_stub_finalize,
-
 };
 
 /* instantiate the globals */
@@ -50,8 +44,7 @@ int orcm_cfgi_base_open(void)
     
     /* Open up all available components */
     if (ORCM_SUCCESS != 
-        mca_base_components_open("cfgi", orcm_cfgi_base.output,
-                                 orcm_cfgi_base_components, 
+        mca_base_components_open("orcm_cfgi", orcm_cfgi_base.output, NULL,
                                  &orcm_cfgi_base.opened, true)) {
             return ORCM_ERROR;
         }

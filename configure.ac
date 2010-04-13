@@ -7,26 +7,30 @@
 # Initialize autostuff
 #
 
-AC_PREREQ([2.63])
+AC_PREREQ([2.65])
 AC_INIT([openrcm], 
         [m4_normalize(esyscmd([config/openrcm_get_version.sh VERSION --base]))],
-        [rcastain@cisco.com], [openrcm])
+        [rcastain@open-mpi.org], [openrcm])
 AC_CONFIG_AUX_DIR([config])
 AC_CONFIG_MACRO_DIR([config])
 
 AC_CANONICAL_SYSTEM
 
-AM_INIT_AUTOMAKE([1.10 no-define foreign -Wall -Werror])
+AM_INIT_AUTOMAKE([foreign dist-bzip2 subdir-objects no-define 1.11.1 tar-ustar -Wall -Werror])
+
+m4_pattern_allow([m4_ifval])
 
 # If Automake supports silent rules, enable them.
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 
 # Make configure depend on the VERSION file, since it's used in AC_INIT
-
 AC_SUBST([CONFIGURE_DEPENDENCIES], ['$(top_srcdir)/VERSION'])
 
-# Get the version of openrcm that we are installing
+# Start it up
+ORCM_CONFIGURE_SETUP
+orcm_show_title "Configuring ORCM"
 
+# Get the version of openrcm that we are installing
 AC_MSG_CHECKING([for openrcm version])
 OPENRCM_VERSION="`$srcdir/config/openrcm_get_version.sh $srcdir/VERSION`"
 OPENRCM_MAJOR_VERSION="`$srcdir/config/openrcm_get_version.sh $srcdir/VERSION --major`"
@@ -320,12 +324,43 @@ AC_SUBST(OPENRCM_WRAPPER_EXTRA_LDFLAGS)
 AC_SUBST(OPENRCM_WRAPPER_EXTRA_LIBS)
 
 #
-# Libtool (default to static builds)
+# Libtool: part 1
 #
 
+AM_ENABLE_SHARED
+AM_DISABLE_STATIC
+# For the moment, we don't support static builds.  ORTE components
+# *must* be built as DSOs, and we can't build *some* components as
+# DSOs (i.e., the ORTE ones) and *some* as static (i.e., the ORCM
+# ones).  The only way to do that would be to have a separate
+# configure script down in the orte/ directory.  I don't have the time
+# to do that at the moment, and Ralph tells me that it's not a
+# priority.  So for the moment, *only* allow --enable-shared.
+AS_IF([test "$enable_static" = "yes" -o "$enable_shared" = "no"],
+      [AC_MSG_WARN([This configure script does not currently])
+       AC_MSG_WARN([support --enable-static or --disable-shared.])
+       AC_MSG_ERROR([Cannot continue.])])
+
+#
+# Setup the MCA components
+#
+
+orcm_show_title "Configuring components"
+m4_include([config/autogen_found_items.m4])
+ORCM_MCA
+
+# Must use eval to get the final value
+str='ORCM_LIBDIR='$libdir
+eval $str
+AC_DEFINE_UNQUOTED(ORCM_PKGLIBDIR, ["$ORCM_LIBDIR/openrcm"],
+                   [Where ORCM's components live])
+
+#
+# Libtool: part 2
+#
+
+orcm_show_title "Configuring Libtool"
 AC_PROG_LIBTOOL
-AM_ENABLE_STATIC
-AM_DISABLE_SHARED
 
 #
 # Output files
@@ -339,31 +374,7 @@ AC_CONFIG_HEADERS([src/include/openrcm.h])
 AC_CONFIG_FILES([Makefile
                  src/Makefile
 
-		 src/mca/Makefile
-
-		 src/orte/mca/Makefile
-
-		 src/orte/mca/plm/Makefile
-		 src/orte/mca/plm/orcm/Makefile
-
-		 src/orte/mca/errmgr/Makefile
-		 src/orte/mca/errmgr/orcm/Makefile
-
-		 src/mca/cfgi/Makefile
-                 src/mca/cfgi/base/Makefile
-                 src/mca/cfgi/file/Makefile
-
-		 src/mca/clip/Makefile
-                 src/mca/clip/base/Makefile
-                 src/mca/clip/default/Makefile
-
-		 src/mca/leader/Makefile
-                 src/mca/leader/base/Makefile
-                 src/mca/leader/fifl/Makefile
-
-		 src/mca/pnp/Makefile
-                 src/mca/pnp/base/Makefile
-                 src/mca/pnp/default/Makefile
+		 src/orte/Makefile
 
                  src/tools/Makefile
 		 src/tools/orcm/Makefile

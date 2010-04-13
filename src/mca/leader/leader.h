@@ -100,6 +100,6 @@ ORCM_DECLSPEC extern orcm_leader_base_module_t orcm_leader;
  */
 #define ORCM_LEADER_BASE_VERSION_2_0_0 \
   MCA_BASE_VERSION_2_0_0, \
-  "leader", 2, 0, 0
+  "orcm_leader", 2, 0, 0
 
 #endif /* ORCM_LEADER_H */

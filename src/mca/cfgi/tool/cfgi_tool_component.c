@@ -15,7 +15,7 @@
 #include "mca/cfgi/cfgi.h"
 #include "mca/cfgi/tool/cfgi_tool.h"
 
-orcm_cfgi_tool_component_t mca_cfgi_tool_component = {
+orcm_cfgi_tool_component_t mca_orcm_cfgi_tool_component = {
     {
         /* First, the mca_base_component_t struct containing meta
          information about the component itself */

@@ -234,7 +234,7 @@ static bool has_leader_failed(orcm_pnp_group_t *grp,
     }
     
     /* is the difference larger than the trigger? */
-    if (mca_leader_fifl_component.trigger < maxval) {
+    if (mca_orcm_leader_fifl_component.trigger < maxval) {
         /* mark the leader as having failed */
         leader->failed = true;
         OPAL_THREAD_UNLOCK(&lock);

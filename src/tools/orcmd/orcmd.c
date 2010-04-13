@@ -59,6 +59,7 @@
 #include "orte/util/proc_info.h"
 #include "orte/util/session_dir.h"
 #include "orte/util/name_fns.h"
+#include "orte/util/nidmap.h"
 #include "orte/runtime/orte_locks.h"
 #include "orte/mca/rml/base/rml_contact.h"
 
@@ -198,6 +199,7 @@ int main(int argc, char *argv[])
     struct timeval starttime, setuptime;
     orte_node_t *node;
     orte_proc_t *proc;
+    orte_nid_t *nid;
     
     /* get our time for first executable */
     gettimeofday(&starttime, NULL);
@@ -477,6 +479,12 @@ int main(int argc, char *argv[])
     daemons->num_procs = 1;
     daemons->state = ORTE_JOB_STATE_RUNNING;
     
+    /* add us to the nidmap array to support odls and routed frameworks */
+    nid = OBJ_NEW(orte_nid_t);
+    nid->name = strdup(node->name);
+    nid->daemon = ORTE_PROC_MY_NAME->vpid;
+    nid->index = opal_pointer_array_add(&orte_nidmap, nid);
+    
     /* register an input to hear our peers */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("ORCMD", "0.1", "alpha",
                                                               ORCM_PNP_GROUP_OUTPUT_CHANNEL,
@@ -603,13 +611,7 @@ static void recv_input(int status,
         return;
     }
     
-    if (ORTE_DAEMON_ADD_LOCAL_PROCS == command) {
-        /* if it is an add_procs command, we need to unpack it and add
-         * the job info to our local job and node arrays so we retain a
-         * full picture of the DVM
-         */
-        
-    } else {
+    if (ORTE_DAEMON_ADD_LOCAL_PROCS != command) {
         /* if it is not an add_procs command, then we have to rewind the buffer
          * so the command processor starts at the correct place
          */
@@ -631,7 +633,8 @@ static void vm_tracker(char *app, char *version, char *release,
     orte_proc_t *proc;
     int i;
     orte_node_t *node;
-    
+    orte_nid_t *nid;
+
     /* if this isn't one of my peers, ignore it */
     if (name->jobid != ORTE_PROC_MY_NAME->jobid) {
         return;
@@ -680,6 +683,25 @@ complete:
     OBJ_RETAIN(proc);  /* maintain accounting */
     node->daemon = proc;
     node->daemon_launched = true;
+    
+    /* add this daemon/node to the nidmap so that the
+     * odls and routed modules can function
+     */
+    if (NULL == (nid = orte_util_lookup_nid(name))) {
+        /* doesn't exist yet - add it */
+        nid = OBJ_NEW(orte_nid_t);
+        nid->name = strdup(nodename);
+        nid->daemon = name->vpid;
+        nid->index = opal_pointer_array_add(&orte_nidmap, nid);
+    } else {
+        /* already exists - see if we need to update it */
+        if (NULL == nid->name) {
+            nid->name = strdup(nodename);
+        } else if (0 != strcmp(nodename, nid->name)) {
+            free(nid->name);
+            nid->name = strdup(nodename);
+        }
+    }
 }
 
 static int orcmd_comm(orte_process_name_t *recipient,

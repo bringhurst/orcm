@@ -46,6 +46,6 @@ ORCM_DECLSPEC extern orcm_cfgi_base_module_t orcm_cfgi;
  */
 #define ORCM_CFGI_BASE_VERSION_2_0_0 \
   MCA_BASE_VERSION_2_0_0, \
-  "cfgi", 2, 0, 0
+  "orcm_cfgi", 2, 0, 0
 
 #endif /* ORCM_CFGI_H */

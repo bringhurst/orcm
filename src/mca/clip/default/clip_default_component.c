@@ -15,7 +15,7 @@
 #include "mca/clip/clip.h"
 #include "mca/clip/default/clip_default.h"
 
-orcm_clip_base_component_t mca_clip_default_component = {
+orcm_clip_base_component_t mca_orcm_clip_default_component = {
     /* First, the mca_base_component_t struct containing meta
        information about the component itself */
     

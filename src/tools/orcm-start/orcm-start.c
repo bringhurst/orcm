@@ -122,31 +122,6 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       NULL }
 };
 
-/*
- * Local variables & functions
- */
-#define CM_MAX_LINE_LENGTH  1024
-
-static char *cm_getline(FILE *fp)
-{
-    char *ret, *buff;
-    char input[CM_MAX_LINE_LENGTH];
-    
-retry:
-    ret = fgets(input, CM_MAX_LINE_LENGTH, fp);
-    if (NULL != ret) {
-        if ('#' == input[0]) {
-            /* ignore this line - it is a comment */
-            goto retry;
-        }
-        input[strlen(input)-1] = '\0';  /* remove newline */
-        buff = strdup(input);
-        return buff;
-    }
-    
-    return NULL;
-}
-
 static opal_mutex_t lock;
 static opal_condition_t cond;
 static bool waiting=true;
@@ -242,20 +217,20 @@ int main(int argc, char *argv[])
         
         if (0 >= strlen(filename)) {
             /* they forgot to give us the name! */
-            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "master", my_globals.sched);
+            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "scheduler", my_globals.sched);
             return ORTE_ERROR;
         }
         
         /* open the file and extract the job family */
         fp = fopen(filename, "r");
         if (NULL == fp) { /* can't find or read file! */
-            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, "master", filename);
+            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, "scheduler", filename);
             return ORTE_ERROR;
         }
         if (NULL == fgets(input, 1024, fp)) {
             /* something malformed about file */
             fclose(fp);
-            orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", "master", true, filename);
+            orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", "scheduler", true, filename);
             return ORTE_ERROR;
         }
         fclose(fp);
@@ -402,17 +377,6 @@ int main(int argc, char *argv[])
     return ret;
 }
 
-static void send_complete(int status,
-                          orte_process_name_t *sender,
-                          orcm_pnp_tag_t tag,
-                          opal_buffer_t *buf, void *cbdata)
-{
-    OBJ_RELEASE(buf);
-    
-    /* release the wait */
-    OPAL_RELEASE_THREAD(&lock, &cond, &waiting);
-}
-
 static void ack_recv(int status,
                      orte_process_name_t *sender,
                      orcm_pnp_tag_t tag,
@@ -446,13 +410,6 @@ static void ack_recv(int status,
         return;
     }
     
-    /* disconnect */
-    flag = ORCM_TOOL_DISCONNECT_CMD;
-    ans = OBJ_NEW(opal_buffer_t);
-    jfam = ORTE_JOB_FAMILY(sender->jobid);
-    opal_dss.pack(ans, &jfam, 1, OPAL_UINT16);
-    opal_dss.pack(ans, &flag, 1, ORCM_TOOL_CMD_T);
-    orcm_pnp.output_buffer_nb(ORCM_PNP_SYS_CHANNEL,
-                              NULL, ORCM_PNP_TAG_TOOL,
-                              ans, send_complete, NULL);
+    /* release the wait */
+    OPAL_RELEASE_THREAD(&lock, &cond, &waiting);
 }

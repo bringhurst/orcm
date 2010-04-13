@@ -149,6 +149,6 @@ ORCM_DECLSPEC extern orcm_pnp_base_module_t orcm_pnp;
  */
 #define ORCM_PNP_BASE_VERSION_1_0_0 \
   MCA_BASE_VERSION_2_0_0, \
-  "pnp", 1, 0, 0
+  "orcm_pnp", 1, 0, 0
 
 #endif /* ORCM_PNP_H */

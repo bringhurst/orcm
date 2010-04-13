@@ -19,11 +19,6 @@
 #include "mca/clip/base/private.h"
 #include "mca/clip/base/components.h"
 
-const mca_base_component_t *orcm_clip_base_components[] = {
-    &mca_clip_default_component.clipc_version,
-    NULL
-};
-
 /* instantiate the module */
 orcm_clip_base_module_t orcm_clip = {
     NULL,
@@ -43,8 +38,7 @@ int orcm_clip_base_open(void)
     
     /* Open up all available components */
     if (ORCM_SUCCESS != 
-        mca_base_components_open("clip", orcm_clip_base.output,
-                                 orcm_clip_base_components, 
+        mca_base_components_open("orcm_clip", orcm_clip_base.output, NULL,
                                  &orcm_clip_base.opened, true)) {
             return ORCM_ERROR;
         }

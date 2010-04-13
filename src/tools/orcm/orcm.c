@@ -196,14 +196,14 @@ int main(int argc, char *argv[])
     if (OPAL_SUCCESS != ret || my_globals.help) {
         char *args = NULL;
         args = opal_cmd_line_get_usage_msg(&cmd_line);
-        orte_show_help("help-orcm-clip.txt", "usage", true, args);
+        orte_show_help("help-orcm.txt", "usage", true, args);
         free(args);
         return ORTE_ERROR;
     }
     
     /* check for bozo case */
     if (NULL == my_globals.vm) {
-        fprintf(stderr, "Must specify ORCM virtual machine to be used\n");
+        fprintf(stderr, "Must specify ORCM distributed virtual machine to be used\n");
         return ORTE_ERROR;
     }
 
@@ -216,7 +216,7 @@ int main(int argc, char *argv[])
         filename = strchr(my_globals.vm, ':');
         if (NULL == filename) {
             /* filename is not correctly formatted */
-            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "virtual machine", my_globals.vm);
+            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "DVM", my_globals.vm);
             return ORTE_ERROR;
         }
         ++filename; /* space past the : */
@@ -248,8 +248,6 @@ int main(int argc, char *argv[])
         vm = strtoul(my_globals.vm, NULL, 10);
     }
 
-    opal_output(0, "got vm %d", vm);
-    
     /* open a debug channel and set the verbosity */
     orcm_debug_output = opal_output_open(NULL);
     opal_output_set_verbosity(orcm_debug_output, my_globals.verbosity);
@@ -328,7 +326,6 @@ int main(int argc, char *argv[])
     /* the daemons are in the VM job */
     jfam = ORTE_CONSTRUCT_JOB_FAMILY(vm);
     daemons->jobid = ORTE_CONSTRUCT_LOCAL_JOBID(jfam, 0);
-    opal_output(0, "got jobid %s", ORTE_JOBID_PRINT(daemons->jobid));
     daemons->state = ORTE_JOB_STATE_RUNNING;
     opal_pointer_array_set_item(orte_job_data, 0, daemons);
     
@@ -374,12 +371,12 @@ int main(int argc, char *argv[])
     }
     
     /* announce my existence */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.announce("ORCM-CLIP", "0.1", "alpha", vm_tracker))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.announce("ORCM", "0.1", "alpha", vm_tracker))) {
         ORTE_ERROR_LOG(ret);
         goto xtra_cleanup;
     }
     
-    opal_output(orte_clean_output, "\nORCM SCHEDULER %s NOW RUNNING...ATTACHED TO DVM %s\n",
+    opal_output(orte_clean_output, "\nORCM %s NOW RUNNING...ATTACHED TO DVM %s\n",
                 ORTE_JOB_FAMILY_PRINT(ORTE_PROC_MY_NAME->jobid),
                 ORTE_JOB_FAMILY_PRINT(daemons->jobid));
 
@@ -581,27 +578,6 @@ static void tool_messages(int status,
         } else {
             rc = ORTE_SUCCESS;
         }
-    } else if (ORCM_TOOL_DISCONNECT_CMD == flag) {
-        OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
-                             "%s disconnect cmd from %s",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             ORTE_NAME_PRINT(sender)));
-        /* no response is expected */
-        OBJ_DESTRUCT(&response);
-        /* lookup this tool */
-        if (NULL == (jdata = orte_get_job_data_object(sender->jobid))) {
-            /* just ignore it */
-            OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
-                                 "%s disconnect cmd from %s - not found",
-                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                 ORTE_NAME_PRINT(sender)));
-            return;
-        }
-        /* delete this job */
-        ljob = ORTE_LOCAL_JOBID(jdata->jobid);
-        opal_pointer_array_set_item(orte_job_data, ljob, NULL);
-        OBJ_RELEASE(jdata);
-        return;
     } else {
         opal_output(0, "%s: UNKNOWN TOOL CMD FLAG %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), (int)flag);
     }
@@ -752,6 +728,10 @@ static void spawn_app(char *cmd, bool add_procs, bool continuous, bool debug,
     if (continuous) {
         jdata->controls |= ORTE_JOB_CONTROL_CONTINUOUS_OP;
     }
+    /* since we don't have an HNP, we cannot forward IO */
+    jdata->controls &= ~ORTE_JOB_CONTROL_FORWARD_OUTPUT;
+    jdata->stdin_target = ORTE_VPID_INVALID;
+
     /* pass max number of restarts */
     jdata->max_restarts = restarts;
     
@@ -961,8 +941,10 @@ static void vm_commands(int status,
         ORTE_ERROR_LOG(rc);
         return;
     }
-    if (jfam != ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid)) {
-        opal_output(0, "%s GOT COMMAND FOR DVM %d - NOT FOR MINE!", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), jfam);
+    if (jfam != ORTE_JOB_FAMILY(daemons->jobid)) {
+        opal_output(0, "%s GOT COMMAND FOR DVM %d - NOT FOR MINE(%s)!",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), jfam,
+                    ORTE_JOB_FAMILY_PRINT(daemons->jobid));
         return;
     }
     

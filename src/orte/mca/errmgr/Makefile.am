@@ -8,6 +8,7 @@
 # $HEADER$
 #
 
-# May add more component names in here as relevant
+# ORTE components are always installed as DSOs, so there's no logic
+# necessary here to build them statically.
 
-SUBDIRS = orcm
+SUBDIRS = $(MCA_orte_errmgr_DSO_COMPONENTS)

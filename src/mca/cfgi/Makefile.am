@@ -1,16 +1,25 @@
-SUBDIRS = base file
+#
+# Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
+#
+# $COPYRIGHT$
+# 
+# Additional copyrights may follow
+# 
+# $HEADER$
+#
 
-headers = cfgi.h
-
-# install the header files where they can be found
-nobase_openrcm_HEADERS = $(headers)
-openrcmdir = $(includedir)/openrcm/mca/cfgi
-
+# Main library
 noinst_LTLIBRARIES = libmca_cfgi.la
-libmca_cfgi_la_SOURCES = $(headers)
-libmca_cfgi_la_DEPENDENCIES = \
-        base/libmca_cfgi_base.la \
-        file/libmca_cfgi_file.la
-#        file/libmca_cfgi_tool.la
-libmca_cfgi_la_LIBADD = $(libmca_cfgi_la_DEPENDENCIES)
+headers = cfgi.h
+sources =
 
+include base/Makefile.include
+
+libmca_cfgi_la_SOURCES = $(headers) $(sources)
+
+# Install the header files where they can be found
+openrcmdir = $(includedir)/openrcm/mca/cfgi
+nobase_openrcm_HEADERS = $(headers)
+
+distclean-local:
+	rm -f base/static-components.h

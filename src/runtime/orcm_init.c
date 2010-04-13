@@ -64,8 +64,8 @@ static bool forcibly_die=false;
 
 int orcm_init(orcm_proc_type_t flags)
 {
-    int ret;
-    char *error;
+    int i, ret;
+    char *error, *mcp, *new_mcp;
     int spin;
     
     if (NULL != getenv("ORCM_MCA_spin")) {
@@ -87,6 +87,24 @@ int orcm_init(orcm_proc_type_t flags)
         error = "orte_init";
         goto error;
     }
+
+    /* Add ORCM's component directory into the
+       mca_base_param_component_path */
+    i = mca_base_param_find("mca", NULL, "component_path");
+    if (i < 0) {
+        ret = ORCM_ERR_NOT_FOUND;
+        error = "Could not find mca_component_path";
+        goto error;
+    }
+    mca_base_param_lookup_string(i, &mcp);
+    if (NULL == mcp) {
+        ret = ORCM_ERR_NOT_FOUND;
+        error = "Could not find mca_component_path";
+        goto error;
+    }
+    asprintf(&new_mcp, "%s:%s", ORCM_PKGLIBDIR, mcp);
+    mca_base_param_set_string(i, new_mcp);
+    free(new_mcp);
 
     /* setup the pnp framework */
     if (ORCM_SUCCESS != (ret = orcm_pnp_base_open())) {

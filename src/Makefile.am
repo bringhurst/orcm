@@ -7,25 +7,36 @@
 # 
 # $HEADER$
 #
-# setup collectors for file names
 
 headers =
 libopenrcm_la_SOURCES =
 dist_pkgdata_DATA =
 
-SUBDIRS = orte/mca mca . tools
+SUBDIRS = \
+        orte \
+	$(MCA_orcm_FRAMEWORKS_SUBDIRS) \
+	$(MCA_orcm_FRAMEWORK_COMPONENT_STATIC_SUBDIRS) \
+        . \
+	$(MCA_orcm_FRAMEWORK_COMPONENT_DSO_SUBDIRS) \
+        tools
 
-# add in the subdirectory data
-include include/Makefile.am
-include runtime/Makefile.am
-include util/Makefile.am
+DIST_SUBDIRS = \
+        orte \
+	$(MCA_orcm_FRAMEWORKS_SUBDIRS) \
+	$(MCA_orcm_FRAMEWORK_COMPONENT_ALL_SUBDIRS) \
+        tools
 
-# install the header files where they can be found
+# Add in the subdirectory data
+include include/Makefile.include
+include runtime/Makefile.include
+include util/Makefile.include
+
+# Install the header files where they can be found
 nobase_openrcm_HEADERS = $(headers)
 openrcmdir = $(includedir)/openrcm
 
+# Install the main ORCM library
 lib_LTLIBRARIES = libopenrcm.la
-# AM 1.11 seems to require an empty SOURCES line :-(
-libopenrcm_la_DEPENDENCIES = \
-        mca/libopenrcm_mca.la
-libopenrcm_la_LIBADD = $(libopenrcm_la_DEPENDENCIES)
+libopenrcm_la_LIBADD = $(MCA_orcm_FRAMEWORK_LIBS)
+libopenrcm_la_DEPENDENCIES = $(libopenrcm_la_LIBADD)
+libopenrcm_la_LDFLAGS = -version-info $(libopenrcm_so_version) -g

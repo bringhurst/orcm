@@ -15,7 +15,7 @@
 #include "mca/pnp/pnp.h"
 #include "mca/pnp/default/pnp_default.h"
 
-orcm_pnp_base_component_t mca_pnp_default_component = {
+orcm_pnp_base_component_t mca_orcm_pnp_default_component = {
     /* First, the mca_base_component_t struct containing meta
        information about the component itself */
     

@@ -24,11 +24,6 @@
 #include "mca/pnp/base/private.h"
 #include "mca/pnp/base/components.h"
 
-const mca_base_component_t *orcm_pnp_base_components[] = {
-    &mca_pnp_default_component.pnpc_version,
-    NULL
-};
-
 /* instantiate the module */
 orcm_pnp_base_module_t orcm_pnp = {
     NULL,
@@ -72,8 +67,7 @@ int orcm_pnp_base_open(void)
     
     /* Open up all available components */
     if (ORCM_SUCCESS != 
-        mca_base_components_open("pnp", orcm_pnp_base.output,
-                                 orcm_pnp_base_components, 
+        mca_base_components_open("orcm_pnp", orcm_pnp_base.output, NULL,
                                  &orcm_pnp_base.opened, true)) {
             return ORCM_ERROR;
         }

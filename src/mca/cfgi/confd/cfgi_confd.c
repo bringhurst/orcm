@@ -60,16 +60,16 @@ static int confd_init(void)
     addr.sin_port = htons(CONFD_PORT);
     
     /* identify mode for connecting to the db */
-    if (0 == strcasecmp(mca_cfgi_confd_component.mode, "SILENT")) {
+    if (0 == strcasecmp(mca_orcm_cfgi_confd_component.mode, "SILENT")) {
         mode = CONFD_SILENT;
-    } else if (0 == strcasecmp(mca_cfgi_confd_component.mode, "DEBUG")) {
+    } else if (0 == strcasecmp(mca_orcm_cfgi_confd_component.mode, "DEBUG")) {
         mode = CONFD_DEBUG;
     } else {
         mode = CONFD_TRACE;
     }
     
     /* init the database */
-    if (CONFD_OK != confd_init(argv[0], mca_cfgi_confd_component.log_stream, mode)) {
+    if (CONFD_OK != confd_init(argv[0], mca_orcm_cfgi_confd_component.log_stream, mode)) {
         opal_output(0, "Could not connect to confd database");
         return ORTE_ERR_NOT_FOUND;
     }
@@ -232,7 +232,7 @@ static int confd_subscribe(char **configpts, int priority, orcm_cfgi_cbfunc_t cb
     
     /* subscribe to all the points given to us */
     for (i=0; NULL != configpts[i]; i++) {
-        if (CONFD_OK != cdb_subscribe(sub->socket, priority, mca_cfgi_confd_component.ns,
+        if (CONFD_OK != cdb_subscribe(sub->socket, priority, mca_orcm_cfgi_confd_component.ns,
                                       &subpt, configpt)) {
             opal_output(0, "Subscription to config %s failed", configpt);
             OBJ_RELEASE(sub);

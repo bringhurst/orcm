@@ -45,6 +45,6 @@ ORCM_DECLSPEC extern orcm_clip_base_module_t orcm_clip;
  */
 #define ORCM_CLIP_BASE_VERSION_2_0_0 \
   MCA_BASE_VERSION_2_0_0, \
-  "clip", 2, 0, 0
+  "orcm_clip", 2, 0, 0
 
 #endif /* ORCM_CLIP_H */
