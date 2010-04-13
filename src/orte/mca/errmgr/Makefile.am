@@ -8,6 +8,6 @@
 # $HEADER$
 #
 
-# May add more framework names in here as necessary
+# May add more component names in here as relevant
 
-SUBDIRS = plm errmgr
+SUBDIRS = orcm

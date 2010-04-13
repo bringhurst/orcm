@@ -181,7 +181,7 @@ else
     AC_MSG_RESULT([yes])
     WANT_DEBUG=1
 fi
-if test "$WANT_DEBUG" = "0"; then
+if test "$WANT_DEBUG" = "1"; then
     CFLAGS="-DNDEBUG -g $CFLAGS"
     CXXFLAGS="-DNDEBUG -g $CXXFLAGS"
 fi
@@ -341,6 +341,14 @@ AC_CONFIG_FILES([Makefile
 
 		 src/mca/Makefile
 
+		 src/orte/mca/Makefile
+
+		 src/orte/mca/plm/Makefile
+		 src/orte/mca/plm/orcm/Makefile
+
+		 src/orte/mca/errmgr/Makefile
+		 src/orte/mca/errmgr/orcm/Makefile
+
 		 src/mca/cfgi/Makefile
                  src/mca/cfgi/base/Makefile
                  src/mca/cfgi/file/Makefile
@@ -359,6 +367,7 @@ AC_CONFIG_FILES([Makefile
 
                  src/tools/Makefile
 		 src/tools/orcm/Makefile
+		 src/tools/orcm-vm/Makefile
 		 src/tools/orcm-start/Makefile
 		 src/tools/orcm-stop/Makefile
 		 src/tools/orcm-ps/Makefile

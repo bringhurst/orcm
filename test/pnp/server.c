@@ -48,7 +48,7 @@ int main(int argc, char* argv[])
      * a multicast recv so we hear announcements and
      * their responses from other apps
      */
-    if (ORCM_SUCCESS != (rc = orcm_init(OPENRCM_APP))) {
+    if (ORCM_SUCCESS != (rc = orcm_init(ORCM_APP))) {
         fprintf(stderr, "Failed to init: error %d\n", rc);
         exit(1);
     }

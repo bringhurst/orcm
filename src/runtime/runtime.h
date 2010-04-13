@@ -10,7 +10,7 @@
 /**
  * @file
  *
- * Interface into the OPENRCM Library
+ * Interface into the ORCM Library
  */
 #ifndef ORCM_RUNTIME_H
 #define ORCM_RUNTIME_H
@@ -31,25 +31,25 @@
 BEGIN_C_DECLS
 
 /* define some process types */
-typedef uint8_t orcm_proc_type_t;
-#define OPENRCM_MASTER      0x01
-#define OPENRCM_TOOL        0x02
-#define OPENRCM_APP         0x04
-#define OPENRCM_DAEMON      0x08
+typedef orte_proc_type_t orcm_proc_type_t;
+#define ORCM_MASTER      (ORTE_PROC_HNP | ORTE_PROC_CM)
+#define ORCM_TOOL        (ORTE_PROC_TOOL | ORTE_PROC_CM)
+#define ORCM_APP         (ORTE_PROC_NON_MPI | ORTE_PROC_CM)
+#define ORCM_DAEMON      (ORTE_PROC_DAEMON | ORTE_PROC_CM)
 
-#define OPENRCM_PROC_IS_MASTER      (ORTE_PROC_HNP & orte_process_info.proc_type)
-#define OPENRCM_PROC_IS_TOOL        (ORTE_PROC_TOOL & orte_process_info.proc_type)
-#define OPENRCM_PROC_IS_APP         (ORTE_PROC_APP & orte_process_info.proc_type)
-#define OPENRCM_PROC_IS_DAEMON      (ORTE_PROC_DAEMON & orte_process_info.proc_type)
+#define ORCM_PROC_IS_MASTER      ORTE_PROC_IS_HNP
+#define ORCM_PROC_IS_TOOL        ORTE_PROC_IS_TOOL
+#define ORCM_PROC_IS_APP         ORTE_PROC_IS_NON_MPI
+#define ORCM_PROC_IS_DAEMON      ORTE_PROC_IS_DAEMON
 
 /* define some tool command flags */
 typedef uint8_t orcm_tool_cmd_t;
-#define OPENRCM_TOOL_CMD_T OPAL_UINT8
+#define ORCM_TOOL_CMD_T OPAL_UINT8
 
-#define OPENRCM_TOOL_START_CMD          1
-#define OPENRCM_TOOL_STOP_CMD           2
-#define OPENRCM_TOOL_PS_CMD             3
-#define OPENRCM_TOOL_DISCONNECT_CMD     4
+#define ORCM_TOOL_START_CMD          1
+#define ORCM_TOOL_STOP_CMD           2
+#define ORCM_TOOL_PS_CMD             3
+#define ORCM_TOOL_DISCONNECT_CMD     4
 
 /* define an object to hold spawn info */
 typedef struct {
@@ -61,6 +61,7 @@ typedef struct {
     bool constrain;
     bool add_procs;
     bool debug;
+    bool continuous;
     int max_restarts;
 } orcm_spawn_event_t;
 ORTE_DECLSPEC OBJ_CLASS_DECLARATION(orcm_spawn_event_t);
@@ -69,7 +70,7 @@ ORTE_DECLSPEC OBJ_CLASS_DECLARATION(orcm_spawn_event_t);
 typedef void (*orcm_spawn_fn_t)(int fd, short event, void *command);
 
 /* a convenience macro for setting up a launch event */
-#define ORCM_SPAWN_EVENT(comd, adp, dbg, rstrts, n, hsts, cnstrn, cbfunc)   \
+#define ORCM_SPAWN_EVENT(comd, adp, cnt, dbg, rstrts, n, hsts, cnstrn, cbfunc)   \
     do {                                                                    \
         orcm_spawn_event_t *mev;                                            \
         struct timeval now;                                                 \
@@ -85,6 +86,9 @@ typedef void (*orcm_spawn_fn_t)(int fd, short event, void *command);
         if (0 != (dbg)) {                                                   \
             mev->debug = true;                                              \
         }                                                                   \
+        if (0 != (cnt)) {                                                   \
+            mev->continuous = true;                                         \
+        }                                                                   \
         mev->max_restarts = (rstrts);                                       \
         if (NULL != (hsts)) {                                               \
             mev->hosts = strdup((hsts));                                    \
@@ -96,11 +100,11 @@ typedef void (*orcm_spawn_fn_t)(int fd, short event, void *command);
         opal_evtimer_add(mev->ev, &now);                                    \
     } while(0);
     
-/** version string of OPENRCM */
+/** version string of ORCM */
 ORCM_DECLSPEC extern const char openrcm_version_string[];
 
 /**
- * Whether OPENRCM is initialized or we are in openrcm_finalize
+ * Whether ORCM is initialized or we are in openrcm_finalize
  */
 ORCM_DECLSPEC extern bool orcm_initialized;
 ORCM_DECLSPEC extern bool orcm_util_initialized;
@@ -110,17 +114,20 @@ ORCM_DECLSPEC extern bool orcm_finalizing;
 ORCM_DECLSPEC extern int orcm_debug_output;
 ORCM_DECLSPEC extern int orcm_debug_verbosity;
 
+/* track if I am the lowest rank alive in a job */
+ORCM_DECLSPEC extern bool orcm_lowest_rank;
+
 /**
- * Initialize the OPENRCM library
+ * Initialize the ORCM library
  *
  * This function should be called exactly once.  This function should
- * be called by every application using the OPENRCM library.
+ * be called by every application using the ORCM library.
  *
  */
 ORCM_DECLSPEC int orcm_init(orcm_proc_type_t flags);
 
 /**
- * Initialize the utility level of the OPENRCM library
+ * Initialize the utility level of the ORCM library
  *
  * This function s called by tools to setup their cmd
  * line prior to calling openrcm_init - it is protected from
@@ -130,12 +137,12 @@ ORCM_DECLSPEC int orcm_init(orcm_proc_type_t flags);
 ORCM_DECLSPEC int orcm_init_util(void);
 
 /**
- * Initialize parameters for OPENRCM.
+ * Initialize parameters for ORCM.
  */
 /* ORCM_DECLSPEC int openrcm_register_params(void); */
 
 /**
- * Finalize the OPENRCM library. Any function calling \code
+ * Finalize the ORCM library. Any function calling \code
  * openrcm_init should call \code openrcm_finalize. 
  *
  */

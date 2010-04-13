@@ -59,9 +59,6 @@ typedef struct {
 } orcm_pnp_channel_tracker_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_channel_tracker_t);
 
-ORCM_DECLSPEC void orcm_pnp_base_push_data(orcm_pnp_source_t *src, opal_buffer_t *buf);
-ORCM_DECLSPEC opal_buffer_t* orcm_pnp_base_pop_data(orcm_pnp_source_t *src);
-
 END_C_DECLS
 
 #endif

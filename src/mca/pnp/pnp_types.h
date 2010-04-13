@@ -45,7 +45,8 @@ enum {
     ORCM_PNP_TAG_PS             = ORTE_RMCAST_TAG_PS,
     ORCM_PNP_TAG_MSG            = ORTE_RMCAST_TAG_MSG,
     ORCM_PNP_TAG_TOOL           = ORTE_RMCAST_TAG_TOOL,
-    ORCM_PNP_HEARTBEAT
+    ORCM_PNP_HEARTBEAT,
+    ORCM_PNP_TAG_COMMAND
 };
 
 #define ORCM_PNP_TAG_DYNAMIC    100
@@ -66,7 +67,7 @@ enum {
 
 /* callback functions */
 typedef void (*orcm_pnp_announce_fn_t)(char *app, char *version, char *release,
-                                       orcm_pnp_channel_t channel);
+                                       orte_process_name_t *name, char *node);
 
 typedef void (*orcm_pnp_callback_fn_t)(int status,
                                        orte_process_name_t *sender,

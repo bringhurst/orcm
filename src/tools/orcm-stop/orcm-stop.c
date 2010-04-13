@@ -134,11 +134,11 @@ int main(int argc, char *argv[])
     int32_t ret, i;
     opal_cmd_line_t cmd_line;
     char *cmd;
-    char **inpt, **replicas=NULL;
+    char **inpt;
     opal_buffer_t buf;
     int count;
     char cwd[OPAL_PATH_MAX];
-    orcm_tool_cmd_t flag = OPENRCM_TOOL_STOP_CMD;
+    orcm_tool_cmd_t flag = ORCM_TOOL_STOP_CMD;
     char *mstr;
     int master;
     
@@ -290,7 +290,7 @@ int main(int argc, char *argv[])
      * We need all of OPAL and ORTE - this will
      * automatically connect us to the CM
      ***************************/
-    if (ORTE_SUCCESS != orcm_init(OPENRCM_TOOL)) {
+    if (ORTE_SUCCESS != orcm_init(ORCM_TOOL)) {
         orcm_finalize();
         return 1;
     }
@@ -308,28 +308,11 @@ int main(int argc, char *argv[])
     OBJ_CONSTRUCT(&buf, opal_buffer_t);
     
     /* load the stop cmd */
-    opal_dss.pack(&buf, &flag, 1, OPENRCM_TOOL_CMD_T);
+    opal_dss.pack(&buf, &flag, 1, ORCM_TOOL_CMD_T);
     
     /* get the apps to stop */
     inpt = NULL;
     opal_cmd_line_get_tail(&cmd_line, &count, &inpt);
-    
-    /* get the replicas, if given */
-    if (NULL != my_globals.replicas) {
-        orte_util_parse_range_options(my_globals.replicas, &replicas);
-    } else {
-        opal_argv_append_nosize(&replicas, "-1");
-    }
-    
-    /* pack the replica info */
-    i = opal_argv_count(replicas);
-    opal_dss.pack(&buf, &i, 1, OPAL_INT32);
-    
-    for (i=0; NULL != replicas[i]; i++) {
-        ret = strtol(replicas[i], NULL, 10);
-        opal_dss.pack(&buf, &ret, 1, OPAL_INT32);
-    }
-    opal_argv_free(replicas);
     
     /* for each app */
     for (i=0; NULL != inpt[i]; i++) {
@@ -342,6 +325,8 @@ int main(int argc, char *argv[])
         }
         opal_dss.pack(&buf, &cmd, 1, OPAL_STRING);
         free(cmd);
+        /* pack the replicas to be stopped */
+        opal_dss.pack(&buf, &my_globals.replicas, 1, OPAL_STRING);
     }
     opal_argv_free(inpt);
     
@@ -389,19 +374,19 @@ static void ack_recv(int status,
 
     /* unpack the cmd */
     n=1;
-    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &flag, &n, OPENRCM_TOOL_CMD_T))) {
+    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &flag, &n, ORCM_TOOL_CMD_T))) {
         ORTE_ERROR_LOG(rc);
         return;
     }
     /* if this isn't a response to us, ignore it */
-    if (OPENRCM_TOOL_STOP_CMD != flag) {
+    if (ORCM_TOOL_STOP_CMD != flag) {
         return;
     }
     
     /* disconnect */
-    flag = OPENRCM_TOOL_DISCONNECT_CMD;
+    flag = ORCM_TOOL_DISCONNECT_CMD;
     ans = OBJ_NEW(opal_buffer_t);
-    opal_dss.pack(ans, &flag, 1, OPENRCM_TOOL_CMD_T);
+    opal_dss.pack(ans, &flag, 1, ORCM_TOOL_CMD_T);
     orcm_pnp.output_buffer_nb(ORCM_PNP_SYS_CHANNEL,
                               NULL, ORCM_PNP_TAG_TOOL,
                               ans, send_complete, NULL);

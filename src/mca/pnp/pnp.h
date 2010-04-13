@@ -42,8 +42,8 @@ typedef orcm_pnp_channel_t (*orcm_pnp_module_open_channel_fn_t)(char *app, char 
 
 /*
  * Register to receive messages from the specified app/version/release.
- * The application name and callback function MUST be specified. Providing
- * a NULL for version and/or release acts as a wildcard for those values
+ * The callback function MUST be specified. Providing a NULL for app, version,
+ and/or release acts as a wildcard for those values.
  *
  * NOTE: because it would be impossible to unpack a message that was sent
  * as an array of iovecs as if it were a buffer, an application's output type

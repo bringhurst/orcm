@@ -115,7 +115,7 @@ static void recv_input_buffers(int status,
                                orte_rmcast_tag_t tag,
                                orte_process_name_t *sender,
                                opal_buffer_t *buf, void *cbdata);
-static int pack_announcement(opal_buffer_t *buf);
+static int pack_announcement(opal_buffer_t *buf, orte_process_name_t *name);
 
 static void rmcast_callback_buffer(int status,
                                    orte_rmcast_channel_t channel,
@@ -169,7 +169,7 @@ static bool recv_on = false;
 static char *my_app = NULL;
 static char *my_version = NULL;
 static char *my_release = NULL;
-static void* my_announce_cbfunc = NULL;
+static orcm_pnp_announce_fn_t my_announce_cbfunc = NULL;
 static orte_rmcast_channel_t my_channel;
 static orcm_pnp_channel_t my_pnp_channels = ORCM_PNP_DYNAMIC_CHANNELS;
 
@@ -204,7 +204,7 @@ static int default_init(void)
     /* setup a recv to catch any announcements */
     if (!recv_on) {
         /* setup the respective public address channel */
-        if (OPENRCM_PROC_IS_MASTER || OPENRCM_PROC_IS_DAEMON || OPENRCM_PROC_IS_TOOL) {
+        if (ORCM_PROC_IS_MASTER || ORCM_PROC_IS_DAEMON || ORCM_PROC_IS_TOOL) {
             /* setup a group */
             group = OBJ_NEW(orcm_pnp_group_t);
             group->app = strdup("ORCM_SYSTEM");
@@ -241,7 +241,7 @@ static int default_init(void)
                 return ret;
             }
             
-        } else if (OPENRCM_PROC_IS_APP) {
+        } else if (ORCM_PROC_IS_APP) {
             /* setup a group */
             group = OBJ_NEW(orcm_pnp_group_t);
             group->app = strdup("ORCM_APP_ANNOUNCE");
@@ -251,7 +251,7 @@ static int default_init(void)
             /* add this channel to our list */
             tracker = OBJ_NEW(orcm_pnp_channel_tracker_t);
             tracker->app = strdup(group->app);
-            tracker->channel = ORCM_PNP_SYS_CHANNEL;
+            tracker->channel = ORTE_RMCAST_APP_PUBLIC_CHANNEL;
             opal_pointer_array_add(&channels, tracker);
             OBJ_RETAIN(group);
             opal_pointer_array_add(&tracker->groups, group);
@@ -291,6 +291,7 @@ static int announce(char *app, char *version, char *release,
     opal_buffer_t buf;
     orcm_pnp_group_t *group;
     orcm_pnp_channel_tracker_t *tracker;
+    orcm_pnp_channel_t chan;
     
     /* bozo check */
     if (NULL == app || NULL == version || NULL == release) {
@@ -345,24 +346,22 @@ static int announce(char *app, char *version, char *release,
     OBJ_CONSTRUCT(&buf, opal_buffer_t);
     
     /* pack the common elements */
-    if (ORCM_SUCCESS != (ret = pack_announcement(&buf))) {
-        ORTE_ERROR_LOG(ret);
-        OBJ_DESTRUCT(&buf);
-        OPAL_THREAD_UNLOCK(&lock);
-        return ret;
-    }
-    /* this is an original announcement, so we are responding to nobody */
-    if (ORCM_SUCCESS != (ret = opal_dss.pack(&buf, ORTE_NAME_INVALID, 1, ORTE_NAME))) {
+    if (ORCM_SUCCESS != (ret = pack_announcement(&buf, ORTE_NAME_INVALID))) {
         ORTE_ERROR_LOG(ret);
         OBJ_DESTRUCT(&buf);
         OPAL_THREAD_UNLOCK(&lock);
         return ret;
     }
     
+    /* select the channel */
+    if (ORCM_PROC_IS_APP) {
+        chan = ORTE_RMCAST_APP_PUBLIC_CHANNEL;
+    } else {
+        chan = ORTE_RMCAST_SYS_CHANNEL;
+    }
+    
     /* send it */
-    if (ORCM_SUCCESS != (ret = orte_rmcast.send_buffer(ORTE_RMCAST_APP_PUBLIC_CHANNEL,
-                                                       ORTE_RMCAST_TAG_ANNOUNCE,
-                                                       &buf))) {
+    if (ORCM_SUCCESS != (ret = orte_rmcast.send_buffer(chan, ORTE_RMCAST_TAG_ANNOUNCE, &buf))) {
         ORTE_ERROR_LOG(ret);
     }
     
@@ -398,6 +397,10 @@ static orcm_pnp_channel_t open_channel(char *app, char *version, char *release)
      */
     for (i=0; i < tracker->groups.size; i++) {
         if (NULL == (grp = (orcm_pnp_group_t*)opal_pointer_array_get_item(&tracker->groups, i))) {
+            continue;
+        }
+        if (ORTE_RMCAST_INVALID_CHANNEL == grp->channel) {
+            /* don't know this one yet */
             continue;
         }
         /* open a channel to this group - will just return if
@@ -451,17 +454,12 @@ static int register_input(char *app,
     orcm_pnp_channel_tracker_t *tracker;
     orcm_pnp_group_t *grp;
     int i, ret=ORCM_SUCCESS;
-    
-    /* bozo check */
-    if (NULL == app) {
-        ORTE_ERROR_LOG(ORTE_ERR_BAD_PARAM);
-        return ORTE_ERR_BAD_PARAM;
-    }
-    
+
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:register_input app %s version %s release %s tag %d",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         app, (NULL == version) ? "NULL" : version,
+                         (NULL == app) ? "NULL" : app,
+                         (NULL == version) ? "NULL" : version,
                          (NULL == release) ? "NULL" : release, tag));
     
     /* since we are modifying global lists, lock the thread */
@@ -535,16 +533,11 @@ static int register_input_buffer(char *app,
     orcm_pnp_group_t *grp;
     int i, ret=ORCM_SUCCESS;
     
-    /* bozo check */
-    if (NULL == app) {
-        ORTE_ERROR_LOG(ORTE_ERR_BAD_PARAM);
-        return ORTE_ERR_BAD_PARAM;
-    }
-    
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:register_input_buffer app %s version %s release %s tag %d",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         app, (NULL == version) ? "NULL" : version,
+                         (NULL == app) ? "NULL" : app,
+                         (NULL == version) ? "NULL" : version,
                          (NULL == release) ? "NULL" : release, tag));
     
     /* since we are modifying global lists, lock
@@ -621,12 +614,6 @@ static int deregister_input(char *app,
     opal_list_item_t *item;
     int i, j, k;
     int ret=ORCM_SUCCESS;
-    
-    /* bozo check */
-    if (NULL == app) {
-        ORTE_ERROR_LOG(ORTE_ERR_BAD_PARAM);
-        return ORTE_ERR_BAD_PARAM;
-    }
     
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:deregister_input app %s version %s release %s channel %d tag %d",
@@ -978,6 +965,10 @@ static int default_output_buffer(orcm_pnp_channel_t channel,
     /* find the channel */
     if (NULL == (tracker = find_channel(channel))) {
         /* don't know this channel - throw bits on floor */
+        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                             "%s pnp:default:output_buffer unrecognized channel %d tag %d",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             (int)grp->channel, tag));
         OPAL_RELEASE_THREAD(&lock, &cond, &active);
         return ORCM_SUCCESS;
     }
@@ -988,11 +979,7 @@ static int default_output_buffer(orcm_pnp_channel_t channel,
     if (NULL == recipient ||
         (ORTE_JOBID_WILDCARD == recipient->jobid &&
          ORTE_VPID_WILDCARD == recipient->vpid)) {
-        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:sending multicast buffer of %d bytes to channel %d tag %d",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), (int)buffer->bytes_used,
-                             (int)ORTE_RMCAST_GROUP_OUTPUT_CHANNEL, tag));
-        
+            
         for (i=0; i < tracker->groups.size; i++) {
             if (NULL == (grp = (orcm_pnp_group_t*)opal_pointer_array_get_item(&tracker->groups, i))) {
                 continue;
@@ -1001,15 +988,24 @@ static int default_output_buffer(orcm_pnp_channel_t channel,
                 /* don't know this one yet */
                 continue;
             }
-            /* send the buffer to my group output channel */
+            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                                 "%s pnp:default:sending multicast buffer of %d bytes to channel %d tag %d",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), (int)buffer->bytes_used,
+                                 (int)grp->channel, tag));
+            /* send the buffer to the group output channel */
             if (ORCM_SUCCESS != (ret = orte_rmcast.send_buffer(grp->channel, tag, buffer))) {
                 ORTE_ERROR_LOG(ret);
             }
             OPAL_RELEASE_THREAD(&lock, &cond, &active);
             return ORCM_SUCCESS;
         }
+        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                             "%s pnp:default:output_buffer unrecognized channel %d tag %d",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             (int)grp->channel, tag));
+        return ORCM_ERR_NOT_FOUND;
     }            
-            
+
     /* if only one name field is WILDCARD, I don't know how to send
      * it - at least, not right now
      */
@@ -1017,7 +1013,7 @@ static int default_output_buffer(orcm_pnp_channel_t channel,
         ORTE_VPID_WILDCARD == recipient->vpid) {
         ORTE_ERROR_LOG(ORTE_ERR_NOT_IMPLEMENTED);
         OPAL_RELEASE_THREAD(&lock, &cond, &active);
-        return ORTE_ERR_NOT_IMPLEMENTED;
+        return ORCM_ERR_NOT_IMPLEMENTED;
     }
     
     /* intended for a specific recipient, send it over p2p */
@@ -1238,7 +1234,7 @@ static void recv_announcements(int status,
     orcm_pnp_channel_tracker_t *tracker;
     orcm_pnp_group_t *group, *grp;
     orcm_pnp_source_t *source;
-    char *app, *version, *release;
+    char *app=NULL, *version=NULL, *release=NULL, *nodename=NULL;
     orte_process_name_t originator;
     opal_buffer_t ann;
     int rc, n, i, j;
@@ -1246,6 +1242,9 @@ static void recv_announcements(int status,
     orte_rmcast_channel_t output;
     orte_process_name_t sender;
     orcm_pnp_send_t *pkt;
+    orcm_pnp_channel_t chan;
+    orte_job_t *daemons;
+    orte_proc_t *proc;
     
     /* unpack the name of the sender */
     n=1;
@@ -1282,13 +1281,20 @@ static void recv_announcements(int status,
         return;
     }
     
+    /* get its nodename */
+    n=1;
+    if (ORCM_SUCCESS != (rc = opal_dss.unpack(buf, &nodename, &n, OPAL_STRING))) {
+        ORTE_ERROR_LOG(rc);
+        return;
+    }
+    
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                         "%s pnp:default:received announcement from group app %s version %s release %s channel %d",
+                         "%s pnp:default:received announcement from group app %s version %s release %s channel %d on node %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         app, version, release, output));
+                         app, version, release, output, nodename));
     
     /* since we are accessing global lists, acquire the thread */
-    OPAL_THREAD_LOCK(&lock);
+    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
     
     /* do we already know this application group? */
     for (i=0; i < groups.size; i++) {
@@ -1307,10 +1313,6 @@ static void recv_announcements(int status,
             continue;
         }
 
-        /* yep - know this one */
-        free(app);
-        free(version);
-        free(release);
         /* record the multicast channel it is on */
         group->channel = output;
         goto recvs;
@@ -1324,9 +1326,9 @@ static void recv_announcements(int status,
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
     
     group = OBJ_NEW(orcm_pnp_group_t);
-    group->app = app;
-    group->version = version;
-    group->release = release;
+    group->app = strdup(app);
+    group->version = strdup(version);
+    group->release = strdup(release);
     group->channel = output;
     opal_pointer_array_add(&groups, group);
     
@@ -1335,13 +1337,13 @@ static void recv_announcements(int status,
         if (NULL == (tracker = (orcm_pnp_channel_tracker_t*)opal_pointer_array_get_item(&channels, i))) {
             continue;
         }
-        if (0 != strcasecmp(app, tracker->app)) {
+        if (0 != strcasecmp(group->app, tracker->app)) {
             continue;
         }
-        if (NULL != tracker->version && 0 != strcasecmp(tracker->version, version)) {
+        if (NULL != tracker->version && 0 != strcasecmp(tracker->version, group->version)) {
             continue;
         }
-        if (NULL != tracker->release && 0 != strcasecmp(tracker->release, release)) {
+        if (NULL != tracker->release && 0 != strcasecmp(tracker->release, group->release)) {
             continue;
         }
         /* have a match - add the group */
@@ -1364,8 +1366,7 @@ static void recv_announcements(int status,
                                                            group->app, NULL, -1, NULL,
                                                            ORTE_RMCAST_BIDIR))) {
             ORTE_ERROR_LOG(rc);
-            OPAL_THREAD_UNLOCK(&lock);
-            return;
+            goto RELEASE;
         }
         /* add any pending requests associated with this channel */
         for (itm2 = opal_list_get_first(&tracker->requests);
@@ -1398,16 +1399,14 @@ recvs:
                                                       ORTE_RMCAST_PERSISTENT,
                                                       recv_inputs, NULL))) {
             ORTE_ERROR_LOG(rc);
-            OPAL_THREAD_UNLOCK(&lock);
-            return;
+            goto RELEASE;
         }
         if (ORTE_SUCCESS != (rc = orte_rmcast.recv_buffer_nb(output,
                                                              ORTE_RMCAST_TAG_WILDCARD,
                                                              ORTE_RMCAST_PERSISTENT,
                                                              recv_input_buffers, NULL))) {
             ORTE_ERROR_LOG(rc);
-            OPAL_THREAD_UNLOCK(&lock);
-            return;
+            goto RELEASE;
         }
     }
 
@@ -1434,8 +1433,7 @@ recvs:
     n=1;
     if (ORCM_SUCCESS != (rc = opal_dss.unpack(buf, &originator, &n, ORTE_NAME))) {
         ORTE_ERROR_LOG(rc);
-        OPAL_THREAD_UNLOCK(&lock);
-        return;
+        goto RELEASE;
     }
     
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
@@ -1450,14 +1448,16 @@ recvs:
     if (originator.jobid != ORTE_JOBID_INVALID &&
         originator.vpid != ORTE_VPID_INVALID) {
         /* nothing more to do */
-        OPAL_THREAD_UNLOCK(&lock);
-        return;
+        goto RELEASE;
     }
     
-    /* if we get here, then this is an original announcement,
-     * so we need to let them know we are here
-     */
-    
+    /* if we get here, then this is an original announcement */
+    if (ORCM_PROC_IS_APP) {
+        chan = ORTE_RMCAST_APP_PUBLIC_CHANNEL;
+    } else {
+        chan = ORTE_RMCAST_SYS_CHANNEL;
+    }
+
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:received announcement sending response",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
@@ -1466,24 +1466,18 @@ recvs:
     OBJ_CONSTRUCT(&ann, opal_buffer_t);
     
     /* pack the common elements */
-    if (ORCM_SUCCESS != (rc = pack_announcement(&ann))) {
-        ORTE_ERROR_LOG(rc);
+    if (ORCM_SUCCESS != (rc = pack_announcement(&ann, &sender))) {
+        if (ORCM_ERR_NOT_AVAILABLE != rc) {
+            /* not-avail => have not announced ourselves yet */
+            ORTE_ERROR_LOG(rc);
+        }
         OBJ_DESTRUCT(&ann);
-        OPAL_THREAD_UNLOCK(&lock);
-        return;
-    }
-    /* tell everyone we are responding to an announcement
-     * so they don't respond back
-     */
-    if (ORCM_SUCCESS != (rc = opal_dss.pack(&ann, &sender, 1, ORTE_NAME))) {
-        ORTE_ERROR_LOG(rc);
-        OBJ_DESTRUCT(&ann);
-        OPAL_THREAD_UNLOCK(&lock);
-        return;
+        goto RELEASE;
     }
     
-    /* send it */
-    if (ORCM_SUCCESS != (rc = orte_rmcast.send_buffer(ORTE_RMCAST_APP_PUBLIC_CHANNEL,
+    /* send it - have to release the thread in case we receive something right away */
+    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    if (ORCM_SUCCESS != (rc = orte_rmcast.send_buffer(chan,
                                                       ORTE_RMCAST_TAG_ANNOUNCE,
                                                       &ann))) {
         ORTE_ERROR_LOG(rc);
@@ -1491,7 +1485,28 @@ recvs:
     
     /* cleanup */
     OBJ_DESTRUCT(&ann);
-    OPAL_THREAD_UNLOCK(&lock);
+    goto CALLBACK;
+    
+RELEASE:
+    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    
+CALLBACK:
+    /* if they wanted a callback, now is the time to do it */
+    if (NULL != my_announce_cbfunc) {
+        my_announce_cbfunc(app, version, release, &sender, nodename);
+    }
+    if (NULL != app) {
+        free(app);
+    }
+    if (NULL != version) {
+        free(version);
+    }
+    if (NULL != release) {
+        free(release);
+    }
+    if (NULL != nodename) {
+        free(nodename);
+    }
     return;
 }
 
@@ -1649,9 +1664,9 @@ static void recv_input_buffers(int status,
     leader = orcm_leader.get_leader(grp);
 
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                         "%s pnp:default:received input buffer found sender %s in grp",
+                         "%s pnp:default:received input buffer found sender %s in grp %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         ORTE_NAME_PRINT(sender)));
+                         ORTE_NAME_PRINT(sender), grp->app));
     
     /* if the leader is wildcard, then deliver it */
     if (NULL == leader) {        
@@ -1704,9 +1719,14 @@ DEPART:
 }
 
 /* pack the common elements of an announcement message */
-static int pack_announcement(opal_buffer_t *buf)
+static int pack_announcement(opal_buffer_t *buf, orte_process_name_t *sender)
 {
     int ret;
+    
+    /* if we haven't registered an app-triplet yet, then we can't announce */
+    if (NULL == my_app) {
+        return ORCM_ERR_NOT_AVAILABLE;
+    }
     
     if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, ORTE_PROC_MY_NAME, 1, ORTE_NAME))) {
         ORTE_ERROR_LOG(ret);
@@ -1729,8 +1749,21 @@ static int pack_announcement(opal_buffer_t *buf)
         ORTE_ERROR_LOG(ret);
         return ret;
     }
+    /* pack my node */
+    if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, &orte_process_info.nodename, 1, OPAL_STRING))) {
+        ORTE_ERROR_LOG(ret);
+        return ret;
+    }
     
-    if (OPENRCM_PROC_IS_DAEMON || OPENRCM_PROC_IS_DAEMON) {
+    /* tell everyone we are responding to an announcement
+     * so they don't respond back
+     */
+    if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, sender, 1, ORTE_NAME))) {
+        ORTE_ERROR_LOG(ret);
+        return ret;
+    }        
+    
+    if (ORCM_PROC_IS_DAEMON || ORCM_PROC_IS_MASTER) {
         /* if we are a daemon or the master, include our system info */
         /* get our local resources */
         char *keys[] = {
@@ -1763,14 +1796,11 @@ static int pack_announcement(opal_buffer_t *buf)
             } else if (OPAL_STRING == info->type) {
                 opal_dss.pack(buf, &(info->data.str), 1, OPAL_STRING);
             }
-            /* if this is the cpu model, save it for later use */
-            if (0 == strcmp(info->key, OPAL_SYSINFO_CPU_MODEL)) {
-                orte_local_cpu_model = strdup(info->data.str);
-            }
             OBJ_RELEASE(info);
         }
         OBJ_DESTRUCT(&resources);
     }
+
     return ORCM_SUCCESS;
 }
 
@@ -1970,11 +2000,22 @@ static orcm_pnp_channel_tracker_t* get_channel(char *app,
     orcm_pnp_pending_request_t *request, *req;
     opal_list_item_t *itm2;
     
+    OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                         "%s pnp:default:get_channel app %s version %s release %s",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         (NULL == app) ? "NULL" : app,
+                         (NULL == version) ? "NULL" : version,
+                         (NULL == release) ? "NULL" : release));
+    
     for (i=0; i < channels.size; i++) {
         if (NULL == (tracker = (orcm_pnp_channel_tracker_t*)opal_pointer_array_get_item(&channels, i))) {
             continue;
         }
-        if (0 != strcasecmp(app, tracker->app)) {
+        if ((NULL == app && NULL != tracker->app) ||
+            (NULL != app && NULL == tracker->app)) {
+            continue;
+        }
+        if (NULL != app && 0 != strcasecmp(app, tracker->app)) {
             continue;
         }
         if ((NULL == version && NULL != tracker->version) ||
@@ -1992,12 +2033,18 @@ static orcm_pnp_channel_tracker_t* get_channel(char *app,
             continue;
         }
         /* if we get here, then we have a match */
+        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                             "%s pnp:default:get_channel match found for tracker channel %d",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             tracker->channel));
         return tracker;
     }
     
     /* if we get here, then this triplet doesn't exist - create it */
     tracker = OBJ_NEW(orcm_pnp_channel_tracker_t);
-    tracker->app = strdup(app);
+    if (NULL != app) {
+        tracker->app = strdup(app);
+    }
     if (NULL != version) {
         tracker->version = strdup(version);
     }
@@ -2005,14 +2052,19 @@ static orcm_pnp_channel_tracker_t* get_channel(char *app,
         tracker->release = strdup(release);
     }
     tracker->channel = my_pnp_channels++;
-    opal_pointer_array_add(&channels, tracker);
+    i = opal_pointer_array_add(&channels, tracker);
     
+    OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                         "%s pnp:default:get_channel created tracker channel %d status %d",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         tracker->channel, i));
+
     /* check all known groups to see who might belong to this new channel */
     for (i=0; i < groups.size; i++) {
         if (NULL == (group = (orcm_pnp_group_t*)opal_pointer_array_get_item(&groups, i))) {
             continue;
         }
-        if (0 != strcasecmp(app, group->app)) {
+        if (NULL != app && 0 != strcasecmp(app, group->app)) {
             continue;
         }
         if (NULL != version && 0 != strcasecmp(group->version, version)) {

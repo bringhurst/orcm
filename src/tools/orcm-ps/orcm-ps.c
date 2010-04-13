@@ -103,7 +103,7 @@ static void update_data(int fd, short flg, void *arg)
     struct timeval now;
     int32_t ret;
     time_t mytime;
-    orcm_tool_cmd_t flag = OPENRCM_TOOL_PS_CMD;
+    orcm_tool_cmd_t flag = ORCM_TOOL_PS_CMD;
 
     if (NULL != arg) {
         /* print a separator for the next output */
@@ -115,7 +115,7 @@ static void update_data(int fd, short flg, void *arg)
     /* setup the buffer to send our cmd */
     OBJ_CONSTRUCT(&buf, opal_buffer_t);
     
-    if (ORTE_SUCCESS != (ret = opal_dss.pack(&buf, &flag, 1, OPENRCM_TOOL_CMD_T))) {
+    if (ORTE_SUCCESS != (ret = opal_dss.pack(&buf, &flag, 1, ORCM_TOOL_CMD_T))) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
@@ -290,7 +290,7 @@ int main(int argc, char *argv[])
      * We need all of OPAL and ORTE - this will
      * automatically connect us to the CM
      ***************************/
-    if (ORCM_SUCCESS != (ret = orcm_init(OPENRCM_TOOL))) {
+    if (ORCM_SUCCESS != (ret = orcm_init(ORCM_TOOL))) {
         goto cleanup;
     }
 
@@ -385,12 +385,12 @@ static void ps_recv(int status,
 
     /* unpack the cmd */
     n=1;
-    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &flag, &n, OPENRCM_TOOL_CMD_T))) {
+    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &flag, &n, ORCM_TOOL_CMD_T))) {
         ORTE_ERROR_LOG(rc);
         return;
     }
     /* if this isn't a response to us, ignore it */
-    if (OPENRCM_TOOL_PS_CMD != flag) {
+    if (ORCM_TOOL_PS_CMD != flag) {
         return;
     }
     

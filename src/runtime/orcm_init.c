@@ -30,6 +30,7 @@ bool orcm_util_initialized = false;
 bool orcm_finalizing = false;
 int orcm_debug_output = -1;
 int orcm_debug_verbosity = 0;
+bool orcm_lowest_rank = false;
 
 /* signal trap support */
 /* available signals
@@ -82,58 +83,8 @@ int orcm_init(orcm_proc_type_t flags)
         orcm_init_util();
     }
     
-    /* set some envars generally needed */
-    putenv("OMPI_MCA_routed=cm");
-    putenv("OMPI_MCA_orte_create_session_dirs=0");
-    
-    if (OPENRCM_MASTER & flags) {
-        /* add envars the master needs */
-        if (NULL == getenv("OMPI_MCA_rmaps")) {
-            putenv("OMPI_MCA_rmaps=resilient");
-        }
-        
-        /* if we are the master, then init us
-         * with ORTE as the HNP
-         */
-        if (ORTE_SUCCESS != (ret = orte_init(NULL, NULL, ORTE_PROC_HNP))) {
-            error = "orte_init";
-            goto error;
-        }
-        
-    }  else if (OPENRCM_DAEMON & flags) {
-        /* ensure we use the right ess module if one isn't given */
-        if (NULL == getenv("OMPI_MCA_ess=cm")) {
-            putenv("OMPI_MCA_ess=cm");
-        }
-        if (ORTE_SUCCESS != (ret = orte_init(NULL, NULL, ORTE_PROC_DAEMON))) {
-            error = "orte_init";
-            goto error;
-        }
-        
-    } else if (OPENRCM_TOOL & flags) {
-        /* tools start independently, so we have to
-         * ensure they get the correct ess module
-         */
-        if (NULL == getenv("OMPI_MCA_ess=cm")) {
-            putenv("OMPI_MCA_ess=cm");
-        }
-        if (ORTE_SUCCESS != (ret = orte_init(NULL, NULL, ORTE_PROC_TOOL))) {
-            error = "orte_init";
-            goto error;
-        }
-        
-    } else if (OPENRCM_APP & flags) {
-        /* apps are always started by the daemon, so
-         * they will be told the right components to open
-         */
-        if (ORTE_SUCCESS != (ret = orte_init(NULL, NULL, ORTE_PROC_NON_MPI))) {
-            error = "orte_init";
-            goto error;
-        }
-        
-    } else {
-        error = "unknown flag";
-        ret = ORTE_ERR_FATAL;
+    if (ORTE_SUCCESS != (ret = orte_init(NULL, NULL, flags))) {
+        error = "orte_init";
         goto error;
     }
 
@@ -234,7 +185,7 @@ static void trap_signals(void)
 static void just_quit(int fd, short flags, void*arg)
 {
 
-    if (OPENRCM_PROC_IS_APP || OPENRCM_PROC_IS_TOOL) {
+    if (ORCM_PROC_IS_APP || ORCM_PROC_IS_TOOL) {
         /* whack any lingering session directory files from our job */
         orte_session_dir_cleanup(ORTE_PROC_MY_NAME->jobid);
     } else {
@@ -248,54 +199,9 @@ static void just_quit(int fd, short flags, void*arg)
     exit(orte_exit_status);
 }
 
-static void abort_callback(int fd, short flags, void*arg)
-{
-    int j;
-    orte_job_t *jdata;
-    int ret;
-    
-    /* since we are being terminated by a user's signal, be
-     * sure to exit with a non-zero exit code - but don't
-     * overwrite any error code from a proc that might have
-     * failed, in case that is why the user ordered us
-     * to terminate
-     */
-    ORTE_UPDATE_EXIT_STATUS(ORTE_ERROR_DEFAULT_EXIT_CODE);
-    
-    for (j=0; j < orte_job_data->size; j++) {
-        if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, j))) {
-            continue;
-        }
-        /* turn off the restart for this job */
-        jdata->err_cbfunc = NULL;
-        jdata->err_cbstates = 0;
-        /* indicate that this is no longer a continuously operating job */
-        jdata->controls &= ~ORTE_JOB_CONTROL_CONTINUOUS_OP;
-    }
-    
-    /* terminate the orteds - they will automatically kill
-     * their local procs
-     */
-    ret = orte_plm.terminate_orteds();
-    if (ORTE_SUCCESS != ret) {
-        /* If we failed the terminate_orteds() above, then we
-         * need to just die
-         */
-        just_quit(0, 0, NULL);
-    }
-    /* ensure all the orteds depart together */
-    orte_grpcomm.onesided_barrier();
-    
-    /* all done - time to go */
-    just_quit(0, 0, NULL);
-}
-
 static void signal_trap(int fd, short flags, void *arg)
 {
     int i;
-
-    opal_output(0, "%s trapped signal %s",
-                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), strsignal(fd));
 
     /* We are in an event handler; the exit procedure
      * will delete the signal handler that is currently running
@@ -304,7 +210,7 @@ static void signal_trap(int fd, short flags, void *arg)
      * exit after this.
      */
     /* if we are an app, just cleanly terminate */
-    if (OPENRCM_PROC_IS_APP || OPENRCM_PROC_IS_TOOL) {
+    if (ORCM_PROC_IS_APP || ORCM_PROC_IS_TOOL) {
         if (!opal_atomic_trylock(&orte_abort_inprogress_lock)) { /* returns 1 if already locked */
             return;
         }
@@ -338,7 +244,7 @@ static void signal_trap(int fd, short flags, void *arg)
     /* ensure that the forwarding of stdin stops */
     orte_job_term_ordered = true;
     
-    ORTE_TIMER_EVENT(0, 0, abort_callback);
+    ORTE_TIMER_EVENT(0, 0, just_quit);
  }
 
 static void ignore_trap(int fd, short flags, void *arg)
@@ -359,6 +265,7 @@ static void spawn_construct(orcm_spawn_event_t *ptr)
     ptr->constrain = false;
     ptr->add_procs = false;
     ptr->debug = false;
+    ptr->continuous = false;
 }
 static void spawn_destruct(orcm_spawn_event_t *ptr)
 {

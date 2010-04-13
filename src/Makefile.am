@@ -13,7 +13,7 @@ headers =
 libopenrcm_la_SOURCES =
 dist_pkgdata_DATA =
 
-SUBDIRS = mca . tools
+SUBDIRS = orte/mca mca . tools
 
 # add in the subdirectory data
 include include/Makefile.am
