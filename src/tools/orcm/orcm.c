@@ -62,6 +62,8 @@
 #include "orte/util/show_help.h"
 #include "orte/util/parse_options.h"
 #include "orte/mca/errmgr/errmgr.h"
+#include "orte/mca/iof/iof.h"
+#include "orte/mca/iof/base/base.h"
 #include "orte/mca/odls/odls.h"
 #include "orte/mca/odls/base/base.h"
 #include "orte/mca/ras/ras.h"
@@ -254,9 +256,10 @@ int main(int argc, char *argv[])
     
 
     /***************************
-     * Init as a tool so we properly connect to an existing VM
+     * Init as an ORCM_TOOL so we properly connect to an existing VM
+     * We are also an IOF endpt
      ***************************/
-    if (ORTE_SUCCESS != orcm_init(ORCM_TOOL)) {
+    if (ORTE_SUCCESS != orcm_init(ORCM_TOOL | ORCM_IOF_ENDPT)) {
         orcm_finalize();
         return 1;
     }
@@ -298,6 +301,24 @@ int main(int argc, char *argv[])
     }
     
     if (ORTE_SUCCESS != (ret = orte_odls_base_select())) {
+        ORTE_ERROR_LOG(ret);
+        goto cleanup;
+    }
+    
+    if (ORTE_SUCCESS != (ret = orte_iof_base_open())) {
+        ORTE_ERROR_LOG(ret);
+        goto cleanup;
+    }
+    
+    if (ORTE_SUCCESS != (ret = orte_iof_base_select())) {
+        ORTE_ERROR_LOG(ret);
+        goto cleanup;
+    }
+    
+    /* do a "push" on the iof to ensure the recv gets issued - doesn't
+     * matter what values we supply
+     */
+    if (ORTE_SUCCESS != (ret = orte_iof.push(NULL, ORTE_IOF_STDOUT, -1))) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
@@ -388,6 +409,7 @@ int main(int argc, char *argv[])
      ***************/
 xtra_cleanup:
     /* close the extra frameworks */
+    orte_iof_base_close();
     orte_ras_base_close();
     orte_rmaps_base_close();
     orte_odls_base_close();
@@ -728,8 +750,7 @@ static void spawn_app(char *cmd, bool add_procs, bool continuous, bool debug,
     if (continuous) {
         jdata->controls |= ORTE_JOB_CONTROL_CONTINUOUS_OP;
     }
-    /* since we don't have an HNP, we cannot forward IO */
-    jdata->controls &= ~ORTE_JOB_CONTROL_FORWARD_OUTPUT;
+    /* we don't forward stdin */
     jdata->stdin_target = ORTE_VPID_INVALID;
 
     /* pass max number of restarts */

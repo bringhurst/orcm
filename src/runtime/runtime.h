@@ -32,15 +32,17 @@ BEGIN_C_DECLS
 
 /* define some process types */
 typedef orte_proc_type_t orcm_proc_type_t;
-#define ORCM_MASTER      (ORTE_PROC_HNP | ORTE_PROC_CM)
-#define ORCM_TOOL        (ORTE_PROC_TOOL | ORTE_PROC_CM)
-#define ORCM_APP         (ORTE_PROC_NON_MPI | ORTE_PROC_CM)
-#define ORCM_DAEMON      (ORTE_PROC_DAEMON | ORTE_PROC_CM)
+#define ORCM_MASTER     (ORTE_PROC_HNP | ORTE_PROC_CM)
+#define ORCM_TOOL       (ORTE_PROC_TOOL | ORTE_PROC_CM)
+#define ORCM_APP        (ORTE_PROC_NON_MPI | ORTE_PROC_CM)
+#define ORCM_DAEMON     (ORTE_PROC_DAEMON | ORTE_PROC_CM)
+#define ORCM_IOF_ENDPT  0x1000
 
-#define ORCM_PROC_IS_MASTER      ORTE_PROC_IS_HNP
-#define ORCM_PROC_IS_TOOL        ORTE_PROC_IS_TOOL
-#define ORCM_PROC_IS_APP         ORTE_PROC_IS_NON_MPI
-#define ORCM_PROC_IS_DAEMON      ORTE_PROC_IS_DAEMON
+#define ORCM_PROC_IS_MASTER     (ORTE_PROC_IS_HNP && ORTE_PROC_IS_CM)
+#define ORCM_PROC_IS_TOOL       (ORTE_PROC_IS_TOOL && ORTE_PROC_IS_CM)
+#define ORCM_PROC_IS_APP        (ORTE_PROC_IS_NON_MPI && ORTE_PROC_IS_CM)
+#define ORCM_PROC_IS_DAEMON     (ORTE_PROC_IS_DAEMON && ORTE_PROC_IS_CM)
+#define ORCM_PROC_IS_IOF_ENDPT  (ORCM_IOF_ENDPT & orte_process_info.proc_type)
 
 /* define some tool command flags */
 typedef uint8_t orcm_tool_cmd_t;
