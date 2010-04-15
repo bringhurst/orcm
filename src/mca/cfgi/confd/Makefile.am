@@ -8,6 +8,8 @@
 # $HEADER$
 #
 
+AM_CPPFLAGS = $(orcm_cfgi_confd_CPPFLAGS)
+
 sources = \
         cfgi_confd.h \
         cfgi_confd.c \
@@ -32,8 +34,10 @@ endif
 mcacomponentdir = $(pkglibdir)
 mcacomponent_LTLIBRARIES = $(component)
 mca_orcm_cfgi_confd_la_SOURCES = $(component_sources)
-mca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version
+mca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
+mca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBADD)
 
 noinst_LTLIBRARIES = $(lib)
 libmca_orcm_cfgi_confd_la_SOURCES = $(lib_sources)
-libmca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version
+libmca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
+libmca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBADD)

@@ -582,7 +582,7 @@ AC_DEFUN([MCA_PROCESS_DEAD_COMPONENT],[
     m4_define([mpdc_fw], $2)
     m4_define([mpdc_comp], $3)
 
-    AC_MSG_CHECKING([if mpfc_name MCA component mpdc_fw:mpdc_comp can compile])
+    AC_MSG_CHECKING([if ]mpdc_name[ MCA component mpdc_fw:mpdc_comp can compile])
     AC_MSG_RESULT([no])
 
     # If this component was requested as the default for this
