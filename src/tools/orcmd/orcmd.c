@@ -266,9 +266,10 @@ int main(int argc, char *argv[])
     orte_launch_environ = opal_argv_copy(environ);
     
     /* if orte_daemon_debug is set, let someone know we are alive right
-     * away just in case we have a problem along the way
+     * away just in case we have a problem along the way - we won't have
+     * processed the orte mca params yet, so use the local flag
      */
-    if (orte_debug_daemons_flag) {
+    if (orcmd_globals.debug) {
         gethostname(hostname, 100);
         fprintf(stderr, "Daemon was launched on %s - beginning to initialize\n", hostname);
     }
@@ -312,7 +313,6 @@ int main(int argc, char *argv[])
                 orte_process_info.nodename);
     }
     
-#if 0
     /* detach from controlling terminal
      * otherwise, remain attached so output can get to us
      */
@@ -322,10 +322,6 @@ int main(int argc, char *argv[])
         /* set the local debug verbosity */
         orcm_debug_output = 5;
     }
-#endif
-    orcm_debug_output = 5;
-    orte_debug_daemons_flag = true;
-    orte_debug_output = 5;
     
     /* insert our contact info into our process_info struct so we
      * have it for later use and set the local daemon field to our name

@@ -175,7 +175,7 @@ int main(int argc, char *argv[])
     
     /* initialize the globals */
     my_globals.help = false;
-    my_globals.verbosity = 5;
+    my_globals.verbosity = 0;
     my_globals.vm = NULL;
     my_globals.do_not_launch = false;
     
@@ -605,7 +605,6 @@ static void tool_messages(int status,
     }
     
 cleanup:
-    opal_output(0, "sending response to %s", ORTE_NAME_PRINT(sender));
     if (ORCM_SUCCESS != (rc = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL,
                                                      NULL, ORCM_PNP_TAG_TOOL,
                                                      &response))) {
