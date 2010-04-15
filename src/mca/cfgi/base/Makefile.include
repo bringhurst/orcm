@@ -17,5 +17,6 @@ headers += \
 sources += \
         base/cfgi_base_open.c \
         base/cfgi_base_close.c \
-        base/cfgi_base_select.c
+        base/cfgi_base_select.c \
+        base/cfgi_base_fns.c
 

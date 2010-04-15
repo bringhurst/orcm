@@ -29,19 +29,18 @@
 /* API functions */
 
 static int file_init(void);
-static void file_read_config(orcm_spawn_fn_t spawn_app);
 static int file_finalize(void);
 
 /* The module struct */
 
 orcm_cfgi_base_module_t orcm_cfgi_file_module = {
     file_init,
-    file_read_config,
     file_finalize
 };
 
 /* local functions */
 static char *cm_getline(FILE *fp);
+static void file_read_config(void);
 
 static int file_init(void)
 {
@@ -55,7 +54,7 @@ static int file_init(void)
  * ends either at end-of-file or next app-grp. empty
  * lines are ignored
  */
-static void file_read_config(orcm_spawn_fn_t spawn_app)
+static void file_read_config(void)
 {
     int ret, i;
     FILE *fp;
@@ -95,7 +94,6 @@ static void file_read_config(orcm_spawn_fn_t spawn_app)
         opal_argv_free(inpt);
         cmd = opal_argv_join(xfer, ' ');
         opal_argv_free(xfer);
-        ORCM_SPAWN_EVENT(cmd, false, false, false, INT32_MAX, num_apps, NULL, false, spawn_app);
         free(cmd);
     }
     fclose(fp);

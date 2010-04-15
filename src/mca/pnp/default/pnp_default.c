@@ -785,13 +785,15 @@ static int default_output(orcm_pnp_channel_t channel,
             ORTE_ERROR_LOG(ret);
             OPAL_RELEASE_THREAD(&lock, &cond, &active);
             return ret;
-        }        
-        /* pack the bytes */
-        if (ORCM_SUCCESS != (ret = opal_dss.pack(&buf, msg[sz].iov_base, cnt, OPAL_UINT8))) {
-            ORTE_ERROR_LOG(ret);
-            OPAL_RELEASE_THREAD(&lock, &cond, &active);
-            return ret;
-        }        
+        }
+        if (0 < cnt) {
+            /* pack the bytes */
+            if (ORCM_SUCCESS != (ret = opal_dss.pack(&buf, msg[sz].iov_base, cnt, OPAL_UINT8))) {
+                ORTE_ERROR_LOG(ret);
+                OPAL_RELEASE_THREAD(&lock, &cond, &active);
+                return ret;
+            }            
+        }
     }
     
     /* release the thread prior to send */
@@ -926,12 +928,14 @@ static int default_output_nb(orcm_pnp_channel_t channel,
             OPAL_RELEASE_THREAD(&lock, &cond, &active);
             return ret;
         }        
-        /* pack the bytes */
-        if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, msg[sz].iov_base, cnt, OPAL_UINT8))) {
-            ORTE_ERROR_LOG(ret);
-            OPAL_RELEASE_THREAD(&lock, &cond, &active);
-            return ret;
-        }        
+        if (0 < cnt) {
+            /* pack the bytes */
+            if (ORCM_SUCCESS != (ret = opal_dss.pack(buf, msg[sz].iov_base, cnt, OPAL_UINT8))) {
+                ORTE_ERROR_LOG(ret);
+                OPAL_RELEASE_THREAD(&lock, &cond, &active);
+                return ret;
+            }            
+        }
     }
     
     /* release thread prior to send */
@@ -1955,15 +1959,17 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
                 ORTE_ERROR_LOG(rc);
                 goto CLEANUP;
             }
-            /* allocate the space */
-            iovec_array[i].iov_base = (uint8_t*)malloc(sz);
-            iovec_array[i].iov_len = sz;
-            /* unpack the data */
-            n=sz;
-            if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, iovec_array[i].iov_base, &n, OPAL_UINT8))) {
-                ORTE_ERROR_LOG(rc);
-                goto CLEANUP;
-            }                    
+            if (0 < sz) {
+                /* allocate the space */
+                iovec_array[i].iov_base = (uint8_t*)malloc(sz);
+                iovec_array[i].iov_len = sz;
+                /* unpack the data */
+                n=sz;
+                if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, iovec_array[i].iov_base, &n, OPAL_UINT8))) {
+                    ORTE_ERROR_LOG(rc);
+                    goto CLEANUP;
+                }                    
+            }
         }
         /* release the thread prior to executing the callback
          * to avoid deadlock

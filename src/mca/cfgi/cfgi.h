@@ -18,7 +18,6 @@
 
 /* module functions */
 typedef int (*orcm_cfgi_module_init_fn_t)(void);
-typedef void (*orcm_cfgi_module_read_config_fn_t)(orcm_spawn_fn_t spawn_apps);
 typedef int (*orcm_cfgi_module_finalize_fn_t)(void);
 
 /* component struct */
@@ -34,7 +33,6 @@ typedef orcm_cfgi_base_component_2_0_0_t orcm_cfgi_base_component_t;
 /* module struct */
 typedef struct {
     orcm_cfgi_module_init_fn_t        init;
-    orcm_cfgi_module_read_config_fn_t read_config;
     orcm_cfgi_module_finalize_fn_t    finalize;
 } orcm_cfgi_base_module_t;
 

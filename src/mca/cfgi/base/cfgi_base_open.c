@@ -23,13 +23,11 @@
 
 /* stubs */
 static int orcm_stub_init(void);
-static void orcm_stub_read_config(orcm_spawn_fn_t spawn_apps);
 static int orcm_stub_finalize(void);
 
 /* instantiate the module */
 orcm_cfgi_base_module_t orcm_cfgi = {
     orcm_stub_init,
-    orcm_stub_read_config,
     orcm_stub_finalize,
 };
 
@@ -41,6 +39,10 @@ int orcm_cfgi_base_open(void)
     /* Debugging / verbose output.  Always have stream open, with
      verbose set by the mca open system... */
     orcm_cfgi_base.output = opal_output_open(NULL);
+    
+    /* init globals */
+    orcm_cfgi_base.num_active_apps = 0;
+    orcm_cfgi_base.daemons = NULL;
     
     /* Open up all available components */
     if (ORCM_SUCCESS != 
@@ -55,15 +57,10 @@ int orcm_cfgi_base_open(void)
 
 static int orcm_stub_init(void)
 {
-    return;
-}
-
-static void orcm_stub_read_config(orcm_spawn_fn_t spawn_apps)
-{
-    return;
+    return ORCM_SUCCESS;
 }
 
 static int orcm_stub_finalize(void)
 {
-    return;
+    return ORCM_SUCCESS;
 }

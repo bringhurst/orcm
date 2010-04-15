@@ -10,7 +10,11 @@
 #ifndef CFGI_BASE_PUBLIC_H
 #define CFGI_BASE_PUBLIC_H
 
-#include "openrcm.h"
+#include "openrcm_config_private.h"
+#include "include/constants.h"
+
+#include "opal/class/opal_list.h"
+#include "orte/runtime/orte_globals.h"
 
 #include "mca/cfgi/cfgi.h"
 
@@ -20,6 +24,8 @@
 typedef struct {
     int output;
     opal_list_t opened;
+    int num_active_apps;
+    orte_job_t *daemons;
 } orcm_cfgi_base_t;
 
 ORCM_DECLSPEC extern orcm_cfgi_base_t orcm_cfgi_base;

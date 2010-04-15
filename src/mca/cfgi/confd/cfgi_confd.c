@@ -32,14 +32,12 @@
 /* API functions */
 
 static int confd_init(void);
-static void confd_read_config(orcm_spawn_fn_t spawn_app);
 static int confd_finalize(void);
 
 /* The module struct */
 
 orcm_cfgi_base_module_t orcm_cfgi_confd_module = {
     confd_init,
-    confd_read_config,
     confd_finalize
 };
 

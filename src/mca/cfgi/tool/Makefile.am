@@ -32,8 +32,8 @@ endif
 mcacomponentdir = $(pkglibdir)
 mcacomponent_LTLIBRARIES = $(component)
 mca_orcm_cfgi_tool_la_SOURCES = $(component_sources)
-mca_orcm_cfgi_confg_la_LDFLAGS = -module -avoid-version
+mca_orcm_cfgi_tool_la_LDFLAGS = -module -avoid-version
 
 noinst_LTLIBRARIES = $(lib)
 libmca_orcm_cfgi_tool_la_SOURCES = $(lib_sources)
-libmca_orcm_cfgi_confg_la_LDFLAGS = -module -avoid-version
+libmca_orcm_cfgi_tool_la_LDFLAGS = -module -avoid-version
