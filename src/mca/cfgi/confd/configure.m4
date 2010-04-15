@@ -34,22 +34,25 @@ AC_DEFUN([MCA_orcm_cfgi_confd_CONFIG],[
     orcm_check_confd_save_LDFLAGS="$LDFLAGS"
     orcm_check_confd_save_LIBS="$LIBS"
 
-    ORCM_CHECK_PACKAGE([orcm_cfgi_confd],
-                       [include/confd.h],
-                       [confd],
-                       [confd_init],
-                       [],
-                       [$orcm_check_confd_dir],
-                       [$orcm_check_confd_libdir],
-                       [$1],
-                       [$2])
+    AS_IF([test "$orcm_check_confd_happy" = "yes"],
+          [ORCM_CHECK_PACKAGE([orcm_cfgi_confd],
+                              [include/confd.h],
+                              [confd],
+                              [confd_init],
+                              [],
+                              [$orcm_check_confd_dir],
+                              [$orcm_check_confd_libdir],
+                              [orcm_check_confd_happy=1],
+                              [orcm_check_confd_happy=0])])
 
     CPPFLAGS="$orcm_check_confd_save_CPPFLAGS"
     LDFLAGS="$orcm_check_confd_save_LDFLAGS"
     LIBS="$orcm_check_confd_save_LIBS"
 
-    unset \
-       orcm_check_confd_save_CPPFLAGS \
-       orcm_check_confd_save_LDFLAGS \
-       orcm_check_confd_save_LIBS
+    AS_IF([test "$orcm_check_confd_happy" = "yes"],
+          [$1],
+          [AS_IF([test ! -z "$with_confd" -a "$with_confd" != "no"],
+                 [AC_MSG_WARN([confd support requested (via --with-confd) but not found.])
+                  AC_MSG_ERROR([Aborting.])])
+           $2])
 ])
