@@ -36,14 +36,14 @@ AC_DEFUN([MCA_orcm_cfgi_confd_CONFIG],[
 
     AS_IF([test "$orcm_check_confd_happy" = "yes"],
           [ORCM_CHECK_PACKAGE([orcm_cfgi_confd],
-                              [include/confd.h],
+                              [confd.h],
                               [confd],
-                              [confd_init],
+                              [confd_init_daemon],
                               [],
                               [$orcm_check_confd_dir],
                               [$orcm_check_confd_libdir],
-                              [orcm_check_confd_happy=1],
-                              [orcm_check_confd_happy=0])])
+                              [orcm_check_confd_happy=yes],
+                              [orcm_check_confd_happy=no])])
 
     CPPFLAGS="$orcm_check_confd_save_CPPFLAGS"
     LDFLAGS="$orcm_check_confd_save_LDFLAGS"

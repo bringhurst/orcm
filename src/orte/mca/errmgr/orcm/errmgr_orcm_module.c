@@ -59,20 +59,22 @@
 static int init(void);
 static int finalize(void);
 
+static int update_state(orte_jobid_t job,
+                        orte_job_state_t jobstate,
+                        orte_process_name_t *proc_name,
+                        orte_proc_state_t state,
+                        orte_exit_code_t exit_code,
+                        orte_errmgr_stack_state_t *stack_state);
+
 static int predicted_fault(char ***proc_list,
                            char ***node_list,
                            char ***suggested_nodes,
-                           int *stack_state);
-
-static int process_fault(orte_job_t *jdata,
-                         orte_process_name_t *proc_name,
-                         orte_proc_state_t state,
-                         int *stack_state);
+                           orte_errmgr_stack_state_t *stack_state);
 
 static int suggest_map_targets(orte_proc_t *proc,
                                orte_node_t *oldnode,
                                opal_list_t *node_list,
-                               int *stack_state);
+                               orte_errmgr_stack_state_t *stack_state);
 
 static int ft_event(int state);
 
@@ -84,8 +86,8 @@ static int ft_event(int state);
 orte_errmgr_base_module_t orte_errmgr_orcm_module = {
     init,
     finalize,
+    update_state,
     predicted_fault,
-    process_fault,
     suggest_map_targets,
     ft_event
 };
@@ -103,19 +105,14 @@ static int finalize(void)
     return ORTE_SUCCESS;
 }
 
-static int predicted_fault(char ***proc_list,
-                           char ***node_list,
-                           char ***suggested_nodes,
-                           int *stack_state)
+static int update_state(orte_jobid_t job,
+                        orte_job_state_t jobstate,
+                        orte_process_name_t *proc,
+                        orte_proc_state_t state,
+                        orte_exit_code_t exit_code,
+                        orte_errmgr_stack_state_t *stack_state)
 {
-    return ORTE_ERR_NOT_IMPLEMENTED;
-}
-
-static int process_fault(orte_job_t *jdata,
-                         orte_process_name_t *proc,
-                         orte_proc_state_t state,
-                         int *stack_state)
-{
+    orte_job_t *jdata;
     orte_job_t *jnew;
     orte_proc_t *pdata;
     orte_app_context_t *app=NULL;
@@ -127,6 +124,12 @@ static int process_fault(orte_job_t *jdata,
     size_t j;
 
     *stack_state ^= ORTE_ERRMGR_STACK_STATE_JOB_ABORT;
+
+    /* get the job object */
+    if (NULL == (jdata = orte_get_job_data_object(job))) {
+        ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
+        return ORTE_ERR_NOT_FOUND;
+    }
 
     OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base_output,
                          "errmgr:orcm:process_fault() "
@@ -289,10 +292,18 @@ static int process_fault(orte_job_t *jdata,
     return ORTE_SUCCESS;
 }
 
+static int predicted_fault(char ***proc_list,
+                           char ***node_list,
+                           char ***suggested_nodes,
+                           orte_errmgr_stack_state_t *stack_state)
+{
+    return ORTE_ERR_NOT_IMPLEMENTED;
+}
+
 static int suggest_map_targets(orte_proc_t *proc,
                                orte_node_t *oldnode,
                                opal_list_t *node_list,
-                               int *stack_state)
+                               orte_errmgr_stack_state_t *stack_state)
 {
     return ORTE_ERR_NOT_IMPLEMENTED;
 }

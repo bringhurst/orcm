@@ -589,7 +589,7 @@ static int launch(orte_job_t *jdata)
     orte_node_t *node;
     orte_std_cntr_t nnode;
     orte_jobid_t failed_job;
-    orte_job_state_t job_state = ORTE_JOB_NEVER_LAUNCHED;
+    orte_job_state_t job_state = ORTE_JOB_STATE_NEVER_LAUNCHED;
     
     /* wait for the launch to complete */
     OPAL_ACQUIRE_THREAD(&orte_plm_globals.spawn_lock,

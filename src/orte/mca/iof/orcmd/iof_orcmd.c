@@ -55,6 +55,8 @@
 
 
 /* API FUNCTIONS */
+static int init(void);
+
 static int orcmd_push(const orte_process_name_t* dst_name, orte_iof_tag_t src_tag, int fd);
 
 static int orcmd_pull(const orte_process_name_t* src_name,
@@ -63,6 +65,8 @@ static int orcmd_pull(const orte_process_name_t* src_name,
 
 static int orcmd_close(const orte_process_name_t* peer,
                        orte_iof_tag_t source_tag);
+
+static int finalize(void);
 
 static int orcmd_ft_event(int state);
 
@@ -75,12 +79,22 @@ static int orcmd_ft_event(int state);
  */
 
 orte_iof_base_module_t orte_iof_orcmd_module = {
+    init,
     orcmd_push,
     orcmd_pull,
     orcmd_close,
+    finalize,
     orcmd_ft_event
 };
 
+static int init(void)
+{
+    /* setup the local global variables */
+    OBJ_CONSTRUCT(&mca_iof_orcmd_component.lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&mca_iof_orcmd_component.sinks, opal_list_t);
+    OBJ_CONSTRUCT(&mca_iof_orcmd_component.procs, opal_list_t);
+    return ORTE_SUCCESS;
+}
 
 /**
  * Push data from the specified file descriptor */
@@ -243,6 +257,24 @@ static int orcmd_close(const orte_process_name_t* peer,
     return ORTE_SUCCESS;
 }
 
+static int finalize(void)
+{
+    int rc = ORTE_SUCCESS;
+    opal_list_item_t *item;
+    
+    OPAL_THREAD_LOCK(&mca_iof_orcmd_component.lock);
+    while ((item = opal_list_remove_first(&mca_iof_orcmd_component.sinks)) != NULL) {
+        OBJ_RELEASE(item);
+    }
+    OBJ_DESTRUCT(&mca_iof_orcmd_component.sinks);
+    while ((item = opal_list_remove_first(&mca_iof_orcmd_component.procs)) != NULL) {
+        OBJ_RELEASE(item);
+    }
+    OBJ_DESTRUCT(&mca_iof_orcmd_component.procs);
+    OPAL_THREAD_UNLOCK(&mca_iof_orcmd_component.lock);
+    OBJ_DESTRUCT(&mca_iof_orcmd_component.lock);
+    return rc;
+}
 
 /*
  * FT event

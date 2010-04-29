@@ -42,11 +42,6 @@ static int orte_iof_orcmd_query(mca_base_module_t **module, int *priority);
 
 
 /*
- * Local variables
- */
-static bool initialized = false;
-
-/*
  * Public string showing the iof orcmd component version number
  */
 const char *mca_iof_orcmd_component_version_string =
@@ -86,23 +81,7 @@ static int orte_iof_orcmd_open(void)
 
 static int orte_iof_orcmd_close(void)
 {
-    int rc = ORTE_SUCCESS;
-    opal_list_item_t *item;
-    
-    if (initialized) {
-        OPAL_THREAD_LOCK(&mca_iof_orcmd_component.lock);
-        while ((item = opal_list_remove_first(&mca_iof_orcmd_component.sinks)) != NULL) {
-            OBJ_RELEASE(item);
-        }
-        OBJ_DESTRUCT(&mca_iof_orcmd_component.sinks);
-        while ((item = opal_list_remove_first(&mca_iof_orcmd_component.procs)) != NULL) {
-            OBJ_RELEASE(item);
-        }
-        OBJ_DESTRUCT(&mca_iof_orcmd_component.procs);
-        OPAL_THREAD_UNLOCK(&mca_iof_orcmd_component.lock);
-        OBJ_DESTRUCT(&mca_iof_orcmd_component.lock);
-    }
-    return rc;
+    return ORTE_SUCCESS;
 }
 
 
@@ -111,16 +90,10 @@ static int orte_iof_orcmd_query(mca_base_module_t **module, int *priority)
     int rc;
 
     /* if we are a daemon, then use this module */
-    if (ORCM_PROC_IS_DAEMON) {
-        /* setup the local global variables */
-        OBJ_CONSTRUCT(&mca_iof_orcmd_component.lock, opal_mutex_t);
-        OBJ_CONSTRUCT(&mca_iof_orcmd_component.sinks, opal_list_t);
-        OBJ_CONSTRUCT(&mca_iof_orcmd_component.procs, opal_list_t);
-        
+    if (ORCM_PROC_IS_DAEMON) {        
         /* we must be selected */
         *priority = 100;
         *module = (mca_base_module_t *) &orte_iof_orcmd_module;
-        initialized = true;
         return ORTE_SUCCESS;
     }
 

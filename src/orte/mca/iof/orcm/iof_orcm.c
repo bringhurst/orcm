@@ -52,6 +52,8 @@
 #include "iof_orcm.h"
 
 /* API FUNCTIONS */
+static int init(void);
+
 static int orcm_push(const orte_process_name_t* dst_name, orte_iof_tag_t src_tag, int fd);
 
 static int orcm_pull(const orte_process_name_t* src_name,
@@ -61,15 +63,24 @@ static int orcm_pull(const orte_process_name_t* src_name,
 static int orcm_close(const orte_process_name_t* peer,
                  orte_iof_tag_t source_tag);
 
+static int finalize(void);
+
 static int orcm_ft_event(int state);
 
 orte_iof_base_module_t orte_iof_orcm_module = {
+    init,
     orcm_push,
     orcm_pull,
     orcm_close,
+    finalize,
     orcm_ft_event
 };
 
+
+static int init(void)
+{
+    return ORTE_SUCCESS;
+}
 
 /* ORCM iof masters do not have local processes */
 static int orcm_push(const orte_process_name_t* dst_name, orte_iof_tag_t src_tag, int fd)
@@ -108,6 +119,11 @@ static int orcm_close(const orte_process_name_t* peer,
             ORTE_ERROR_LOG(ret);
         }        
     }
+    return ORTE_SUCCESS;
+}
+
+static int finalize(void)
+{
     return ORTE_SUCCESS;
 }
 

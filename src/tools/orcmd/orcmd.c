@@ -89,7 +89,7 @@ static orte_job_t *daemons;
 
 static int orcmd_comm(orte_process_name_t *recipient,
                       opal_buffer_t *buf, orte_rml_tag_t tag,
-                      orte_odls_base_cbfunc_t cbfunc);
+                      orte_default_cbfunc_t cbfunc);
 
 static void shutdown_callback(int fd, short flags, void *arg);
 static void shutdown_signal(int fd, short flags, void *arg);
@@ -297,7 +297,7 @@ int main(int argc, char *argv[])
     }
     
     /* set the odls comm function */
-    orte_odls_base.comm = orcmd_comm;
+    orte_comm = orcmd_comm;
     
     /* set the jobid tracker to ensure any tools that connect to
      * us are in their own job
@@ -702,7 +702,7 @@ complete:
 
 static int orcmd_comm(orte_process_name_t *recipient,
                       opal_buffer_t *buf, orte_rml_tag_t tag,
-                      orte_odls_base_cbfunc_t cbfunc)
+                      orte_default_cbfunc_t cbfunc)
 {
     opal_output(0, "%s comm to %s tag %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_NAME_PRINT(recipient), tag);
     return ORCM_SUCCESS;
