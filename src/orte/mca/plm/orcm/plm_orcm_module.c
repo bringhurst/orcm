@@ -409,7 +409,7 @@ static int setup_launch(int *argcptr, char ***argvptr,
     orte_plm_base_orted_append_basic_args(&argc, &argv,
                                           "cm",
                                           proc_vpid_index,
-                                          true, NULL);
+                                          NULL);
     
     /* ensure that only the orcm plm is selected on the remote daemon */
     opal_argv_append_nosize(&argv, "-mca");

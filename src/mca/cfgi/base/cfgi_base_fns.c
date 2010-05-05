@@ -177,7 +177,7 @@ void orcm_cfgi_base_spawn_app(char *cmd, bool add_procs, bool continuous, bool d
     jdata->stdin_target = ORTE_VPID_INVALID;
     
     /* pass max number of restarts */
-    jdata->max_restarts = restarts;
+    jdata->max_global_restarts = restarts;
     
 launch:
     /* if we want to debug the apps, set the proper envar */

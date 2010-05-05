@@ -50,8 +50,6 @@ typedef uint8_t orcm_tool_cmd_t;
 
 #define ORCM_TOOL_START_CMD          1
 #define ORCM_TOOL_STOP_CMD           2
-#define ORCM_TOOL_PS_CMD             3
-#define ORCM_TOOL_DISCONNECT_CMD     4
 
 /* define an object to hold spawn info */
 typedef struct {

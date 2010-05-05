@@ -146,6 +146,12 @@ static void vm_commands(int status,
 static void vm_tracker(char *app, char *version, char *release,
                        orte_process_name_t *name, char *node);
 
+static void ps_request(int status,
+                       orte_process_name_t *sender,
+                       orcm_pnp_tag_t tag,
+                       opal_buffer_t *buffer,
+                       void *cbdata);
+
 int main(int argc, char *argv[])
 {
     int ret, i;
@@ -360,6 +366,11 @@ int main(int argc, char *argv[])
     /* use byslot mapping by default */
     ORTE_ADD_MAPPING_POLICY(ORTE_MAPPING_BYSLOT);
     
+    /* if I am rank=0, then I am the lowest rank */
+    if (ORTE_PROC_MY_NAME->vpid == 0) {
+        orcm_lowest_rank = true;
+    }
+    
     /* listen for DVM commands */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-vm", "0.1", "alpha",
                                                               ORCM_PNP_SYS_CHANNEL,
@@ -369,6 +380,15 @@ int main(int argc, char *argv[])
         goto xtra_cleanup;
     }
     
+    /* listen for PS requests */
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-ps", "0.1", "alpha",
+                                                              ORCM_PNP_SYS_CHANNEL,
+                                                              ORCM_PNP_TAG_PS,
+                                                              ps_request))) {
+        ORTE_ERROR_LOG(ret);
+        goto xtra_cleanup;
+    }
+
     /* announce my existence */
     if (ORCM_SUCCESS != (ret = orcm_pnp.announce("ORCM", "0.1", "alpha", vm_tracker))) {
         ORTE_ERROR_LOG(ret);
@@ -557,4 +577,70 @@ static void vm_commands(int status,
         
         exit(orte_exit_status);
     }        
+}
+
+static void ps_request(int status,
+                       orte_process_name_t *sender,
+                       orcm_pnp_tag_t tag,
+                       opal_buffer_t *buffer,
+                       void *cbdata)
+{
+    orte_process_name_t name;
+    int32_t n;
+    int rc;
+    opal_buffer_t ans;
+    
+    /* unpack the target name */
+    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &name, &n, ORTE_NAME))) {
+        ORTE_ERROR_LOG(rc);
+        return;
+    }
+    
+    /* construct the response */
+    OBJ_CONSTRUCT(&ans, opal_buffer_t);
+    
+    /* if the jobid is wildcard, they just want to know who is out there */
+    if (ORTE_JOBID_WILDCARD == name.jobid) {
+        goto respond;
+    }
+    
+    /* if the requested job family isn't mine, and isn't my DVM, then ignore it */
+    if (ORTE_JOB_FAMILY(name.jobid) != ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid) &&
+        ORTE_JOB_FAMILY(name.jobid) != ORTE_JOB_FAMILY(daemons->jobid)) {
+        OBJ_DESTRUCT(&ans);
+        return;
+    }
+    
+    /* if the request is for my job family... */
+    if (ORTE_JOB_FAMILY(name.jobid) == ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid)) {
+        /* if the vpid is wildcard, then the caller wants this info from everyone.
+         * if the vpid is not wildcard, then only respond if I am the leader
+         */
+        if (ORTE_VPID_WILDCARD == name.vpid || orcm_lowest_rank) {
+            /* pack the response */
+            goto pack;
+        }
+        /* otherwise, just ignore this */
+        OBJ_DESTRUCT(&ans);
+        return;
+    }
+    
+    /* the request must have been for my DVM - if they don't want everyone to
+     * respond, ignore it
+     */
+    if (ORTE_VPID_WILDCARD != name.vpid) {
+        OBJ_DESTRUCT(&ans);
+        return;
+    }
+    
+pack:
+    opal_dss.pack(&ans, ORTE_PROC_MY_NAME, 1, ORTE_NAME);
+
+respond:
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL,
+                                                     NULL, ORCM_PNP_TAG_PS,
+                                                     &ans))) {
+        ORTE_ERROR_LOG(rc);
+    }
+    OBJ_DESTRUCT(&ans);
 }

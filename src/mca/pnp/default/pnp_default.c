@@ -334,7 +334,7 @@ static int announce(char *app, char *version, char *release,
     tracker->app = strdup(my_app);
     tracker->version = strdup(my_version);
     tracker->release = strdup(my_release);
-    tracker->channel = ORCM_PNP_GROUP_OUTPUT_CHANNEL;
+    tracker->channel = ORCM_PNP_GROUP_CHANNEL;
     opal_pointer_array_add(&channels, tracker);
     OBJ_RETAIN(group);
     opal_pointer_array_add(&tracker->groups, group);
@@ -465,7 +465,7 @@ static int register_input(char *app,
     /* since we are modifying global lists, lock the thread */
     OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
     
-    if (ORCM_PNP_GROUP_OUTPUT_CHANNEL == channel) {
+    if (ORCM_PNP_GROUP_CHANNEL == channel) {
         /* get a tracker object for this triplet - creates
          * it if one doesn't already exist
          */
@@ -545,7 +545,7 @@ static int register_input_buffer(char *app,
      */
     OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
     
-    if (ORCM_PNP_GROUP_OUTPUT_CHANNEL == channel) {
+    if (ORCM_PNP_GROUP_CHANNEL == channel) {
         /* get a tracker object for this triplet - creates
          * it if one doesn't already exist
          */
@@ -626,7 +626,7 @@ static int deregister_input(char *app,
      */
     OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
     
-    if (ORCM_PNP_GROUP_OUTPUT_CHANNEL == channel) {
+    if (ORCM_PNP_GROUP_CHANNEL == channel) {
         /* get a tracker object for this triplet - creates
          * it if one doesn't already exist
          */

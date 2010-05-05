@@ -103,6 +103,12 @@ static void recv_input(int status,
 static void vm_tracker(char *app, char *version, char *release,
                        orte_process_name_t *name, char *node);
 
+static void ps_request(int status,
+                       orte_process_name_t *sender,
+                       orcm_pnp_tag_t tag,
+                       opal_buffer_t *buffer,
+                       void *cbdata);
+
 static struct {
     bool debug;
     bool help;
@@ -413,14 +419,6 @@ int main(int argc, char *argv[])
      but what the heck... :-) */
     opal_progress_set_event_flag(OPAL_EVLOOP_ONCE);
     
-    /* setup the heartbeat - the heartbeat will carry any messages
-     * from us
-     */
-    if (0 < orcmd_globals.heartbeat) {
-        orte_heartbeat_rate = orcmd_globals.heartbeat;
-        orcm_pnp_base_start_heart("ORCMD", "0.1", "alpha");
-    }
-    
     /* setup the global job and node arrays */
     orte_job_data = OBJ_NEW(opal_pointer_array_t);
     if (ORTE_SUCCESS != (ret = opal_pointer_array_init(orte_job_data,
@@ -483,7 +481,7 @@ int main(int argc, char *argv[])
     
     /* register an input to hear our peers */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("ORCMD", "0.1", "alpha",
-                                                              ORCM_PNP_GROUP_OUTPUT_CHANNEL,
+                                                              ORCM_PNP_GROUP_CHANNEL,
                                                               ORCM_PNP_TAG_WILDCARD, recv_input))) {
         ORTE_ERROR_LOG(ret);
         orte_trigger_event(&orte_exit);
@@ -494,6 +492,15 @@ int main(int argc, char *argv[])
                                                               ORCM_PNP_SYS_CHANNEL,
                                                               ORCM_PNP_TAG_COMMAND,
                                                               recv_input))) {
+        ORTE_ERROR_LOG(ret);
+        orte_trigger_event(&orte_exit);
+    }
+    
+    /* listen for PS requests */
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-ps", "0.1", "alpha",
+                                                              ORCM_PNP_SYS_CHANNEL,
+                                                              ORCM_PNP_TAG_PS,
+                                                              ps_request))) {
         ORTE_ERROR_LOG(ret);
         orte_trigger_event(&orte_exit);
     }
@@ -510,9 +517,6 @@ int main(int argc, char *argv[])
         opal_output(0, "%s orcmd: up and running - waiting for commands!", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
     }
 
-    /* start the heartbeat */
-    orcm_pnp_base_start_heart("ORCMD", "0.1", "alpha");
-    
     /* wait to hear we are done */
     opal_event_dispatch();
 
@@ -707,3 +711,13 @@ static int orcmd_comm(orte_process_name_t *recipient,
     opal_output(0, "%s comm to %s tag %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_NAME_PRINT(recipient), tag);
     return ORCM_SUCCESS;
 }
+
+static void ps_request(int status,
+                       orte_process_name_t *sender,
+                       orcm_pnp_tag_t tag,
+                       opal_buffer_t *buffer,
+                       void *cbdata)
+{
+    
+}
+

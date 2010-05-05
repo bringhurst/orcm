@@ -50,8 +50,8 @@ static struct {
     bool help;
     bool monitor;
     int update_rate;
-    char *hnp_uri;
     char *master;
+    bool all;
 } my_globals;
 
 opal_cmd_line_init_t cmd_line_opts[] = {
@@ -67,13 +67,13 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       &my_globals.update_rate, OPAL_CMD_LINE_TYPE_INT,
       "Update rate in seconds (default: 5)" },
     
-    { NULL, NULL, NULL, '\0', "uri", "uri", 1,
-      &my_globals.hnp_uri, OPAL_CMD_LINE_TYPE_STRING,
-      "The uri of the ORCM master [for TCP multicast only]" },
-    
-    { NULL, NULL, NULL, 'm', "master", "master", 1,
+    { NULL, NULL, NULL, 's', "source", "source", 1,
       &my_globals.master, OPAL_CMD_LINE_TYPE_STRING,
-      "ID of ORCM master to be contacted [number or file:name of file containing it" },
+      "ORCM DVM or scheduler to be contacted [number or file:name of file containing it" },
+    
+    { NULL, NULL, NULL, 'a', "all", "all", 0,
+      &my_globals.all, OPAL_CMD_LINE_TYPE_BOOL,
+      "Show info from all source replicas [default: only from leader]" },
     
     /* End of list */
     { NULL, NULL, NULL, '\0', NULL, NULL, 0,
@@ -81,12 +81,15 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       NULL }
 };
 
+/* Local object for tracking responses */
+
 /*
  * Local variables & functions
  */
 static opal_mutex_t lock;
 static opal_condition_t cond;
 static bool waiting=true;
+static orte_jobid_t jobfam;
 
 static void pretty_print(opal_buffer_t *buf);
 
@@ -94,6 +97,9 @@ static void ps_recv(int status,
                     orte_process_name_t *sender,
                     orcm_pnp_tag_t tag,
                     opal_buffer_t *buf, void *cbdata);
+
+static void vm_tracker(char *app, char *version, char *release,
+                       orte_process_name_t *name, char *nodename);
 
 /* update data function */
 static void update_data(int fd, short flg, void *arg)
@@ -103,8 +109,26 @@ static void update_data(int fd, short flg, void *arg)
     struct timeval now;
     int32_t ret;
     time_t mytime;
-    orcm_tool_cmd_t flag = ORCM_TOOL_PS_CMD;
+    orte_process_name_t name;
 
+    if (NULL == my_globals.master) {
+        /* if no dvm was given, then just find out what dvm's are out there */
+        name.jobid = ORTE_JOBID_WILDCARD;
+        name.vpid = ORTE_VPID_INVALID;
+    } else {
+        /* if a dvm was given, indicate it */
+        name.jobid = jobfam;
+        if (my_globals.all) {
+            /* if the user asked for -all- info, then we indicate
+             * that all members of the dvm are to respond
+             */
+            name.vpid = ORTE_VPID_WILDCARD;
+        } else {
+            /* indicate that only the lead member is to respond */
+            name.vpid = ORTE_VPID_INVALID;
+        }
+
+    }
     if (NULL != arg) {
         /* print a separator for the next output */
         fprintf(stderr, "\n=========================================================\n");
@@ -115,13 +139,13 @@ static void update_data(int fd, short flg, void *arg)
     /* setup the buffer to send our cmd */
     OBJ_CONSTRUCT(&buf, opal_buffer_t);
     
-    if (ORTE_SUCCESS != (ret = opal_dss.pack(&buf, &flag, 1, ORCM_TOOL_CMD_T))) {
+    if (ORTE_SUCCESS != (ret = opal_dss.pack(&buf, &name, 1, ORTE_NAME))) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
     
     if (ORCM_SUCCESS != (ret = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL,
-                                                      NULL, ORCM_PNP_TAG_TOOL,
+                                                      NULL, ORCM_PNP_TAG_PS,
                                                       &buf))) {
         ORTE_ERROR_LOG(ret);
     }
@@ -145,7 +169,6 @@ int main(int argc, char *argv[])
     int32_t ret;
     opal_cmd_line_t cmd_line;
     char *args = NULL;
-    char *mstr;
     int master;
     
     /***************
@@ -165,9 +188,9 @@ int main(int argc, char *argv[])
     my_globals.help = false;
     my_globals.monitor = false;
     my_globals.update_rate = 5;
-    my_globals.hnp_uri = NULL;
-    my_globals.master = NULL;
-
+    my_globals.master = 0;
+    my_globals.all = false;
+    
     /* Parse the command line options */
     opal_cmd_line_create(&cmd_line, cmd_line_opts);
     
@@ -188,101 +211,49 @@ int main(int argc, char *argv[])
         return ORTE_ERROR;
     }
     
-    /* need to specify master */
-    if (NULL == my_globals.master) {
-        opal_output(0, "Must specify ORCM master");
-        return ORTE_ERROR;
-    }
-    if (0 == strncmp(my_globals.master, "file", strlen("file")) ||
-        0 == strncmp(my_globals.master, "FILE", strlen("FILE"))) {
-        char input[1024], *filename;
-        FILE *fp;
-        
-        /* it is a file - get the filename */
-        filename = strchr(my_globals.master, ':');
-        if (NULL == filename) {
-            /* filename is not correctly formatted */
-            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "master", my_globals.master);
-            return ORTE_ERROR;
-        }
-        ++filename; /* space past the : */
-        
-        if (0 >= strlen(filename)) {
-            /* they forgot to give us the name! */
-            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "master", my_globals.master);
-            return ORTE_ERROR;
-        }
-        
-        /* open the file and extract the pid */
-        fp = fopen(filename, "r");
-        if (NULL == fp) { /* can't find or read file! */
-            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, "master", filename);
-            return ORTE_ERROR;
-        }
-        if (NULL == fgets(input, 1024, fp)) {
-            /* something malformed about file */
-            fclose(fp);
-            orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", "master", true, filename);
-            return ORTE_ERROR;
-        }
-        fclose(fp);
-        input[strlen(input)-1] = '\0';  /* remove newline */
-        /* convert the pid */
-        master = strtoul(input, NULL, 10);
-    } else {
-        /* should just be the master itself */
-        master = strtoul(my_globals.master, NULL, 10);
-    }
-    
-    asprintf(&mstr, "OMPI_MCA_orte_ess_job_family=%d", master);
-    putenv(mstr);
-    
-    /* if we were given HNP contact info, parse it and
-     * setup the process_info struct with that info
-     */
-    if (NULL != my_globals.hnp_uri) {
-        if (0 == strncmp(my_globals.hnp_uri, "file", strlen("file")) ||
-            0 == strncmp(my_globals.hnp_uri, "FILE", strlen("FILE"))) {
+    if (0 != master) {
+        if (0 == strncmp(my_globals.master, "file", strlen("file")) ||
+            0 == strncmp(my_globals.master, "FILE", strlen("FILE"))) {
             char input[1024], *filename;
             FILE *fp;
             
             /* it is a file - get the filename */
-            filename = strchr(my_globals.hnp_uri, ':');
+            filename = strchr(my_globals.master, ':');
             if (NULL == filename) {
                 /* filename is not correctly formatted */
-                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "uri", my_globals.hnp_uri);
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "master", my_globals.master);
                 return ORTE_ERROR;
             }
             ++filename; /* space past the : */
             
             if (0 >= strlen(filename)) {
                 /* they forgot to give us the name! */
-                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "uri", my_globals.hnp_uri);
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "master", my_globals.master);
                 return ORTE_ERROR;
             }
             
-            /* open the file and extract the uri */
+            /* open the file and extract the pid */
             fp = fopen(filename, "r");
             if (NULL == fp) { /* can't find or read file! */
-                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, filename);
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, "master", filename);
                 return ORTE_ERROR;
             }
             if (NULL == fgets(input, 1024, fp)) {
                 /* something malformed about file */
                 fclose(fp);
-                orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", true, filename);
+                orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", "master", true, filename);
                 return ORTE_ERROR;
             }
             fclose(fp);
             input[strlen(input)-1] = '\0';  /* remove newline */
-            /* put into the process info struct */
-            orte_process_info.my_hnp_uri = strdup(input);
+            /* convert the pid */
+            master = strtoul(input, NULL, 10);
         } else {
-            /* should just be the uri itself */
-            orte_process_info.my_hnp_uri = strdup(my_globals.hnp_uri);
+            /* should just be the master itself */
+            master = strtoul(my_globals.master, NULL, 10);
         }
     }
-    
+            
     OBJ_CONSTRUCT(&lock, opal_mutex_t);
     OBJ_CONSTRUCT(&cond, opal_condition_t);
     
@@ -297,12 +268,31 @@ int main(int argc, char *argv[])
     /* register to receive responses */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm", "0.1", "alpha",
                                                               ORCM_PNP_SYS_CHANNEL,
-                                                              ORCM_PNP_TAG_TOOL,
+                                                              ORCM_PNP_TAG_PS,
                                                               ps_recv))) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
-
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcmd", "0.1", "alpha",
+                                                              ORCM_PNP_SYS_CHANNEL,
+                                                              ORCM_PNP_TAG_PS,
+                                                              ps_recv))) {
+        ORTE_ERROR_LOG(ret);
+        goto cleanup;
+    }
+    
+    /* announce my existence */
+    if (ORCM_SUCCESS != (ret = orcm_pnp.announce("orcm-ps", "0.1", "alpha", vm_tracker))) {
+        ORTE_ERROR_LOG(ret);
+        goto cleanup;
+    }
+    
+    if (NULL == my_globals.master) {
+        /* we just want to report who is out there - give us a little time
+         * to catch all the announce responses
+         */
+    }
+    
     /* we know we need to print the data once */
     update_data(0, 0, NULL);
     
@@ -320,10 +310,13 @@ int main(int argc, char *argv[])
      * Cleanup
      ***************/
  cleanup:
-    /* cancel the recv */
+    /* cancel the recvs */
     orcm_pnp.deregister_input("orcm", "0.1", "alpha",
                               ORCM_PNP_SYS_CHANNEL,
-                              ORCM_PNP_TAG_TOOL);
+                              ORCM_PNP_TAG_PS);
+    orcm_pnp.deregister_input("orcmd", "0.1", "alpha",
+                              ORCM_PNP_SYS_CHANNEL,
+                              ORCM_PNP_TAG_PS);
     
     OBJ_DESTRUCT(&lock);
     OBJ_DESTRUCT(&cond);
@@ -383,17 +376,6 @@ static void ps_recv(int status,
     char *node;
     int rc;
 
-    /* unpack the cmd */
-    n=1;
-    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &flag, &n, ORCM_TOOL_CMD_T))) {
-        ORTE_ERROR_LOG(rc);
-        return;
-    }
-    /* if this isn't a response to us, ignore it */
-    if (ORCM_TOOL_PS_CMD != flag) {
-        return;
-    }
-    
     n=1;
     if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &node, &n, OPAL_STRING))) {
         ORTE_ERROR_LOG(rc);
@@ -432,3 +414,67 @@ cleanup:
     /* release the wait */
     OPAL_RELEASE_THREAD(&lock, &cond, &waiting);
 }
+
+static void vm_tracker(char *app, char *version, char *release,
+                       orte_process_name_t *name, char *nodename)
+{
+    orte_proc_t *proc;
+    orte_node_t *node;
+    orte_job_t *daemons;
+    int i;
+    
+    /* if it is a daemon, record it */
+    if (ORTE_JOBID_IS_DAEMON(name->jobid)) {
+        if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(daemons->procs, name->vpid))) {
+            /* new daemon - add it */
+            proc = OBJ_NEW(orte_proc_t);
+            proc->name.jobid = name->jobid;
+            proc->name.vpid = name->vpid;
+            daemons->num_procs++;
+            opal_pointer_array_add(daemons->procs, proc);
+        }
+        /* ensure the state is set to running */
+        proc->state = ORTE_PROC_STATE_RUNNING;
+        /* if it is a restart, check the node against the
+         * new one to see if it changed location
+         */
+        if (NULL != proc->nodename) {
+            if (0 == strcmp(nodename, proc->nodename)) {
+                /* all done */
+                return;
+            }
+            /* must have moved */
+            OBJ_RELEASE(proc->node);  /* maintain accounting */
+            proc->nodename = NULL;
+        }
+        /* find this node in our array */
+        for (i=0; i < orte_node_pool->size; i++) {
+            if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, i))) {
+                continue;
+            }
+            if (0 == strcmp(node->name, nodename)) {
+                /* already have this node - could be a race condition
+                 * where the daemon died and has been replaced, so
+                 * just assume that is the case
+                 */
+                if (NULL != node->daemon) {
+                    OBJ_RELEASE(node->daemon);
+                }
+                goto complete;
+            }
+        }
+        /* if we get here, this is a new node */
+        node = OBJ_NEW(orte_node_t);
+        node->name = strdup(nodename);
+        node->state = ORTE_NODE_STATE_UP;
+        node->index = opal_pointer_array_add(orte_node_pool, node);
+    complete:
+        OBJ_RETAIN(node);  /* maintain accounting */
+        proc->node = node;
+        proc->nodename = node->name;
+        OBJ_RETAIN(proc);  /* maintain accounting */
+        node->daemon = proc;
+        node->daemon_launched = true;
+    }
+}
+

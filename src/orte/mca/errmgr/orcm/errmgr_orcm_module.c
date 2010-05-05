@@ -49,6 +49,7 @@
 
 #include "orte/mca/errmgr/errmgr.h"
 #include "orte/mca/errmgr/base/base.h"
+#include "orte/mca/errmgr/base/errmgr_private.h"
 
 #include "errmgr_orcm.h"
 
@@ -131,7 +132,7 @@ static int update_state(orte_jobid_t job,
         return ORTE_ERR_NOT_FOUND;
     }
 
-    OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base_output,
+    OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
                          "errmgr:orcm:process_fault() "
                          "------- %s fault reported! proc %s (0x%x)",
                          (proc->jobid == ORTE_PROC_MY_NAME->jobid ? "Daemon" : "App. Process"),
@@ -171,7 +172,7 @@ static int update_state(orte_jobid_t job,
         /* increment restarts */
         pdata->restarts++;
         /* have we exceeded #restarts? */
-        if (jdata->max_restarts < pdata->restarts) {
+        if (jdata->max_local_restarts < pdata->restarts) {
             opal_output(0, "Max restarts for proc %s of app %s has been exceeded - process will not be restarted",
                         ORTE_NAME_PRINT(proc), app->app);
             return ORTE_SUCCESS;
@@ -182,7 +183,7 @@ static int update_state(orte_jobid_t job,
         /* restart the job - the spawn function will remap and
          * launch the replacement proc(s)
          */
-        OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base_output,
+        OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
                              "%s RESTARTING APP: %s",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                              ORTE_NAME_PRINT(proc)));
@@ -206,7 +207,7 @@ static int update_state(orte_jobid_t job,
      * treat it differently
      */
     if (ORTE_PROC_MY_NAME->jobid == proc->jobid) {
-        OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base_output,
+        OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
                              "%s Daemon %s failed",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                              ORTE_VPID_PRINT(proc->vpid)));
@@ -257,7 +258,7 @@ static int update_state(orte_jobid_t job,
                 opal_value_array_append_item(&jobs, &nodeproc->name.jobid);
             }
         }
-        OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base_output,
+        OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
                              "%s RESTARTING APPS FROM NODE: %s",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                              node->name));
@@ -272,7 +273,7 @@ static int update_state(orte_jobid_t job,
             /* restart the job - the spawn function will remap and
              * launch the replacement proc(s)
              */
-            OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base_output,
+            OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
                                  "%s RESTARTING JOB %s",
                                  ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                                  ORTE_JOBID_PRINT(jnew->jobid)));
