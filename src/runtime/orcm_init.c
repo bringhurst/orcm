@@ -214,6 +214,7 @@ static void just_quit(int fd, short flags, void*arg)
     /* cleanup and leave */
     orcm_finalize();
     
+    fprintf(stderr, "EXIT STATUS: %d\n", orte_exit_status);
     exit(orte_exit_status);
 }
 

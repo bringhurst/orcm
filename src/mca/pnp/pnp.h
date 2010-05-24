@@ -35,10 +35,13 @@ typedef int (*orcm_pnp_module_announce_fn_t)(char *app, char *version, char *rel
                                              orcm_pnp_announce_fn_t cbfunc);
 
 /*
- * Open a channel to another app/version/release triplet. All three
- * fields MUST be provided or ORCM_PNP_INVALID_CHANNEL will be returned
+ * Open a channel to another app/version/release triplet. A callback will be
+ * made whenever the first announcement is recvd from a process matching the specified
+ * triplet (NULL => WILDCARD for that field, will recv callback for each unique
+ * triplet that fits)
  */
-typedef orcm_pnp_channel_t (*orcm_pnp_module_open_channel_fn_t)(char *app, char *version, char *release);
+typedef int (*orcm_pnp_module_open_channel_fn_t)(char *app, char *version, char *release,
+                                                 orcm_pnp_open_channel_cbfunc_t cbfunc);
 
 /*
  * Register to receive messages from the specified app/version/release.
@@ -54,7 +57,6 @@ typedef orcm_pnp_channel_t (*orcm_pnp_module_open_channel_fn_t)(char *app, char 
 typedef int (*orcm_pnp_module_register_input_fn_t)(char *app,
                                                    char *version,
                                                    char *release,
-                                                   orcm_pnp_channel_t channel,
                                                    orcm_pnp_tag_t tag,
                                                    orcm_pnp_callback_fn_t cbfunc);
 
@@ -64,7 +66,6 @@ typedef int (*orcm_pnp_module_register_input_fn_t)(char *app,
 typedef int (*orcm_pnp_module_register_input_buffer_fn_t)(char *app,
                                                           char *version,
                                                           char *release,
-                                                          orcm_pnp_channel_t channel,
                                                           orcm_pnp_tag_t tag,
                                                           orcm_pnp_callback_buffer_fn_t cbfunc);
 
@@ -72,7 +73,6 @@ typedef int (*orcm_pnp_module_register_input_buffer_fn_t)(char *app,
 typedef int (*orcm_pnp_module_deregister_input_fn_t)(char *app,
                                                      char *version,
                                                      char *release,
-                                                     orcm_pnp_channel_t channel,
                                                      orcm_pnp_tag_t tag);
 
 

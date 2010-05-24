@@ -89,7 +89,6 @@ static int orcm_push(const orte_process_name_t* dst_name, orte_iof_tag_t src_tag
     
     if (!mca_iof_orcm_component.recv_issued) {
         if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcmd", "0.1", "alpha",
-                                                                  ORCM_PNP_SYS_CHANNEL,
                                                                   ORCM_PNP_TAG_IOF,
                                                                   orte_iof_orcm_recv))) {
             ORTE_ERROR_LOG(ret);
@@ -114,7 +113,6 @@ static int orcm_close(const orte_process_name_t* peer,
     
     if (mca_iof_orcm_component.recv_issued) {
         if (ORCM_SUCCESS != (ret = orcm_pnp.deregister_input("orcmd", "0.1", "alpha",
-                                                             ORCM_PNP_SYS_CHANNEL,
                                                              ORCM_PNP_TAG_IOF))) {
             ORTE_ERROR_LOG(ret);
         }        

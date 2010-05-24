@@ -20,3 +20,10 @@ orcm-vm [OPTIONS]
 name given was:
 
 File: %s
+#
+[preexisting-orcmd]
+orcm-vm has detected the existence of another daemon already running
+under your user id on node %s.
+
+Please "kill -9" any pre-existing daemons and try again.
+

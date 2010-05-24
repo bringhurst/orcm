@@ -8,6 +8,8 @@
 # $HEADER$
 #
 
+dist_pkgdata_DATA = help-pnp-default.txt
+
 sources = \
         pnp_default.h \
         pnp_default.c \

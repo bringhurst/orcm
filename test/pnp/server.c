@@ -59,27 +59,18 @@ int main(int argc, char* argv[])
         goto cleanup;
     }
     
-    /* we want to accept ALL input messages from all versions and releases of client app */
-    if (ORCM_SUCCESS != (rc = orcm_leader.set_leader("CLIENT", NULL, NULL,
-                                                     ORCM_LEADER_WILDCARD, ldr_failed))) {
-        ORTE_ERROR_LOG(rc);
-        goto cleanup;
-    }
-    
     /* we want to listen to all versions and releases of the CLIENT app */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("CLIENT", NULL, NULL,
-                                                      ORCM_PNP_GROUP_OUTPUT_CHANNEL,
+                                                      ORCM_PNP_GROUP_CHANNEL,
                                                       ORCM_PNP_TAG_OUTPUT, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
     
+    opal_output(0, "SERVER %s ACTIVE", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+    
     /* just sit here */
-    while (1) {
-        for (i=0; i < 100000; i++) {
-            pi = 3.14159 * (double)i;
-        }
-    }
+    opal_event_dispatch();
     
 cleanup:
 
@@ -154,7 +145,7 @@ static void recv_input(int status,
         opal_output(0, "%s sending response to %s for msg number %d",
                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                     ORTE_NAME_PRINT(sender), data[0]);
-        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, sender,
+        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_CHANNEL, sender,
                                                      ORCM_TEST_CLIENT_SERVER_TAG, msg, count, cbfunc, NULL))) {
             ORTE_ERROR_LOG(rc);
         }

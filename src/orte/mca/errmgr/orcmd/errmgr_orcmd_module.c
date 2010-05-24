@@ -52,7 +52,7 @@
 #include "orte/mca/errmgr/base/base.h"
 #include "orte/mca/errmgr/base/errmgr_private.h"
 
-#include "errmgr_orcm.h"
+#include "errmgr_orcmd.h"
 
 
 /*
@@ -85,7 +85,7 @@ static int ft_event(int state);
 /******************
  * ORCM module
  ******************/
-orte_errmgr_base_module_t orte_errmgr_orcm_module = {
+orte_errmgr_base_module_t orte_errmgr_orcmd_module = {
     init,
     finalize,
     update_state,
@@ -134,7 +134,7 @@ static int update_state(orte_jobid_t job,
     }
 
     OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
-                         "errmgr:orcm:process_fault() "
+                         "errmgr:orcmd:process_fault() "
                          "------- %s fault reported! proc %s (0x%x)",
                          (proc->jobid == ORTE_PROC_MY_NAME->jobid ? "Daemon" : "App. Process"),
                          ORTE_NAME_PRINT(proc),

@@ -64,15 +64,14 @@
 #include "orte/mca/rml/base/rml_contact.h"
 
 #include "orte/mca/errmgr/errmgr.h"
-#include "orte/mca/grpcomm/grpcomm.h"
 #include "orte/mca/rml/rml.h"
-#include "orte/mca/rml/rml_types.h"
 #include "orte/mca/odls/odls.h"
 #include "orte/mca/odls/base/base.h"
 #include "orte/mca/plm/plm.h"
 #include "orte/mca/plm/base/plm_private.h"
 #include "orte/mca/ras/ras.h"
 #include "orte/mca/routed/routed.h"
+#include "orte/orted/orted.h"
 
 #include "mca/pnp/pnp.h"
 #include "mca/pnp/base/public.h"
@@ -101,7 +100,7 @@ static void recv_input(int status,
                        void *cbdata);
 
 static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *node);
+                       orte_process_name_t *name, char *node, uint32_t uid);
 
 static void ps_request(int status,
                        orte_process_name_t *sender,
@@ -305,10 +304,13 @@ int main(int argc, char *argv[])
     /* set the odls comm function */
     orte_comm = orcmd_comm;
     
-    /* set the jobid tracker to ensure any tools that connect to
-     * us are in their own job
-     */
-    orte_plm_globals.next_jobid = 1;
+    /* setup the primary daemon command receive function */
+    ret = orte_rml.recv_buffer_nb(ORTE_NAME_WILDCARD, ORTE_RML_TAG_DAEMON,
+                                  ORTE_RML_NON_PERSISTENT, orte_daemon_recv, NULL);
+    if (ret != ORTE_SUCCESS && OPAL_SOS_GET_ERROR_CODE(ret) != ORTE_ERR_NOT_IMPLEMENTED) {
+        ORTE_ERROR_LOG(ret);
+        goto DONE;
+    }
 
     /* output a message indicating we are alive, our name, and our pid
      * for debugging purposes
@@ -586,11 +588,9 @@ static void recv_input(int status,
                        void *cbdata)
 {
     int rc, n;
-    orte_daemon_cmd_flag_t command;
-    ptrdiff_t save_rel;
     uint16_t jfam;
     
-    
+    opal_output(0, "%s GOT COMMAND FROM %s", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_NAME_PRINT(sender));
     /* if this isn't intended for me, ignore it */
     n=1;
     if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &jfam, &n, OPAL_UINT16))) {
@@ -602,33 +602,17 @@ static void recv_input(int status,
         return;
     }
     
-    /* save the starting point */
-    save_rel = buf->unpack_ptr - buf->base_ptr;
-
-    n=1;
-    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &command, &n, ORTE_DAEMON_CMD))) {
-        ORTE_ERROR_LOG(rc);
-        return;
-    }
-    
-    if (ORTE_DAEMON_ADD_LOCAL_PROCS != command) {
-        /* if it is not an add_procs command, then we have to rewind the buffer
-         * so the command processor starts at the correct place
-         */
-        buf->unpack_ptr = buf->base_ptr + save_rel;
-    }
-    
     /* pass it down to the cmd processor */
     if (ORTE_SUCCESS != (rc = orte_daemon_process_commands(sender, buf, tag))) {
         OPAL_OUTPUT_VERBOSE((1, orcm_debug_output,
                              "%s orte:daemon:cmd:processor failed on error %s",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_ERROR_NAME(rc)));
-    }            
+    }
 }
 
 
 static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *nodename)
+                       orte_process_name_t *name, char *nodename, uint32_t uid)
 {
     orte_proc_t *proc;
     int i;

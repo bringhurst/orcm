@@ -75,6 +75,7 @@
 #include "orte/util/nidmap.h"
 #include "orte/util/proc_info.h"
 
+#include "orte/mca/odls/odls.h"
 #include "orte/mca/rml/rml.h"
 #include "orte/mca/rml/rml_types.h"
 #include "orte/mca/ess/ess.h"
@@ -392,6 +393,7 @@ static int setup_launch(int *argcptr, char ***argvptr,
     if (NULL != orted_prefix) free(orted_prefix);
     if (NULL != orted_cmd) free(orted_cmd);
     
+#if 0
     /* if we are not debugging, tell the daemon
      * to daemonize so we can launch the next group
      */
@@ -401,6 +403,7 @@ static int setup_launch(int *argcptr, char ***argvptr,
         !orte_leave_session_attached) {
         opal_argv_append(&argc, &argv, "--daemonize");
     }
+#endif
     
     /*
      * Add the basic arguments to the orted command line, including
@@ -590,7 +593,10 @@ static int launch(orte_job_t *jdata)
     orte_std_cntr_t nnode;
     orte_jobid_t failed_job;
     orte_job_state_t job_state = ORTE_JOB_STATE_NEVER_LAUNCHED;
-    
+    orte_daemon_cmd_flag_t command;
+    opal_buffer_t *buffer;
+    uint16_t jfam;
+
     /* wait for the launch to complete */
     OPAL_ACQUIRE_THREAD(&orte_plm_globals.spawn_lock,
                         &orte_plm_globals.spawn_in_progress_cond,
@@ -598,6 +604,46 @@ static int launch(orte_job_t *jdata)
     OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output, "released to spawn"));
     orte_plm_globals.spawn_in_progress = true;
     OPAL_THREAD_UNLOCK(&orte_plm_globals.spawn_lock);
+    
+    /* if we are launching an app instead of daemons, then
+     * construct the launch msg and send it out
+     */
+    if (ORTE_PROC_MY_NAME->jobid != jdata->jobid) {
+        /* setup the job */
+        if (ORTE_SUCCESS != (rc = orte_plm_base_setup_job(jdata))) {
+            ORTE_ERROR_LOG(rc);
+            goto cleanup;
+        }
+        /* setup the buffer */
+        buffer = OBJ_NEW(opal_buffer_t);
+        /* pack our job family */
+        jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
+        if (ORTE_SUCCESS != (rc = opal_dss.pack(buffer, &jfam, 1, OPAL_UINT16))) {
+            ORTE_ERROR_LOG(rc);
+            OBJ_RELEASE(buffer);
+            goto cleanup;
+        }
+        
+        /* get the local launcher's required data */
+        if (ORTE_SUCCESS != (rc = orte_odls.get_add_procs_data(buffer, jdata->jobid))) {
+            ORTE_ERROR_LOG(rc);
+            OBJ_RELEASE(buffer);
+            goto cleanup;
+        }
+        /* send it */
+        if (ORTE_SUCCESS != (rc = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL, NULL,
+                                                         ORCM_PNP_TAG_COMMAND, buffer))) {
+            ORTE_ERROR_LOG(rc);
+        }
+        OBJ_RELEASE(buffer);
+        /* wait for the procs to report back in the announce callback */
+        OPAL_ACQUIRE_THREAD(&orte_plm_globals.spawn_lock,
+                            &orte_plm_globals.spawn_in_progress_cond,
+                            &orte_plm_globals.spawn_in_progress);
+        OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output,
+                             "completed spawn for job %s", ORTE_JOBID_PRINT(jdata->jobid)));
+        goto cleanup;
+    }
     
     /* if we are timing, record the start time */
     if (orte_timing) {
@@ -835,6 +881,7 @@ static int launch(orte_job_t *jdata)
     }
 
     /* RELEASE THE THREAD */
+    orte_plm_globals.spawn_in_progress = false;
     OPAL_THREAD_UNLOCK(&orte_plm_globals.spawn_lock);
 
     return rc;

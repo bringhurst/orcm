@@ -28,7 +28,7 @@
 #include "orte/types.h"
 #include "orte/mca/rmcast/rmcast_types.h"
 
-#include "mca/leader/leader_types.h"
+BEGIN_C_DECLS
 
 #define ORCM_PNP_MAX_MSGS    4
 
@@ -71,7 +71,10 @@ enum {
 
 /* callback functions */
 typedef void (*orcm_pnp_announce_fn_t)(char *app, char *version, char *release,
-                                       orte_process_name_t *name, char *node);
+                                       orte_process_name_t *name, char *node, uint32_t uid);
+
+typedef void (*orcm_pnp_open_channel_cbfunc_t)(char *app, char *version, char *release,
+                                               orcm_pnp_channel_t channel);
 
 typedef void (*orcm_pnp_callback_fn_t)(int status,
                                        orte_process_name_t *sender,
@@ -86,66 +89,6 @@ typedef void (*orcm_pnp_callback_buffer_fn_t)(int status,
                                               opal_buffer_t *buf,
                                               void *cbdata);
 
-typedef struct {
-    opal_object_t super;
-    orte_process_name_t name;
-    bool failed;
-    opal_buffer_t *msgs[ORCM_PNP_MAX_MSGS];
-    int start, end;
-    orte_rmcast_seq_t last_msg_num;
-} orcm_pnp_source_t;
-ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_source_t);
-
-/* provide a wildcard version */
-ORCM_DECLSPEC extern orcm_pnp_source_t orcm_pnp_wildcard;
-#define ORCM_SOURCE_WILDCARD    (&orcm_pnp_wildcard)
-
-
-typedef struct {
-    opal_object_t super;
-    char *app;
-    char *version;
-    char *release;
-    char *string_id;
-    orte_rmcast_channel_t channel;
-    opal_pointer_array_t members;
-    opal_list_t requests;
-} orcm_pnp_group_t;
-ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_group_t);
-
-typedef struct {
-    opal_list_item_t super;
-    bool pending;
-    opal_mutex_t lock;
-    opal_condition_t cond;
-    orcm_pnp_group_t *grp;
-    orcm_pnp_source_t *src;
-    orte_rmcast_channel_t channel;
-    orte_rmcast_tag_t tag;
-    struct iovec *msg;
-    int count;
-    orcm_pnp_callback_fn_t cbfunc;
-    opal_buffer_t *buffer;
-    orcm_pnp_callback_buffer_fn_t cbfunc_buf;
-    void *cbdata;
-} orcm_pnp_recv_t;
-ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_recv_t);
-
-typedef struct {
-    opal_list_item_t super;
-    orte_process_name_t target;
-    bool pending;
-    opal_mutex_t lock;
-    opal_condition_t cond;
-    orte_rmcast_channel_t channel;
-    orte_rmcast_tag_t tag;
-    struct iovec *msg;
-    int count;
-    orcm_pnp_callback_fn_t cbfunc;
-    opal_buffer_t *buffer;
-    orcm_pnp_callback_buffer_fn_t cbfunc_buf;
-    void *cbdata;
-} orcm_pnp_send_t;
-ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_send_t);
+END_C_DECLS
 
 #endif /* ORCM_PNP_TYPES_H */

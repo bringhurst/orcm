@@ -71,6 +71,7 @@
 #include "orte/mca/rmaps/rmaps.h"
 #include "orte/mca/rmaps/base/base.h"
 #include "orte/mca/odls/odls.h"
+#include "orte/mca/plm/base/plm_private.h"
 #include "orte/runtime/orte_globals.h"
 
 #include "mca/pnp/pnp.h"
@@ -144,7 +145,7 @@ static void vm_commands(int status,
                         void *cbdata);
 
 static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *node);
+                       orte_process_name_t *name, char *node, uint32_t uid);
 
 static void ps_request(int status,
                        orte_process_name_t *sender,
@@ -296,7 +297,7 @@ int main(int argc, char *argv[])
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
-    
+#if 0
     if (ORTE_SUCCESS != (ret = orte_iof_base_open())) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
@@ -306,7 +307,7 @@ int main(int argc, char *argv[])
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
-    
+#endif
     if (ORTE_SUCCESS != (ret = orcm_cfgi_base_open())) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
@@ -316,7 +317,7 @@ int main(int argc, char *argv[])
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
-
+#if 0
     /* do a "push" on the iof to ensure the recv gets issued - doesn't
      * matter what values we supply
      */
@@ -324,7 +325,7 @@ int main(int argc, char *argv[])
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
-    
+#endif
     /* setup the global job and node arrays */
     orte_job_data = OBJ_NEW(opal_pointer_array_t);
     if (ORTE_SUCCESS != (ret = opal_pointer_array_init(orte_job_data,
@@ -366,6 +367,9 @@ int main(int argc, char *argv[])
     /* use byslot mapping by default */
     ORTE_ADD_MAPPING_POLICY(ORTE_MAPPING_BYSLOT);
     
+    /* index us to the correct jobid */
+    orte_plm_globals.next_jobid = ORTE_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid)+1;
+    
     /* if I am rank=0, then I am the lowest rank */
     if (ORTE_PROC_MY_NAME->vpid == 0) {
         orcm_lowest_rank = true;
@@ -395,10 +399,6 @@ int main(int argc, char *argv[])
         goto xtra_cleanup;
     }
     
-    opal_output(orte_clean_output, "\nORCM %s NOW RUNNING...ATTACHED TO DVM %s\n",
-                ORTE_JOB_FAMILY_PRINT(ORTE_PROC_MY_NAME->jobid),
-                ORTE_JOB_FAMILY_PRINT(daemons->jobid));
-
     /* just wait until the abort is fired */
     opal_event_dispatch();
 
@@ -408,7 +408,9 @@ int main(int argc, char *argv[])
 xtra_cleanup:
     /* close the extra frameworks */
     orcm_cfgi_base_close();
+#if 0
     orte_iof_base_close();
+#endif
     orte_ras_base_close();
     orte_rmaps_base_close();
     orte_odls_base_close();
@@ -449,7 +451,7 @@ cleanup:
 }
 
 static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *nodename)
+                       orte_process_name_t *name, char *nodename, uint32_t uid)
 {
     orte_proc_t *proc;
     orte_node_t *node;

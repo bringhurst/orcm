@@ -207,14 +207,6 @@ launch:
     jfam  = ORTE_JOB_FAMILY(orcm_cfgi_base.daemons->jobid);
     opal_dss.pack(&buffer, &jfam, 1, OPAL_UINT16);
     
-    /* pack the add_local_procs command */
-    command = ORTE_DAEMON_ADD_LOCAL_PROCS;
-    if (ORTE_SUCCESS != (rc = opal_dss.pack(&buffer, &command, 1, ORTE_DAEMON_CMD))) {
-        ORTE_ERROR_LOG(rc);
-        OBJ_DESTRUCT(&buffer);
-        return;
-    }
-    
     /* get the local launcher's required data */
     if (ORTE_SUCCESS != (rc = orte_odls.get_add_procs_data(&buffer, jdata->jobid))) {
         ORTE_ERROR_LOG(rc);

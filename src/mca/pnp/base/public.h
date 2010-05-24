@@ -19,10 +19,6 @@ ORCM_DECLSPEC int orcm_pnp_base_open(void);
 ORCM_DECLSPEC int orcm_pnp_base_select(void);
 ORCM_DECLSPEC int orcm_pnp_base_close(void);
 
-/* heartbeat support */
-ORCM_DECLSPEC void orcm_pnp_base_start_heart(char *app, char *version, char *release);
-ORCM_DECLSPEC void orcm_pnp_base_stop_heart(void);
-
 ORCM_DECLSPEC extern const mca_base_component_t *orcm_pnp_base_components[];
 
 END_C_DECLS

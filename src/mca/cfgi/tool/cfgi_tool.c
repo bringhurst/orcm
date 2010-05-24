@@ -52,7 +52,6 @@ static int tool_init(void)
     
     /* register to catch launch requests */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-start", "0.1", "alpha",
-                                                              ORCM_PNP_SYS_CHANNEL,
                                                               ORCM_PNP_TAG_TOOL,
                                                               tool_messages))) {
         ORTE_ERROR_LOG(ret);
@@ -61,7 +60,6 @@ static int tool_init(void)
     
     /* register to catch stop requests */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-stop", "0.1", "alpha",
-                                                              ORCM_PNP_SYS_CHANNEL,
                                                               ORCM_PNP_TAG_TOOL,
                                                               tool_messages))) {
         ORTE_ERROR_LOG(ret);
@@ -75,10 +73,8 @@ static int tool_init(void)
 static int tool_finalize(void)
 {
     orcm_pnp.deregister_input("orcm-start", "0.1", "alpha",
-                              ORCM_PNP_SYS_CHANNEL,
                               ORCM_PNP_TAG_TOOL);
     orcm_pnp.deregister_input("orcm-stop", "0.1", "alpha",
-                              ORCM_PNP_SYS_CHANNEL,
                               ORCM_PNP_TAG_TOOL);
     
     return ORCM_SUCCESS;
@@ -124,9 +120,6 @@ static void tool_messages(int status,
     
     /* setup the response */
     OBJ_CONSTRUCT(&response, opal_buffer_t);
-    /* pack the job family of the sender so they know it is meant for them */
-    jfam  = ORTE_JOB_FAMILY(sender->jobid);
-    opal_dss.pack(&response, &jfam, 1, OPAL_UINT16);
     /* return the cmd flag */
     opal_dss.pack(&response, &flag, 1, ORCM_TOOL_CMD_T);
     
@@ -243,8 +236,9 @@ static void tool_messages(int status,
     }
     
 cleanup:
+    opal_output(0, "%s sending tool ack", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
     if (ORCM_SUCCESS != (rc = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL,
-                                                     NULL, ORCM_PNP_TAG_TOOL,
+                                                     sender, ORCM_PNP_TAG_TOOL,
                                                      &response))) {
         ORTE_ERROR_LOG(rc);
     }

@@ -23,6 +23,14 @@
 
 BEGIN_C_DECLS
 
+#define ORCM_PNP_CREATE_STRING_ID(sid, a, v, r) \
+    do {                                        \
+        asprintf((sid), "%s:%s:%s",             \
+                 (NULL == (a)) ? "@" : (a),     \
+                 (NULL == (v)) ? "@" : (v),     \
+                 (NULL == (r)) ? "@" : (r));    \
+    } while(0);
+
 /*
  * globals that might be needed
  */
@@ -33,31 +41,54 @@ typedef struct {
 ORCM_DECLSPEC extern orcm_pnp_base_t orcm_pnp_base;
 
 typedef struct {
-    opal_mutex_t lock;
-    opal_condition_t cond;
-    opal_buffer_t msgs;
-    bool msg_pending;
-} orcm_pnp_heartbeat_t;
-ORCM_DECLSPEC extern orcm_pnp_heartbeat_t orcm_pnp_heartbeat;
-
-typedef struct {
     opal_list_item_t super;
     orcm_pnp_tag_t tag;
     orcm_pnp_callback_fn_t cbfunc;
     orcm_pnp_callback_buffer_fn_t cbfunc_buf;
-} orcm_pnp_pending_request_t;
-ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_pending_request_t);
+} orcm_pnp_request_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_request_t);
 
 typedef struct {
     opal_object_t super;
-    char *app;
-    char *version;
-    char *release;
+    char *string_id;
     orcm_pnp_channel_t channel;
-    opal_pointer_array_t groups;
+    orcm_pnp_open_channel_cbfunc_t cbfunc;
+    opal_pointer_array_t members;
     opal_list_t requests;
-} orcm_pnp_channel_tracker_t;
-ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_channel_tracker_t);
+} orcm_pnp_triplet_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_triplet_t);
+
+typedef struct {
+    opal_list_item_t super;
+    orte_process_name_t target;
+    bool pending;
+    opal_mutex_t lock;
+    opal_condition_t cond;
+    orte_rmcast_channel_t channel;
+    orte_rmcast_tag_t tag;
+    struct iovec *msg;
+    int count;
+    orcm_pnp_callback_fn_t cbfunc;
+    opal_buffer_t *buffer;
+    orcm_pnp_callback_buffer_fn_t cbfunc_buf;
+    void *cbdata;
+} orcm_pnp_send_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_send_t);
+
+typedef struct {
+    opal_object_t super;
+    orte_process_name_t name;
+    bool failed;
+    opal_buffer_t *msgs[ORCM_PNP_MAX_MSGS];
+    int start, end;
+    orte_rmcast_seq_t last_msg_num;
+} orcm_pnp_source_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_source_t);
+
+/* provide a wildcard version */
+ORCM_DECLSPEC extern orcm_pnp_source_t orcm_pnp_wildcard;
+#define ORCM_SOURCE_WILDCARD    (&orcm_pnp_wildcard)
+
 
 END_C_DECLS
 

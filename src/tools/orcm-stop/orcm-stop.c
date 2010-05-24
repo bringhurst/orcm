@@ -68,6 +68,7 @@ static struct {
     bool help;
     char *replicas;
     char *sched;
+    char *hnp_uri;
 } my_globals;
 
 opal_cmd_line_init_t cmd_line_opts[] = {
@@ -79,9 +80,13 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       &my_globals.replicas, OPAL_CMD_LINE_TYPE_STRING,
       "Comma-separated range(s) of replicas to be stopped" },
     
-    { NULL, NULL, NULL, 's', "sched", "sched", 1,
+    { NULL, NULL, NULL, 'd', "dvm", "dvm", 1,
       &my_globals.sched, OPAL_CMD_LINE_TYPE_STRING,
-      "ORCM scheduler to be contacted" },
+      "ORCM DVM to be contacted" },
+    
+    { NULL, NULL, NULL, '\0', "uri", "uri", 1,
+      &my_globals.hnp_uri, OPAL_CMD_LINE_TYPE_STRING,
+      "The uri of the ORCM DVM [uri or file:name of file containing it" },
     
     /* End of list */
     { NULL, NULL, NULL, '\0', NULL, NULL, 
@@ -132,7 +137,8 @@ int main(int argc, char *argv[])
     my_globals.help = false;
     my_globals.replicas = NULL;
     my_globals.sched = NULL;
-
+    my_globals.hnp_uri = NULL;
+    
     OBJ_CONSTRUCT(&lock, opal_mutex_t);
     OBJ_CONSTRUCT(&cond, opal_condition_t);
     
@@ -158,10 +164,11 @@ int main(int argc, char *argv[])
     }
     
     /* need to specify master */
-    if (NULL == my_globals.sched) {
-        opal_output(0, "Must specify ORCM scheduler to be contacted");
+    if (NULL == my_globals.sched && NULL == my_globals.hnp_uri) {
+        opal_output(0, "Must specify ORCM DVM to be contacted");
         return ORTE_ERROR;
     }
+    
     if (0 == strncmp(my_globals.sched, "file", strlen("file")) ||
         0 == strncmp(my_globals.sched, "FILE", strlen("FILE"))) {
         char input[1024], *filename;
@@ -203,6 +210,52 @@ int main(int argc, char *argv[])
         master = strtoul(my_globals.sched, NULL, 10);
     }
     
+    /* if we were given HNP contact info, parse it and
+     * setup the process_info struct with that info
+     */
+    if (NULL != my_globals.hnp_uri) {
+        if (0 == strncmp(my_globals.hnp_uri, "file", strlen("file")) ||
+            0 == strncmp(my_globals.hnp_uri, "FILE", strlen("FILE"))) {
+            char input[1024], *filename;
+            FILE *fp;
+            
+            /* it is a file - get the filename */
+            filename = strchr(my_globals.hnp_uri, ':');
+            if (NULL == filename) {
+                /* filename is not correctly formatted */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "uri", my_globals.hnp_uri);
+                goto cleanup;
+            }
+            ++filename; /* space past the : */
+            
+            if (0 >= strlen(filename)) {
+                /* they forgot to give us the name! */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "uri", my_globals.hnp_uri);
+                goto cleanup;
+            }
+            
+            /* open the file and extract the uri */
+            fp = fopen(filename, "r");
+            if (NULL == fp) { /* can't find or read file! */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, filename);
+                goto cleanup;
+            }
+            if (NULL == fgets(input, 1024, fp)) {
+                /* something malformed about file */
+                fclose(fp);
+                orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", true, filename);
+                goto cleanup;
+            }
+            fclose(fp);
+            input[strlen(input)-1] = '\0';  /* remove newline */
+            /* put into the process info struct */
+            orte_process_info.my_hnp_uri = strdup(input);
+        } else {
+            /* should just be the uri itself */
+            orte_process_info.my_hnp_uri = strdup(my_globals.hnp_uri);
+        }
+    }
+    
     if (OPAL_SUCCESS != opal_getcwd(cwd, sizeof(cwd))) {
         opal_output(orte_clean_output, "failed to get cwd\n");
         return ORTE_ERR_NOT_FOUND;
@@ -215,6 +268,13 @@ int main(int argc, char *argv[])
     if (ORTE_SUCCESS != orcm_init(ORCM_TOOL)) {
         orcm_finalize();
         return 1;
+    }
+    
+    /* if we were given the hnp uri, extract the job family for the
+     * master id
+     */
+    if (NULL != my_globals.hnp_uri) {
+        master = ORTE_JOB_FAMILY(ORTE_PROC_MY_HNP->jobid);
     }
     
     /* register to receive responses */

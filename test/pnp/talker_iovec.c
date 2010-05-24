@@ -83,7 +83,7 @@ static void send_data(int fd, short flags, void *arg)
     
     /* output the values */
     opal_output(0, "%s sending msg number %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_GROUP_OUTPUT_CHANNEL, NULL,
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_GROUP_CHANNEL, NULL,
                                               ORCM_PNP_TAG_OUTPUT, msg, count))) {
         ORTE_ERROR_LOG(rc);
     }

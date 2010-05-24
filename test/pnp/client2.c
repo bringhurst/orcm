@@ -64,7 +64,7 @@ int main(int argc, char* argv[])
     
     /* for this application, register an input to hear direct responses */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("SERVER", "1.0", "alpha",
-                                                      ORCM_PNP_GROUP_OUTPUT_CHANNEL,
+                                                      ORCM_PNP_GROUP_CHANNEL,
                                                       ORCM_TEST_CLIENT_SERVER_TAG, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
@@ -129,7 +129,7 @@ static void send_data(int fd, short flags, void *arg)
     /* output the values */
     opal_output(0, "%s sending data for msg number %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
 #if 0
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, NULL,
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_CHANNEL, NULL,
                                                  ORCM_PNP_TAG_OUTPUT, msg, count, NULL, NULL))) {
         ORTE_ERROR_LOG(rc);
     }

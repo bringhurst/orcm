@@ -46,20 +46,11 @@ orcm_pnp_source_t orcm_pnp_wildcard;
 /* instantiate the globals */
 orcm_pnp_base_t orcm_pnp_base;
 
-/* instantiate the heartbeat */
-orcm_pnp_heartbeat_t orcm_pnp_heartbeat;
-
 int orcm_pnp_base_open(void)
 {
     /* setup the source wildcard */
     orcm_pnp_wildcard.name.jobid = ORTE_JOBID_WILDCARD;
     orcm_pnp_wildcard.name.vpid = ORTE_VPID_WILDCARD;
-    
-    /* setup the heartbeat */
-    OBJ_CONSTRUCT(&orcm_pnp_heartbeat.lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&orcm_pnp_heartbeat.cond, opal_condition_t);
-    OBJ_CONSTRUCT(&orcm_pnp_heartbeat.msgs, opal_buffer_t);
-    orcm_pnp_heartbeat.msg_pending = false;
     
     /* Debugging / verbose output.  Always have stream open, with
      verbose set by the mca open system... */
@@ -71,7 +62,6 @@ int orcm_pnp_base_open(void)
                                  &orcm_pnp_base.opened, true)) {
             return ORCM_ERROR;
         }
-    
     /* All done */
     return ORCM_SUCCESS;
 }
@@ -102,123 +92,42 @@ OBJ_CLASS_INSTANCE(orcm_pnp_source_t,
                    source_constructor,
                    source_destructor);
 
-static void group_constructor(orcm_pnp_group_t *ptr)
+static void triplet_constructor(orcm_pnp_triplet_t *ptr)
 {
-    ptr->app = NULL;
-    ptr->version = NULL;
-    ptr->release = NULL;
+    ptr->string_id = NULL;
     ptr->channel = ORTE_RMCAST_INVALID_CHANNEL;
+    ptr->cbfunc = NULL;
     OBJ_CONSTRUCT(&ptr->members, opal_pointer_array_t);
     opal_pointer_array_init(&ptr->members, 8, INT_MAX, 8);
     OBJ_CONSTRUCT(&ptr->requests, opal_list_t);
 }
-static void group_destructor(orcm_pnp_group_t *ptr)
+static void triplet_destructor(orcm_pnp_triplet_t *ptr)
 {
-    int i;
     opal_list_item_t *item;
-    orcm_pnp_source_t *src;
-    
-    if (NULL != ptr->app) {
-        free(ptr->app);
+
+    if (NULL != ptr->string_id) {
+        free(ptr->string_id);
     }
-    if (NULL != ptr->version) {
-        free(ptr->version);
-    }
-    if (NULL != ptr->release) {
-        free(ptr->release);
-    }
-    for (i=0; i < ptr->members.size; i++) {
-        if (NULL != (src = (orcm_pnp_source_t*)opal_pointer_array_get_item(&ptr->members, i))) {
-            OBJ_RELEASE(src);
-        }
-    }
-    OBJ_DESTRUCT(&ptr->members);
     while (NULL != (item = opal_list_remove_first(&ptr->requests))) {
         OBJ_RELEASE(item);
     }
     OBJ_DESTRUCT(&ptr->requests);
 }
-OBJ_CLASS_INSTANCE(orcm_pnp_group_t,
+OBJ_CLASS_INSTANCE(orcm_pnp_triplet_t,
                    opal_object_t,
-                   group_constructor,
-                   group_destructor);
+                   triplet_constructor,
+                   triplet_destructor);
 
-static void tracker_constructor(orcm_pnp_channel_tracker_t *ptr)
-{
-    ptr->app = NULL;
-    ptr->version = NULL;
-    ptr->release = NULL;
-    ptr->channel = ORCM_PNP_INVALID_CHANNEL;
-    OBJ_CONSTRUCT(&ptr->groups, opal_pointer_array_t);
-    opal_pointer_array_init(&ptr->groups, 8, INT_MAX, 8);
-    OBJ_CONSTRUCT(&ptr->requests, opal_list_t);
-}
-static void tracker_destructor(orcm_pnp_channel_tracker_t *ptr)
-{
-    int i;
-    orcm_pnp_group_t *grp;
-    opal_list_item_t *item;
-
-    if (NULL != ptr->app) {
-        free(ptr->app);
-    }
-    if (NULL != ptr->version) {
-        free(ptr->version);
-    }
-    if (NULL != ptr->release) {
-        free(ptr->release);
-    }
-    for (i=0; i < ptr->groups.size; i++) {
-        if (NULL != (grp = (orcm_pnp_group_t*)opal_pointer_array_get_item(&ptr->groups, i))) {
-            OBJ_RELEASE(grp);
-        }
-    }
-    OBJ_DESTRUCT(&ptr->groups);
-    while (NULL != (item = opal_list_remove_first(&ptr->requests))) {
-        OBJ_RELEASE(item);
-    }
-    OBJ_DESTRUCT(&ptr->requests);
-}
-OBJ_CLASS_INSTANCE(orcm_pnp_channel_tracker_t,
-                   opal_object_t,
-                   tracker_constructor,
-                   tracker_destructor);
-
-static void request_constructor(orcm_pnp_pending_request_t *ptr)
+static void request_constructor(orcm_pnp_request_t *ptr)
 {
     ptr->tag = ORCM_PNP_TAG_WILDCARD;
     ptr->cbfunc = NULL;
     ptr->cbfunc_buf = NULL;
 }
 /* no destruct required here */
-OBJ_CLASS_INSTANCE(orcm_pnp_pending_request_t,
+OBJ_CLASS_INSTANCE(orcm_pnp_request_t,
                    opal_list_item_t,
                    request_constructor, NULL);
-
-static void recv_constructor(orcm_pnp_recv_t *ptr)
-{
-    ptr->pending = false;
-    OBJ_CONSTRUCT(&ptr->lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&ptr->cond, opal_condition_t);
-    ptr->grp = NULL;
-    ptr->src = NULL;
-    ptr->channel = ORTE_RMCAST_INVALID_CHANNEL;
-    ptr->tag = ORTE_RML_TAG_INVALID;
-    ptr->msg = NULL;
-    ptr->count = 0;
-    ptr->cbfunc = NULL;
-    ptr->buffer = NULL;
-    ptr->cbfunc_buf = NULL;
-    ptr->cbdata = NULL;
-}
-static void recv_destructor(orcm_pnp_recv_t *ptr) {
-    OBJ_DESTRUCT(&ptr->lock);
-    OBJ_DESTRUCT(&ptr->cond);
-}
-OBJ_CLASS_INSTANCE(orcm_pnp_recv_t,
-                   opal_list_item_t,
-                   recv_constructor,
-                   recv_destructor);
 
 static void send_constructor(orcm_pnp_send_t *ptr)
 {

@@ -95,13 +95,14 @@ static int orte_iof_orcm_close(void)
 
 static int orte_iof_orcm_query(mca_base_module_t **module, int *priority)
 {
+#if 0
     /* if we are an IOF endpt, then use this module */
     if (ORCM_PROC_IS_IOF_ENDPT) {
         *priority = 100;
         *module = (mca_base_module_t *) &orte_iof_orcm_module;
         return ORTE_SUCCESS;
     }
-        
+#endif  
     *priority = 0;
     *module = NULL;
     return ORTE_ERROR;
