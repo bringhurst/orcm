@@ -225,7 +225,7 @@ static int default_init(void)
             /* open a channel to this group - will just return if
              * the channel already exists
              */
-            if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(&triplet->channel,
+            if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(triplet->channel,
                                                                 triplet->string_id,
                                                                 NULL, -1, NULL,
                                                                 ORTE_RMCAST_RECV))) {
@@ -253,7 +253,7 @@ static int default_init(void)
             opal_list_append(&triplet->requests, &request->super);
             
             /* open the channel */
-            if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(&triplet->channel,
+            if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(triplet->channel,
                                                                 triplet->string_id,
                                                                 NULL, -1, NULL,
                                                                 ORTE_RMCAST_RECV))) {
@@ -419,7 +419,7 @@ static int register_input(char *app,
     setup_recv_request(triplet, tag, cbfunc, NULL);
     
     /* open this triplet's channel - will just return if already open */
-    if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(&triplet->channel,
+    if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(triplet->channel,
                                                         triplet->string_id,
                                                         NULL, -1, NULL,
                                                         ORTE_RMCAST_BIDIR))) {
@@ -472,7 +472,7 @@ static int register_input_buffer(char *app,
     setup_recv_request(triplet, tag, NULL, cbfunc);
     
     /* open this triplet's channel - will just return if already open */
-    if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(&triplet->channel,
+    if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(triplet->channel,
                                                         triplet->string_id,
                                                         NULL, -1, NULL,
                                                         ORTE_RMCAST_BIDIR))) {
