@@ -191,7 +191,7 @@ int main(int argc, char *argv[])
     if (OPAL_SUCCESS != ret || my_globals.help) {
         char *args = NULL;
         args = opal_cmd_line_get_usage_msg(&cmd_line);
-        orte_show_help("help-orcm.txt", "usage", true, args);
+        orte_show_help("help-orcm-sched.txt", "usage", true, args);
         free(args);
         return ORTE_ERROR;
     }
@@ -376,8 +376,7 @@ int main(int argc, char *argv[])
     }
     
     /* listen for DVM commands */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-vm", "0.1", "alpha",
-                                                              ORCM_PNP_SYS_CHANNEL,
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm", "0.1", "alpha",
                                                               ORCM_PNP_TAG_COMMAND,
                                                               vm_commands))) {
         ORTE_ERROR_LOG(ret);
@@ -386,7 +385,6 @@ int main(int argc, char *argv[])
     
     /* listen for PS requests */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-ps", "0.1", "alpha",
-                                                              ORCM_PNP_SYS_CHANNEL,
                                                               ORCM_PNP_TAG_PS,
                                                               ps_request))) {
         ORTE_ERROR_LOG(ret);
@@ -394,7 +392,7 @@ int main(int argc, char *argv[])
     }
 
     /* announce my existence */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.announce("ORCM", "0.1", "alpha", vm_tracker))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.announce("ORCM-SCHED", "0.1", "alpha", vm_tracker))) {
         ORTE_ERROR_LOG(ret);
         goto xtra_cleanup;
     }

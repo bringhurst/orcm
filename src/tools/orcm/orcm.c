@@ -193,7 +193,7 @@ int main(int argc, char *argv[])
     if (OPAL_SUCCESS != ret || my_globals.help) {
         char *args = NULL;
         args = opal_cmd_line_get_usage_msg(&cmd_line);
-        orte_show_help("help-orcm-vm.txt", "usage", true, args);
+        orte_show_help("help-orcm.txt", "usage", true, args);
         free(args);
         return ORTE_ERROR;
     }
@@ -236,7 +236,7 @@ int main(int argc, char *argv[])
             fp = fopen(my_globals.report_uri, "w");
             if (NULL == fp) {
                 orte_show_help("help-orcm.txt", "orcm:write_file", false,
-                               "orcm-vm", "uri", my_globals.report_uri);
+                               "orcm", "uri", my_globals.report_uri);
                 orcm_finalize();
                 exit(1);
             }
@@ -269,7 +269,6 @@ int main(int argc, char *argv[])
     
     /* listen for PS requests */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-ps", "0.1", "alpha",
-                                                              ORCM_PNP_SYS_CHANNEL,
                                                               ORCM_PNP_TAG_PS,
                                                               ps_request))) {
         ORTE_ERROR_LOG(ret);
@@ -279,7 +278,7 @@ int main(int argc, char *argv[])
     /* announce our existence - this carries with it our rml uri and
      * our local node system info
      */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.announce("ORCM-VM", "0.1", "alpha", vm_tracker))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.announce("ORCM", "0.1", "alpha", vm_tracker))) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
@@ -373,8 +372,8 @@ static void vm_tracker(char *app, char *version, char *release,
     /* if this isn't something I launched, ignore it */
     if (ORTE_JOB_FAMILY(name->jobid) != ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid)) {
         /* if this is an orcmd that belongs to this user, then we have a problem */
-        if ((0 == strcasecmp(app, "orcmd") || (0 == strcasecmp(app, "orcm-vm"))) && uid == my_uid) {
-            orte_show_help("help-orcm-vm.txt", "preexisting-orcmd", true, nodename);
+        if ((0 == strcasecmp(app, "orcmd") || (0 == strcasecmp(app, "orcm"))) && uid == my_uid) {
+            orte_show_help("help-orcm.txt", "preexisting-orcmd", true, nodename);
             goto exitout;
         }
         return;

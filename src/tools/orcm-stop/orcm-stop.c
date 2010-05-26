@@ -279,7 +279,6 @@ int main(int argc, char *argv[])
     
     /* register to receive responses */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm", "0.1", "alpha",
-                                                              ORCM_PNP_SYS_CHANNEL,
                                                               ORCM_PNP_TAG_TOOL,
                                                               ack_recv))) {
         ORTE_ERROR_LOG(ret);

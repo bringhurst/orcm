@@ -267,14 +267,12 @@ int main(int argc, char *argv[])
 
     /* register to receive responses */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm", "0.1", "alpha",
-                                                              ORCM_PNP_SYS_CHANNEL,
                                                               ORCM_PNP_TAG_PS,
                                                               ps_recv))) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcmd", "0.1", "alpha",
-                                                              ORCM_PNP_SYS_CHANNEL,
                                                               ORCM_PNP_TAG_PS,
                                                               ps_recv))) {
         ORTE_ERROR_LOG(ret);
@@ -312,10 +310,8 @@ int main(int argc, char *argv[])
  cleanup:
     /* cancel the recvs */
     orcm_pnp.deregister_input("orcm", "0.1", "alpha",
-                              ORCM_PNP_SYS_CHANNEL,
                               ORCM_PNP_TAG_PS);
     orcm_pnp.deregister_input("orcmd", "0.1", "alpha",
-                              ORCM_PNP_SYS_CHANNEL,
                               ORCM_PNP_TAG_PS);
     
     OBJ_DESTRUCT(&lock);

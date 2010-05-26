@@ -483,7 +483,6 @@ int main(int argc, char *argv[])
     
     /* register an input to hear our peers */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("ORCMD", "0.1", "alpha",
-                                                              ORCM_PNP_GROUP_CHANNEL,
                                                               ORCM_PNP_TAG_WILDCARD, recv_input))) {
         ORTE_ERROR_LOG(ret);
         orte_trigger_event(&orte_exit);
@@ -491,7 +490,6 @@ int main(int argc, char *argv[])
 
     /* register an input to recv commands from tools */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer(NULL, NULL, NULL,
-                                                              ORCM_PNP_SYS_CHANNEL,
                                                               ORCM_PNP_TAG_COMMAND,
                                                               recv_input))) {
         ORTE_ERROR_LOG(ret);
@@ -500,7 +498,6 @@ int main(int argc, char *argv[])
     
     /* listen for PS requests */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-ps", "0.1", "alpha",
-                                                              ORCM_PNP_SYS_CHANNEL,
                                                               ORCM_PNP_TAG_PS,
                                                               ps_request))) {
         ORTE_ERROR_LOG(ret);

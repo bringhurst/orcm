@@ -8,9 +8,9 @@
 # $HEADER$
 #
 
-dist_pkgdata_DATA = help-orcm.txt
+dist_pkgdata_DATA = help-orcm-sched.txt
 
-bin_PROGRAMS = orcm
-orcm_SOURCES = orcm.c
-orcm_DEPENDENCIES = $(top_builddir)/src/libopenrcm.la
-orcm_LDADD = $(orcm_DEPENDENCIES) -lopen-rte
+bin_PROGRAMS = orcm-sched
+orcm_sched_SOURCES = orcm-sched.c
+orcm_sched_DEPENDENCIES = $(top_builddir)/src/libopenrcm.la
+orcm_sched_LDADD = $(orcm_sched_DEPENDENCIES) -lopen-rte

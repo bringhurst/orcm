@@ -10,19 +10,19 @@
 # This is the US/English help file for Open Resilient Cluster Manager
 #
 [usage]
-orcm-vm [OPTIONS]
-  Open Resilient Cluster Manager Boot Virtual Machine Utility
+orcm [OPTIONS]
+  Open Resilient Cluster Manager
 
 %s
 #
-[orcm-vm:write_file]
+[orcm:write_file]
 %s was unable to open a file to printout %s as requested. The file
 name given was:
 
 File: %s
 #
 [preexisting-orcmd]
-orcm-vm has detected the existence of another daemon already running
+orcm has detected the existence of another daemon already running
 under your user id on node %s.
 
 Please "kill -9" any pre-existing daemons and try again.

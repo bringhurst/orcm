@@ -10,7 +10,7 @@
 
 SUBDIRS = \
 	orcm \
-        orcm-vm \
+        orcm-sched \
 	orcm-start \
 	orcm-stop \
 	orcm-ps \
