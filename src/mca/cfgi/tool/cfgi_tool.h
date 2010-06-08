@@ -24,7 +24,7 @@ typedef struct {
     char *tool;
 } orcm_cfgi_tool_component_t;
 
-extern orcm_cfgi_tool_component_t mca_cfgi_tool_component;
-extern orcm_cfgi_base_module_t orcm_cfgi_tool_module;
+ORCM_DECLSPEC extern orcm_cfgi_tool_component_t mca_orcm_cfgi_tool_component;
+ORCM_DECLSPEC extern orcm_cfgi_base_module_t orcm_cfgi_tool_module;
 
 #endif /* CFGI_TOOL_H */

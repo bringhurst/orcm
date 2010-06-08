@@ -385,16 +385,6 @@ print "Open RCM autogen
 
 my $ret;
 
-# Sanity check
-if (! -d ".svn" && ! -d ".hg") {
-    print("
-
-This doesn't look like a developer copy of ORCM.  You probably do not
-want to run autogen.pl - it is normally not needed for a release
-source tree.  Giving you 5 seconds to reconsider and kill me.\n\n");
-    sleep(5);
-}
-
 # figure out if we're at the top level of the OMPI tree, a component's
 # top-level directory, or somewhere else.
 if (! (-f "VERSION" && -f "configure.ac" && -f $topdir_file)) {

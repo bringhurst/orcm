@@ -205,9 +205,9 @@ make_tarball() {
     #
     # Autogen
     #
-    echo "*** Running autogen.sh..."
+    echo "*** Running autogen.pl..."
     rm -f success
-    (./autogen.sh 2>&1 && touch success) | tee auto.out
+    (./autogen.pl 2>&1 && touch success) | tee auto.out
     if test ! -f success; then
         echo "Autogen failed.  Aborting"
         exit 1

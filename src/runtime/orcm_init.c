@@ -115,15 +115,6 @@ int orcm_init(orcm_proc_type_t flags)
         error = "pnp_select";
         goto error;
     }
-    /* setup the leader framework */
-    if (ORCM_SUCCESS != (ret = orcm_leader_base_open())) {
-        error = "pnp_open";
-        goto error;
-    }
-    if (ORCM_SUCCESS != (ret = orcm_leader_base_select())) {
-        error = "pnp_select";
-        goto error;
-    }
 
     trap_signals();
 
@@ -214,7 +205,6 @@ static void just_quit(int fd, short flags, void*arg)
     /* cleanup and leave */
     orcm_finalize();
     
-    fprintf(stderr, "EXIT STATUS: %d\n", orte_exit_status);
     exit(orte_exit_status);
 }
 

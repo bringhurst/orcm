@@ -13,7 +13,9 @@ AM_CPPFLAGS = $(orcm_cfgi_confd_CPPFLAGS)
 sources = \
         cfgi_confd.h \
         cfgi_confd.c \
-        cfgi_confd_component.c
+        cfgi_confd_component.c \
+	q_confd.h \
+	q_confd.c
 
 # Make the output library in this directory, and name it either
 # mca_<project>_<type>_<name>.la (for DSO builds) or
@@ -35,9 +37,9 @@ mcacomponentdir = $(pkglibdir)
 mcacomponent_LTLIBRARIES = $(component)
 mca_orcm_cfgi_confd_la_SOURCES = $(component_sources)
 mca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
-mca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBADD)
+mca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS)
 
 noinst_LTLIBRARIES = $(lib)
 libmca_orcm_cfgi_confd_la_SOURCES = $(lib_sources)
 libmca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
-libmca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBADD)
+libmca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS)

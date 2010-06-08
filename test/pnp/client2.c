@@ -28,19 +28,21 @@
 #include "mca/pnp/pnp.h"
 #include "runtime/runtime.h"
 
-#define ORCM_TEST_CLIENT_SERVER_TAG     15
-#define ORCM_TEST_CLIENT_CLIENT_TAG     16
+#define ORCM_TEST_CLIENT_SERVER_TAG     110
+#define ORCM_TEST_CLIENT_CLIENT_TAG     120
 
 static void send_data(int fd, short flags, void *arg);
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
-                       struct iovec *msg, int count,
+                       opal_buffer_t *buffer,
                        void *cbdata);
+static void found_channel(char *app, char *version, char *release,
+                          orcm_pnp_channel_t channel);
 
 static int32_t flag=0;
 static int msg_num;
-static orcm_pnp_channel_t peer;
+static orcm_pnp_channel_t peer = ORCM_PNP_INVALID_CHANNEL;
 
 int main(int argc, char* argv[])
 {
@@ -63,15 +65,14 @@ int main(int argc, char* argv[])
     }
     
     /* for this application, register an input to hear direct responses */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("SERVER", "1.0", "alpha",
-                                                      ORCM_PNP_GROUP_CHANNEL,
-                                                      ORCM_TEST_CLIENT_SERVER_TAG, recv_input))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input_buffer("client", "2.0", "alpha",
+                                                             ORCM_TEST_CLIENT_SERVER_TAG, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
     
     /* open a channel to any client 1.0 peers */
-    if (ORCM_PNP_INVALID_CHANNEL == (peer = orcm_pnp.open_channel("client", "1.0", NULL))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.open_channel("client", "1.0", NULL, found_channel))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -79,15 +80,9 @@ int main(int argc, char* argv[])
     /* init the msg number */
     msg_num = 0;
     
-    /* wake up every delay microseconds and send something */
-    delay = (ORTE_PROC_MY_NAME->vpid + 1);
-    opal_output(0, "sending data every %d seconds", delay);
-    tp.tv_sec = delay;
-    tp.tv_nsec = 0;
-    while (1) {
-        nanosleep(&tp, NULL);
-        send_data(0, 0, NULL);
-    }
+    /* wake up every x seconds send something */
+    ORTE_TIMER_EVENT(ORTE_PROC_MY_NAME->vpid + 1, 0, send_data);
+    opal_event_dispatch();
 
 cleanup:
     orcm_finalize();
@@ -113,7 +108,9 @@ static void send_data(int fd, short flags, void *arg)
     int rc;
     int j, n;
     struct iovec *msg;
-    
+    opal_event_t *tmp = (opal_event_t*)arg;
+    struct timeval now;
+
     count = ORTE_PROC_MY_NAME->vpid+1;
     msg = (struct iovec*)malloc(count * sizeof(struct iovec));
     for (j=0; j < count; j++) {
@@ -127,26 +124,34 @@ static void send_data(int fd, short flags, void *arg)
     }
     
     /* output the values */
-    opal_output(0, "%s sending data for msg number %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
-#if 0
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_CHANNEL, NULL,
-                                                 ORCM_PNP_TAG_OUTPUT, msg, count, NULL, NULL))) {
-        ORTE_ERROR_LOG(rc);
-    }
-#endif
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(peer, NULL,
-                                                 ORCM_TEST_CLIENT_CLIENT_TAG, msg, count, cbfunc, NULL))) {
-        ORTE_ERROR_LOG(rc);
+    if (ORCM_PNP_INVALID_CHANNEL == peer) {
+        opal_output(0, "%s sending data for msg number %d on GROUP output", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
+        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_CHANNEL, NULL,
+                                                     ORCM_PNP_TAG_OUTPUT, msg, count, NULL, NULL))) {
+            ORTE_ERROR_LOG(rc);
+        }
+    } else {
+        opal_output(0, "%s sending data for msg number %d to client app", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
+        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(peer, NULL,
+                                                     ORCM_TEST_CLIENT_CLIENT_TAG, msg, count, cbfunc, NULL))) {
+            ORTE_ERROR_LOG(rc);
+        }
     }
     
     /* increment the msg number */
     msg_num++;
+    
+    /* reset the timer */
+    now.tv_sec = ORTE_PROC_MY_NAME->vpid + 1;
+    now.tv_usec = 0;
+    opal_evtimer_add(tmp, &now);
+    
 }
 
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
-                       struct iovec *msg, int count,
+                       opal_buffer_t *buffer,
                        void *cbdata)
 {
     opal_output(0, "%s recvd message from %s on tag %d",
@@ -154,3 +159,11 @@ static void recv_input(int status,
                 ORTE_NAME_PRINT(sender), (int)tag);
 }
 
+static void found_channel(char *app, char *version, char *release,
+                          orcm_pnp_channel_t channel)
+{
+    opal_output(0, "%s found channel %d for %s:%s:%s",
+                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                channel, app, version, release);
+    peer = channel;
+}

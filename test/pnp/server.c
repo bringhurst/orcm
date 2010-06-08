@@ -19,11 +19,12 @@
 #include "orte/util/name_fns.h"
 #include "orte/runtime/orte_globals.h"
 
+#include "orte/mca/rml/rml.h"
+
 #include "mca/pnp/pnp.h"
-#include "mca/leader/leader.h"
 #include "runtime/runtime.h"
 
-#define ORCM_TEST_CLIENT_SERVER_TAG     15
+#define ORCM_TEST_CLIENT_SERVER_TAG     110
 
 /* our message recv function */
 static void recv_input(int status,
@@ -32,11 +33,6 @@ static void recv_input(int status,
                        struct iovec *msg,
                        int count,
                        void *cbdata);
-
-static void ldr_failed(char *app,
-                       char *version,
-                       char *release,
-                       int sibling);
 
 int main(int argc, char* argv[])
 {
@@ -61,7 +57,6 @@ int main(int argc, char* argv[])
     
     /* we want to listen to all versions and releases of the CLIENT app */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("CLIENT", NULL, NULL,
-                                                      ORCM_PNP_GROUP_CHANNEL,
                                                       ORCM_PNP_TAG_OUTPUT, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
@@ -102,10 +97,11 @@ static void recv_input(int status,
     int32_t i, j, n, *data, *ptr;
     struct iovec *response;
     int rc;
+    opal_buffer_t buf;
     
     opal_output(0, "%s recvd message from client %s on tag %d with %d iovecs",
                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                ORTE_VPID_PRINT(sender->vpid), (int)tag, count);
+                ORTE_NAME_PRINT(sender), (int)tag, count);
     
     /* loop over the iovecs */
     for (i=0; i < count; i++) {
@@ -145,17 +141,11 @@ static void recv_input(int status,
         opal_output(0, "%s sending response to %s for msg number %d",
                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                     ORTE_NAME_PRINT(sender), data[0]);
-        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_CHANNEL, sender,
-                                                     ORCM_TEST_CLIENT_SERVER_TAG, msg, count, cbfunc, NULL))) {
+        OBJ_CONSTRUCT(&buf, opal_buffer_t);
+        if (ORCM_SUCCESS != (rc = orcm_pnp.output_buffer(ORCM_PNP_GROUP_CHANNEL, sender,
+                                                         ORCM_TEST_CLIENT_SERVER_TAG, &buf))) {
             ORTE_ERROR_LOG(rc);
         }
+        OBJ_DESTRUCT(&buf);
     }
-}
-
-static void ldr_failed(char *app,
-                       char *version,
-                       char *release,
-                       int sibling)
-{
-    opal_output(0, "%s LEADER FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
 }

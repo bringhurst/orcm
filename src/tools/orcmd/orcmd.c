@@ -481,21 +481,14 @@ int main(int argc, char *argv[])
     nid->daemon = ORTE_PROC_MY_NAME->vpid;
     nid->index = opal_pointer_array_add(&orte_nidmap, nid);
     
-    /* register an input to hear our peers */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("ORCMD", "0.1", "alpha",
-                                                              ORCM_PNP_TAG_WILDCARD, recv_input))) {
-        ORTE_ERROR_LOG(ret);
-        orte_trigger_event(&orte_exit);
-    }
-
-    /* register an input to recv commands from tools */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer(NULL, NULL, NULL,
-                                                              ORCM_PNP_TAG_COMMAND,
+    /* register an input to hear cmds sent to us */
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm", "0.1", "alpha",
+                                                              ORCM_PNP_TAG_WILDCARD,
                                                               recv_input))) {
         ORTE_ERROR_LOG(ret);
         orte_trigger_event(&orte_exit);
     }
-    
+
     /* listen for PS requests */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-ps", "0.1", "alpha",
                                                               ORCM_PNP_TAG_PS,

@@ -355,7 +355,6 @@ int main(int argc, char *argv[])
 
     /* indicate the scheduler to be used */
     jfam = master & 0x0000ffff;
-    opal_output(0, "JOB FAMILY %04x", jfam);
     
     opal_dss.pack(&buf, &jfam, 1, OPAL_UINT16);
     
@@ -425,15 +424,13 @@ int main(int argc, char *argv[])
     opal_dss.pack(&buf, &cmd, 1, OPAL_STRING);
     free(cmd);
     
-    opal_output(0, "sending command");
-    if (ORCM_SUCCESS != (ret = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL,
+    if (ORCM_SUCCESS != (ret = orcm_pnp.output_buffer(ORCM_PNP_GROUP_CHANNEL,
                                                       NULL, ORCM_PNP_TAG_TOOL,
                                                       &buf))) {
         ORTE_ERROR_LOG(ret);
     }
     
     OBJ_DESTRUCT(&buf);
-    opal_output(0, "waiting for ack");
     
     /* now wait for ack */
     OPAL_ACQUIRE_THREAD(&lock, &cond, &waiting);

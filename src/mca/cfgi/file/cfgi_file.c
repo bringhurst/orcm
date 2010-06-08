@@ -63,7 +63,7 @@ static void file_read_config(void)
     char *app;
     int num_apps;
     
-    fp = fopen(mca_cfgi_file_component.file, "r");
+    fp = fopen(mca_orcm_cfgi_file_component.file, "r");
     if (NULL == fp) {
         ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
         return;

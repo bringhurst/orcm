@@ -31,6 +31,34 @@ BEGIN_C_DECLS
                  (NULL == (r)) ? "@" : (r));    \
     } while(0);
 
+#define ORCM_PNP_DECOMPOSE_STRING_ID(sid, a, v, r)  \
+    do {                                            \
+        char *c, *c2, *t;                           \
+        t = strdup((sid));                          \
+        c = strchr(t, ':');                         \
+        *c = '\0';                                  \
+        if (0 == strcmp(t, "@")) {                  \
+            (a) = NULL;                             \
+        } else {                                    \
+            (a) = strdup(t);                        \
+        }                                           \
+        c++;                                        \
+        c2 = strchr(c, ':');                        \
+        *c2 = '\0';                                 \
+        if (0 == strcmp(c, "@")) {                  \
+            (v) = NULL;                             \
+        } else {                                    \
+            (v) = strdup(c);                        \
+        }                                           \
+        c2++;                                       \
+        if (0 == strcmp(c2, "@")) {                 \
+            (r) = NULL;                             \
+        } else {                                    \
+            (r) = strdup(c2);                       \
+        }                                           \
+        free(t);                                    \
+    } while(0);
+
 /*
  * globals that might be needed
  */

@@ -173,7 +173,7 @@ static int update_state(orte_jobid_t job,
         /* increment restarts */
         pdata->restarts++;
         /* have we exceeded #restarts? */
-        if (jdata->max_local_restarts < pdata->restarts) {
+        if (app->max_local_restarts < pdata->restarts) {
             opal_output(0, "Max restarts for proc %s of app %s has been exceeded - process will not be restarted",
                         ORTE_NAME_PRINT(proc), app->app);
             return ORTE_SUCCESS;

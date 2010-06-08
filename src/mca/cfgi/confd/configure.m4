@@ -30,10 +30,6 @@ AC_DEFUN([MCA_orcm_cfgi_confd_CONFIG],[
           [orcm_check_confd_happy="no"],
           [orcm_check_confd_happy="yes"])
 
-    orcm_check_confd_save_CPPFLAGS="$CPPFLAGS"
-    orcm_check_confd_save_LDFLAGS="$LDFLAGS"
-    orcm_check_confd_save_LIBS="$LIBS"
-
     AS_IF([test "$orcm_check_confd_happy" = "yes"],
           [ORCM_CHECK_PACKAGE([orcm_cfgi_confd],
                               [confd.h],
@@ -45,9 +41,9 @@ AC_DEFUN([MCA_orcm_cfgi_confd_CONFIG],[
                               [orcm_check_confd_happy=yes],
                               [orcm_check_confd_happy=no])])
 
-    CPPFLAGS="$orcm_check_confd_save_CPPFLAGS"
-    LDFLAGS="$orcm_check_confd_save_LDFLAGS"
-    LIBS="$orcm_check_confd_save_LIBS"
+    AC_SUBST(orcm_cfgi_confd_CPPFLAGS)
+    AC_SUBST(orcm_cfgi_confd_LDFLAGS)
+    AC_SUBST(orcm_cfgi_confd_LIBS)
 
     AS_IF([test "$orcm_check_confd_happy" = "yes"],
           [$1],

@@ -8,6 +8,7 @@ SUBDIRS = src
 
 EXTRA_DIST = \
         VERSION \
+        autogen.pl \
         config/openrcm_get_version.sh \
         test/Makefile \
         test/pnp/client.c \

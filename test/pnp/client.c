@@ -28,14 +28,14 @@
 #include "mca/pnp/pnp.h"
 #include "runtime/runtime.h"
 
-#define ORCM_TEST_CLIENT_SERVER_TAG     15
-#define ORCM_TEST_CLIENT_CLIENT_TAG     16
+#define ORCM_TEST_CLIENT_SERVER_TAG     110
+#define ORCM_TEST_CLIENT_CLIENT_TAG     120
 
 static void send_data(int fd, short flags, void *arg);
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
-                       struct iovec *msg, int count,
+                       opal_buffer_t *buffer,
                        void *cbdata);
 
 static int32_t flag=0;
@@ -44,7 +44,7 @@ static int msg_num;
 int main(int argc, char* argv[])
 {
     struct timespec tp;
-    int rc, delay;
+    int rc;
 
     /* init the ORCM library - this includes registering
      * a multicast recv so we hear announcements and
@@ -61,18 +61,9 @@ int main(int argc, char* argv[])
         goto cleanup;
     }
     
-    /* for this application, register an input to hear direct responses */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("SERVER", "1.0", "alpha",
-                                                      ORCM_PNP_GROUP_CHANNEL,
-                                                      ORCM_TEST_CLIENT_SERVER_TAG, recv_input))) {
-        ORTE_ERROR_LOG(rc);
-        goto cleanup;
-    }
-    
     /* for this application, register to recv anything sent to my input  */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("client", "1.0", NULL,
-                                                      ORCM_PNP_GROUP_CHANNEL,
-                                                      ORCM_PNP_TAG_WILDCARD, recv_input))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input_buffer("client", "1.0", "alpha",
+                                                             ORCM_PNP_TAG_WILDCARD, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -80,15 +71,9 @@ int main(int argc, char* argv[])
     /* init the msg number */
     msg_num = 0;
     
-    /* wake up every delay microseconds and send something */
-    delay = (ORTE_PROC_MY_NAME->vpid + 1);
-    opal_output(0, "sending data every %d seconds", delay);
-    tp.tv_sec = delay;
-    tp.tv_nsec = 0;
-    while (1) {
-        nanosleep(&tp, NULL);
-        send_data(0, 0, NULL);
-    }
+    /* wake up every x seconds send something */
+    ORTE_TIMER_EVENT(2, 0, send_data);
+    opal_event_dispatch();
 
 cleanup:
     orcm_finalize();
@@ -114,7 +99,9 @@ static void send_data(int fd, short flags, void *arg)
     int rc;
     int j, n;
     struct iovec *msg;
-    
+    opal_event_t *tmp = (opal_event_t*)arg;
+    struct timeval now;
+
     count = ORTE_PROC_MY_NAME->vpid+1;
     msg = (struct iovec*)malloc(count * sizeof(struct iovec));
     for (j=0; j < count; j++) {
@@ -136,12 +123,18 @@ static void send_data(int fd, short flags, void *arg)
     
     /* increment the msg number */
     msg_num++;
+    
+    /* reset the timer */
+    now.tv_sec = 2;
+    now.tv_usec = 0;
+    opal_evtimer_add(tmp, &now);
+    
 }
 
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
-                       struct iovec *msg, int count,
+                       opal_buffer_t *buffer,
                        void *cbdata)
 {
     opal_output(0, "%s recvd message from %s on tag %d",

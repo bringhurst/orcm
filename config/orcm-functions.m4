@@ -95,14 +95,6 @@ dnl #######################################################################
 
 AC_DEFUN([ORCM_BASIC_SETUP],[
 #
-# Save some stats about this build
-#
-
-ORCM_CONFIGURE_USER="`whoami`"
-ORCM_CONFIGURE_HOST="`hostname | head -n 1`"
-ORCM_CONFIGURE_DATE="`date`"
-
-#
 # Make automake clean emacs ~ files for "make clean"
 #
 

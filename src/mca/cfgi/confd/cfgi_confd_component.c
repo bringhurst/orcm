@@ -73,15 +73,10 @@ int orcm_cfgi_confd_component_close(void)
 
 int orcm_cfgi_confd_component_query(mca_base_module_t **module, int *priority)
 {
-    if (NULL != mca_orcm_cfgi_confd_component.confd) {
-        *module = (mca_base_module_t*)&orcm_cfgi_confd_module;
-        *priority = 100;
-        return ORCM_SUCCESS;
-    }
-    
-    *module = NULL;
-    *priority = 0;
-    return ORCM_ERROR;
+    *module = (mca_base_module_t*)&orcm_cfgi_confd_module;
+    *priority = 100;
+    return ORCM_SUCCESS;
+
 }
 
 int orcm_cfgi_confd_component_register(void)

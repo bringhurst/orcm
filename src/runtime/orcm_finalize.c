@@ -34,7 +34,6 @@ int orcm_finalize(void)
 
     if (ORTE_PROC_IS_APP) {
         orcm_pnp_base_close();
-        orcm_leader_base_close(); 
     }
 
     orte_finalize();

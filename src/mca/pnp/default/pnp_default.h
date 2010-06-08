@@ -12,6 +12,10 @@
 
 #include "openrcm.h"
 
+#include "opal/class/opal_list.h"
+
+#include "mca/pnp/pnp_types.h"
+
 /* Functions in the pnp default component */
 
 int orcm_pnp_default_component_open(void);
@@ -19,7 +23,7 @@ int orcm_pnp_default_component_close(void);
 int orcm_pnp_default_component_query(mca_base_module_2_0_0_t **module, int *priority);
 int orcm_pnp_default_component_register(void);
 
-extern orcm_pnp_base_component_t mca_pnp_default_component;
-extern orcm_pnp_base_module_t orcm_pnp_default_module;
+ORCM_DECLSPEC extern orcm_pnp_base_component_t mca_orcm_pnp_default_component;
+ORCM_DECLSPEC extern orcm_pnp_base_module_t orcm_pnp_default_module;
 
 #endif /* PNP_DEFAULT_H */

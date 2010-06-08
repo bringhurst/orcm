@@ -1,0 +1,32 @@
+1. set environ to support confd by sourcing confdrc or confdrc.tcsh from the confd install dir
+
+2. compile the yang:  confdc -c foo.yang
+    this generates a foo.fxs file
+
+3. generate the c-header file:
+     confdc --emit-h foo-confd.h foo.fxs
+
+4. start the confd daemon
+    confd --addloadpath .
+
+orcm
+ install
+  app bgp
+   exec bgp-client
+    path foo/bar/bgp-client.exe
+   !
+   exec bgp-shim
+    path foo/bar/jeff/bgp-shim.exe
+   !
+  !
+ !
+ run
+  app-instance debug-bgp
+   app-name bgp
+   exec bgp-client
+    replicas 3
+   !
+  !
+ !
+!
+
