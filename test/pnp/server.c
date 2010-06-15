@@ -30,8 +30,8 @@
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
-                       struct iovec *msg,
-                       int count,
+                       struct iovec *msg, int count,
+                       opal_buffer_t *buf,
                        void *cbdata);
 
 int main(int argc, char* argv[])
@@ -55,9 +55,10 @@ int main(int argc, char* argv[])
         goto cleanup;
     }
     
-    /* we want to listen to all versions and releases of the CLIENT app */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("CLIENT", NULL, NULL,
-                                                      ORCM_PNP_TAG_OUTPUT, recv_input))) {
+    /* we want to listen to output from all versions and releases of the CLIENT app */
+    if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("CLIENT", NULL, NULL,
+                                                        ORCM_PNP_GROUP_OUTPUT_CHANNEL,
+                                                        ORCM_PNP_TAG_OUTPUT, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -73,8 +74,10 @@ cleanup:
     return rc;
 }
 
-static void cbfunc(int status, orte_process_name_t *name, orcm_pnp_tag_t tag,
-                   struct iovec *msg, int count, void *cbdata)
+static void cbfunc(int status, orte_process_name_t *name,
+                   orcm_pnp_tag_t tag,
+                   struct iovec *msg, int count,
+                   opal_buffer_t *buf, void *cbdata)
 {
     int i;
     
@@ -90,9 +93,8 @@ static void cbfunc(int status, orte_process_name_t *name, orcm_pnp_tag_t tag,
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
-                       struct iovec *msg,
-                       int count,
-                       void *cbdata)
+                       struct iovec *msg, int count,
+                       opal_buffer_t *buffer, void *cbdata)
 {
     int32_t i, j, n, *data, *ptr;
     struct iovec *response;
@@ -142,8 +144,9 @@ static void recv_input(int status,
                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                     ORTE_NAME_PRINT(sender), data[0]);
         OBJ_CONSTRUCT(&buf, opal_buffer_t);
-        if (ORCM_SUCCESS != (rc = orcm_pnp.output_buffer(ORCM_PNP_GROUP_CHANNEL, sender,
-                                                         ORCM_TEST_CLIENT_SERVER_TAG, &buf))) {
+        if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_GROUP_OUTPUT_CHANNEL, sender,
+                                                  ORCM_TEST_CLIENT_SERVER_TAG,
+                                                  NULL, 0, &buf))) {
             ORTE_ERROR_LOG(rc);
         }
         OBJ_DESTRUCT(&buf);

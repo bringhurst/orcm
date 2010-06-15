@@ -35,6 +35,7 @@ static void send_data(int fd, short flags, void *arg);
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
+                       struct iovec *msg, int count,
                        opal_buffer_t *buffer,
                        void *cbdata);
 static void found_channel(char *app, char *version, char *release,
@@ -58,21 +59,22 @@ int main(int argc, char* argv[])
         exit(1);
     }
     
-    /* announce our existence */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("CLIENT", "2.0", "beta", NULL))) {
-        ORTE_ERROR_LOG(rc);
-        goto cleanup;
-    }
-    
-    /* for this application, register an input to hear direct responses */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input_buffer("client", "2.0", "alpha",
-                                                             ORCM_TEST_CLIENT_SERVER_TAG, recv_input))) {
+    /* for this application, register to hear messages sent to our input  */
+    if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("client", "2.0", "beta",
+                                                        ORCM_PNP_GROUP_INPUT_CHANNEL,
+                                                        ORCM_TEST_CLIENT_SERVER_TAG, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
     
     /* open a channel to any client 1.0 peers */
     if (ORCM_SUCCESS != (rc = orcm_pnp.open_channel("client", "1.0", NULL, found_channel))) {
+        ORTE_ERROR_LOG(rc);
+        goto cleanup;
+    }
+    
+    /* announce our existence */
+    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("CLIENT", "2.0", "beta", NULL))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -89,8 +91,10 @@ cleanup:
     return rc;
 }
 
-static void cbfunc(int status, orte_process_name_t *name, orcm_pnp_tag_t tag,
-                   struct iovec *msg, int count, void *cbdata)
+static void cbfunc(int status, orte_process_name_t *name,
+                   orcm_pnp_tag_t tag,
+                   struct iovec *msg, int count,
+                   opal_buffer_t *buf, void *cbdata)
 {
     int i;
     
@@ -126,14 +130,16 @@ static void send_data(int fd, short flags, void *arg)
     /* output the values */
     if (ORCM_PNP_INVALID_CHANNEL == peer) {
         opal_output(0, "%s sending data for msg number %d on GROUP output", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
-        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_CHANNEL, NULL,
-                                                     ORCM_PNP_TAG_OUTPUT, msg, count, NULL, NULL))) {
+        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, NULL,
+                                                     ORCM_PNP_TAG_OUTPUT, msg, count,
+                                                     NULL, cbfunc, NULL))) {
             ORTE_ERROR_LOG(rc);
         }
     } else {
-        opal_output(0, "%s sending data for msg number %d to client app", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
+        opal_output(0, "%s sending data for msg number %d to client 1.0 directly", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
         if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(peer, NULL,
-                                                     ORCM_TEST_CLIENT_CLIENT_TAG, msg, count, cbfunc, NULL))) {
+                                                     ORCM_TEST_CLIENT_CLIENT_TAG, msg, count,
+                                                     NULL, cbfunc, NULL))) {
             ORTE_ERROR_LOG(rc);
         }
     }
@@ -151,6 +157,7 @@ static void send_data(int fd, short flags, void *arg)
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
+                       struct iovec *msg, int count,
                        opal_buffer_t *buffer,
                        void *cbdata)
 {

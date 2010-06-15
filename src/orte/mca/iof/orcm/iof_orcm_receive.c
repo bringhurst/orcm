@@ -55,6 +55,8 @@ static uint16_t dfam;
 void orte_iof_orcm_recv(int status,
                         orte_process_name_t *sender,
                         orcm_pnp_tag_t tag,
+                        struct iovec *mg,
+                        int cnt,
                         opal_buffer_t *buffer,
                         void *cbdata)
 {

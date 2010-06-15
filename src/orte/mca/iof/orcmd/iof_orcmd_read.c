@@ -52,6 +52,8 @@
 static void send_cb(int status,
                     orte_process_name_t *sender,
                     orcm_pnp_tag_t tag,
+                    struct iovec *msg,
+                    int cnt,
                     opal_buffer_t *buf,
                     void *cbdata)
 {
@@ -166,9 +168,9 @@ void orte_iof_orcmd_read_handler(int fd, short event, void *cbdata)
                          "%s iof:orcmd:read handler sending %d bytes",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), numbytes));
     
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output_buffer_nb(ORCM_PNP_SYS_CHANNEL, NULL,
-                                                        ORCM_PNP_TAG_IOF, buf,
-                                                        send_cb, NULL))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL, NULL,
+                                                 ORCM_PNP_TAG_IOF, NULL, 0, buf,
+                                                 send_cb, NULL))) {
         ORTE_ERROR_LOG(rc);
     }
     

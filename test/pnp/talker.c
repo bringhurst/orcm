@@ -48,12 +48,8 @@ int main(int argc, char* argv[])
     /* for this application, there are no desired
      * inputs, so we don't register any
      */
-    tp.tv_sec = 0;
-    tp.tv_nsec = 100000000*(2*ORTE_PROC_MY_NAME->vpid + 1);
-    while (1) {
-        nanosleep(&tp, NULL);
-        send_data(0, 0, NULL);
-    }
+    ORTE_TIMER_EVENT(ORTE_PROC_MY_NAME->vpid + 1, 0, send_data);
+    opal_event_dispatch();
 
 cleanup:
     orcm_finalize();
@@ -61,7 +57,9 @@ cleanup:
 }
 
 static void cbfunc(int status, orte_process_name_t *name,
-                   orcm_pnp_tag_t tag, opal_buffer_t *buf, void *cbdata)
+                   orcm_pnp_tag_t tag,
+                   struct iovec *msg, int count,
+                   opal_buffer_t *buf, void *cbdata)
 {
     OBJ_RELEASE(buf);
 }
@@ -85,10 +83,15 @@ static void send_data(int fd, short flags, void *arg)
     }
     /* output the values */
     opal_output(0, "%s sending msg number %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), counter);
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output_buffer_nb(ORCM_PNP_GROUP_CHANNEL, NULL,
-                                                        ORCM_PNP_TAG_OUTPUT, buf, cbfunc, NULL))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, NULL,
+                                                 ORCM_PNP_TAG_OUTPUT, NULL, 0, buf, cbfunc, NULL))) {
         ORTE_ERROR_LOG(rc);
     }
     counter++;
+    
+    /* reset the timer */
+    now.tv_sec = ORTE_PROC_MY_NAME->vpid + 1;
+    now.tv_usec = 0;
+    opal_evtimer_add(tmp, &now);
 }
 

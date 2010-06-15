@@ -141,6 +141,7 @@ static orte_job_t *daemons;
 static void vm_commands(int status,
                         orte_process_name_t *sender,
                         orcm_pnp_tag_t tag,
+                        struct iovec *msg, int count,
                         opal_buffer_t *buffer,
                         void *cbdata);
 
@@ -150,6 +151,7 @@ static void vm_tracker(char *app, char *version, char *release,
 static void ps_request(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
+                       struct iovec *msg, int count,
                        opal_buffer_t *buffer,
                        void *cbdata);
 
@@ -376,17 +378,19 @@ int main(int argc, char *argv[])
     }
     
     /* listen for DVM commands */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm", "0.1", "alpha",
-                                                              ORCM_PNP_TAG_COMMAND,
-                                                              vm_commands))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm", "0.1", "alpha",
+                                                         ORCM_PNP_SYS_CHANNEL,
+                                                         ORCM_PNP_TAG_COMMAND,
+                                                         vm_commands))) {
         ORTE_ERROR_LOG(ret);
         goto xtra_cleanup;
     }
     
     /* listen for PS requests */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-ps", "0.1", "alpha",
-                                                              ORCM_PNP_TAG_PS,
-                                                              ps_request))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-ps", "0.1", "alpha",
+                                                         ORCM_PNP_SYS_CHANNEL,
+                                                         ORCM_PNP_TAG_PS,
+                                                         ps_request))) {
         ORTE_ERROR_LOG(ret);
         goto xtra_cleanup;
     }
@@ -518,6 +522,7 @@ static void vm_tracker(char *app, char *version, char *release,
 static void vm_commands(int status,
                         orte_process_name_t *sender,
                         orcm_pnp_tag_t tag,
+                        struct iovec *msg, int count,
                         opal_buffer_t *buffer,
                         void *cbdata)
 {
@@ -582,6 +587,7 @@ static void vm_commands(int status,
 static void ps_request(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
+                       struct iovec *msg, int count,
                        opal_buffer_t *buffer,
                        void *cbdata)
 {
@@ -637,9 +643,9 @@ pack:
     opal_dss.pack(&ans, ORTE_PROC_MY_NAME, 1, ORTE_NAME);
 
 respond:
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL,
-                                                     NULL, ORCM_PNP_TAG_PS,
-                                                     &ans))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL,
+                                              NULL, ORCM_PNP_TAG_PS,
+                                              NULL, 0, &ans))) {
         ORTE_ERROR_LOG(rc);
     }
     OBJ_DESTRUCT(&ans);

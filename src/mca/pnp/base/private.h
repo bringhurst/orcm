@@ -70,19 +70,21 @@ ORCM_DECLSPEC extern orcm_pnp_base_t orcm_pnp_base;
 
 typedef struct {
     opal_list_item_t super;
+    char *string_id;
     orcm_pnp_tag_t tag;
     orcm_pnp_callback_fn_t cbfunc;
-    orcm_pnp_callback_buffer_fn_t cbfunc_buf;
 } orcm_pnp_request_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_request_t);
 
 typedef struct {
     opal_object_t super;
     char *string_id;
-    orcm_pnp_channel_t channel;
+    orcm_pnp_channel_t output;
+    orcm_pnp_channel_t input;
     orcm_pnp_open_channel_cbfunc_t cbfunc;
     opal_pointer_array_t members;
-    opal_list_t requests;
+    opal_list_t input_recvs;
+    opal_list_t output_recvs;
 } orcm_pnp_triplet_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_triplet_t);
 
@@ -98,7 +100,6 @@ typedef struct {
     int count;
     orcm_pnp_callback_fn_t cbfunc;
     opal_buffer_t *buffer;
-    orcm_pnp_callback_buffer_fn_t cbfunc_buf;
     void *cbdata;
 } orcm_pnp_send_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_send_t);

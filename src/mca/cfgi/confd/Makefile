@@ -46,7 +46,7 @@ build_triplet = x86_64-apple-darwin10.3.0
 host_triplet = x86_64-apple-darwin10.3.0
 target_triplet = x86_64-apple-darwin10.3.0
 subdir = src/mca/cfgi/confd
-DIST_COMMON = $(srcdir)/Makefile.am $(srcdir)/Makefile.in
+DIST_COMMON = README $(srcdir)/Makefile.am $(srcdir)/Makefile.in
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/config/libtool.m4 \
 	$(top_srcdir)/config/ltoptions.m4 \
@@ -90,10 +90,11 @@ am__base_list = \
   sed '$$!N;$$!N;$$!N;$$!N;s/\n/ /g'
 am__installdirs = "$(DESTDIR)$(mcacomponentdir)"
 LTLIBRARIES = $(mcacomponent_LTLIBRARIES) $(noinst_LTLIBRARIES)
-libmca_orcm_cfgi_confd_la_DEPENDENCIES =
+am__DEPENDENCIES_1 =
+libmca_orcm_cfgi_confd_la_DEPENDENCIES = $(am__DEPENDENCIES_1)
 am__libmca_orcm_cfgi_confd_la_SOURCES_DIST = cfgi_confd.h cfgi_confd.c \
-	cfgi_confd_component.c
-am__objects_1 = cfgi_confd.lo cfgi_confd_component.lo
+	cfgi_confd_component.c q_confd.h q_confd.c
+am__objects_1 = cfgi_confd.lo cfgi_confd_component.lo q_confd.lo
 #am__objects_2 =  \
 #	$(am__objects_1)
 am_libmca_orcm_cfgi_confd_la_OBJECTS = $(am__objects_2)
@@ -107,9 +108,9 @@ libmca_orcm_cfgi_confd_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_CFLAGS) $(CFLAGS) $(libmca_orcm_cfgi_confd_la_LDFLAGS) \
 	$(LDFLAGS) -o $@
 #am_libmca_orcm_cfgi_confd_la_rpath =
-mca_orcm_cfgi_confd_la_DEPENDENCIES =
+mca_orcm_cfgi_confd_la_DEPENDENCIES = $(am__DEPENDENCIES_1)
 am__mca_orcm_cfgi_confd_la_SOURCES_DIST = cfgi_confd.h cfgi_confd.c \
-	cfgi_confd_component.c
+	cfgi_confd_component.c q_confd.h q_confd.c
 am__objects_3 = $(am__objects_1)
 am_mca_orcm_cfgi_confd_la_OBJECTS = $(am__objects_3)
 mca_orcm_cfgi_confd_la_OBJECTS = $(am_mca_orcm_cfgi_confd_la_OBJECTS)
@@ -166,10 +167,6 @@ CFLAGS = -DNDEBUG -g
 CONFIGURE_DEPENDENCIES = $(top_srcdir)/VERSION
 CPP = ortecc -E
 CPPFLAGS = -I$(top_srcdir) -I$(top_srcdir)/src -I$(top_srcdir)/src/include -I/Users/rhc/openmpi/build/include/openmpi 
-CXX = ortec++
-CXXCPP = ortec++ -E
-CXXDEPMODE = depmode=gcc3
-CXXFLAGS = -DNDEBUG -g 
 CYGPATH_W = echo
 DEFS = -DHAVE_CONFIG_H
 DEPDIR = .deps
@@ -237,17 +234,16 @@ NMEDIT = nmedit
 OBJDUMP = false
 OBJEXT = o
 OPENRCM_DATADIR = ${prefix}/share
-OPENRCM_SVN_R = r70:72
-OPENRCM_VERSION = 0.1a1r70:72
+OPENRCM_SVN_R = rexported
+OPENRCM_VERSION = 0.1a1
 OPENRCM_WRAPPER_EXTRA_CFLAGS = 
 OPENRCM_WRAPPER_EXTRA_CPPFLAGS = -I/Users/rhc/openmpi/build/include/openmpi -I/Users/rhc/cisco/build/include/openrcm/include -I/Users/rhc/cisco/build/include/openrcm
-OPENRCM_WRAPPER_EXTRA_CXXFLAGS = 
 OPENRCM_WRAPPER_EXTRA_INCLUDES = 
 OPENRCM_WRAPPER_EXTRA_LDFLAGS = -L/Users/rhc/openmpi/build/lib
 OPENRCM_WRAPPER_EXTRA_LIBS = 
 OPENRCM_WRAPPER_INCLUDEDIR = /Users/rhc/cisco/build/include
 OPENRCM_WRAPPER_LIBDIR = /Users/rhc/cisco/build/lib
-ORCM_CONFIGURE_DATE = Tue May 25 21:40:29 MDT 2010
+ORCM_CONFIGURE_DATE = Sat Jun 12 10:06:51 MDT 2010
 ORCM_CONFIGURE_HOST = Ralph
 ORCM_CONFIGURE_USER = rhc
 ORTE_INSTALL_PREFIX = /Users/rhc/openmpi/build
@@ -258,23 +254,22 @@ OTOOL64 = :
 PACKAGE = openrcm
 PACKAGE_BUGREPORT = rcastain@open-mpi.org
 PACKAGE_NAME = openrcm
-PACKAGE_STRING = openrcm 0.1a1r70:72
+PACKAGE_STRING = openrcm 0.1a1
 PACKAGE_TARNAME = openrcm
 PACKAGE_URL = 
-PACKAGE_VERSION = 0.1a1r70:72
+PACKAGE_VERSION = 0.1a1
 PATH_SEPARATOR = :
 RANLIB = ranlib
 SED = /opt/local/bin/gsed
 SET_MAKE = 
 SHELL = /bin/sh
 STRIP = strip
-VERSION = 0.1a1r70:72
+VERSION = 0.1a1
 abs_builddir = /Users/rhc/openrcm/orcm-trunk/src/mca/cfgi/confd
 abs_srcdir = /Users/rhc/openrcm/orcm-trunk/src/mca/cfgi/confd
 abs_top_builddir = /Users/rhc/openrcm/orcm-trunk
 abs_top_srcdir = /Users/rhc/openrcm/orcm-trunk
 ac_ct_CC = ortecc
-ac_ct_CXX = 
 ac_ct_DUMPBIN = 
 am__include = include
 am__leading_dot = .
@@ -311,6 +306,9 @@ lt_ECHO = /bin/echo
 mandir = ${datarootdir}/man
 mkdir_p = $(top_builddir)/config/install-sh -c -d
 oldincludedir = /usr/include
+orcm_cfgi_confd_CPPFLAGS = 
+orcm_cfgi_confd_LDFLAGS = 
+orcm_cfgi_confd_LIBS = 
 pdfdir = ${docdir}
 prefix = /Users/rhc/cisco/build
 program_transform_name = s,x,x,
@@ -331,7 +329,9 @@ AM_CPPFLAGS = $(orcm_cfgi_confd_CPPFLAGS)
 sources = \
         cfgi_confd.h \
         cfgi_confd.c \
-        cfgi_confd_component.c
+        cfgi_confd_component.c \
+	q_confd.h \
+	q_confd.c
 
 #lib = libmca_orcm_cfgi_confd.la
 
@@ -349,11 +349,11 @@ mcacomponentdir = $(pkglibdir)
 mcacomponent_LTLIBRARIES = $(component)
 mca_orcm_cfgi_confd_la_SOURCES = $(component_sources)
 mca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
-mca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBADD)
+mca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS)
 noinst_LTLIBRARIES = $(lib)
 libmca_orcm_cfgi_confd_la_SOURCES = $(lib_sources)
 libmca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
-libmca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBADD)
+libmca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS)
 all: all-am
 
 .SUFFIXES:
@@ -441,6 +441,7 @@ distclean-compile:
 
 include ./$(DEPDIR)/cfgi_confd.Plo
 include ./$(DEPDIR)/cfgi_confd_component.Plo
+include ./$(DEPDIR)/q_confd.Plo
 
 .c.o:
 	$(AM_V_CC)depbase=`echo $@ | sed 's|[^/]*$$|$(DEPDIR)/&|;s|\.o$$||'`;\

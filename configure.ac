@@ -153,9 +153,6 @@ AM_CONDITIONAL([OPENRCM_WANT_SCRIPT_WRAPPER_COMPILERS],
 # Define the location of the OPENRCM prefix
 AC_DEFINE_UNQUOTED([OPENRCM_PREFIX], ["$prefix"], [Where openrcm is installed])
 
-# Define the location of the OPENRCM helpfiles
-AC_DEFINE_UNQUOTED([OPENRCM_HELPFILES], ["$prefix/share/openrcm"], [Where openrcm helpfiles are installed])
-
 #
 # Developer picky compiler options
 #
@@ -187,7 +184,7 @@ else
 fi
 if test "$WANT_DEBUG" = "1"; then
     CFLAGS="-DNDEBUG -g $CFLAGS"
-    CXXFLAGS="-DNDEBUG -g $CXXFLAGS"
+dnl    CXXFLAGS="-DNDEBUG -g $CXXFLAGS"
 fi
 
 # Override/fixup the version numbers set by AC_INIT, since on
@@ -245,10 +242,10 @@ AS_IF([test "x$CC" = "x" -a "$ORCM_WANT_DIST" != "yes"], [CC=ortecc])
 AC_PROG_CC
 CFLAGS="$CFLAGS_save"
 
-CXXFLAGS_save="$CXXFLAGS"
-AS_IF([test "x$CXX" = "x" -a "$ORCM_WANT_DIST" != "yes"], [CXX=ortec++])
-AC_PROG_CXX
-CXXFLAGS="$CXXFLAGS_save"
+dnl CXXFLAGS_save="$CXXFLAGS"
+dnl AS_IF([test "x$CXX" = "x" -a "$ORCM_WANT_DIST" != "yes"], [CXX=ortec++])
+dnl AC_PROG_CXX
+dnl CXXFLAGS="$CXXFLAGS_save"
 
 #
 # Add appropriate CPPFLAGS to find various include files
@@ -313,13 +310,13 @@ AC_SUBST(OPENRCM_DATADIR)
 OPENRCM_WRAPPER_EXTRA_INCLUDES=
 OPENRCM_WRAPPER_EXTRA_CPPFLAGS="$ORTE_CPPFLAGS -I$expanded_incdir/openrcm/include -I$expanded_incdir/openrcm"
 OPENRCM_WRAPPER_EXTRA_CFLAGS=
-OPENRCM_WRAPPER_EXTRA_CXXFLAGS=
+dnl OPENRCM_WRAPPER_EXTRA_CXXFLAGS=
 OPENRCM_WRAPPER_EXTRA_LDFLAGS=$ORTE_LDFLAGS
 OPENRCM_WRAPPER_EXTRA_LIBS=
 AC_SUBST(OPENRCM_WRAPPER_EXTRA_INCLUDES)
 AC_SUBST(OPENRCM_WRAPPER_EXTRA_CPPFLAGS)
 AC_SUBST(OPENRCM_WRAPPER_EXTRA_CFLAGS)
-AC_SUBST(OPENRCM_WRAPPER_EXTRA_CXXFLAGS)
+dnl AC_SUBST(OPENRCM_WRAPPER_EXTRA_CXXFLAGS)
 AC_SUBST(OPENRCM_WRAPPER_EXTRA_LDFLAGS)
 AC_SUBST(OPENRCM_WRAPPER_EXTRA_LIBS)
 
@@ -350,10 +347,16 @@ m4_include([config/autogen_found_items.m4])
 ORCM_MCA
 
 # Must use eval to get the final value
+orcm_show_title "Configuring PACKAGE directories"
 str='ORCM_LIBDIR='$libdir
 eval $str
 AC_DEFINE_UNQUOTED(ORCM_PKGLIBDIR, ["$ORCM_LIBDIR/openrcm"],
                    [Where ORCM's components live])
+AC_DEFINE_UNQUOTED(ORCM_PKGHELPDIR, ["$prefix/share/openrcm"],
+                   [Where ORCM's help files reside])
+ORCM_PKGLIBDIR_MSG=$ORCM_LIBDIR/openrcm
+ORCM_PKGHELP_MSG=$prefix/share/openrcm
+AC_MSG_RESULT([$ORCM_PKGLIBDIR_MSG...$ORCM_PKGHELP_MSG])
 
 #
 # Libtool: part 2

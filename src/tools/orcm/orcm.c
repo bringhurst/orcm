@@ -136,6 +136,7 @@ static opal_condition_t start_cond;
 static void ps_request(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
+                       struct iovec *msg, int count,
                        opal_buffer_t *buffer,
                        void *cbdata);
 
@@ -268,9 +269,10 @@ int main(int argc, char *argv[])
     daemons->num_reported = 1;
     
     /* listen for PS requests */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-ps", "0.1", "alpha",
-                                                              ORCM_PNP_TAG_PS,
-                                                              ps_request))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-ps", "0.1", "alpha",
+                                                         ORCM_PNP_SYS_CHANNEL,
+                                                         ORCM_PNP_TAG_PS,
+                                                         ps_request))) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
@@ -481,6 +483,7 @@ static void release(int fd, short flag, void *dump)
 static void ps_request(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
+                       struct iovec *msg, int count,
                        opal_buffer_t *buffer,
                        void *cbdata)
 {
@@ -535,9 +538,9 @@ pack:
     opal_dss.pack(&ans, ORTE_PROC_MY_NAME, 1, ORTE_NAME);
     
 respond:
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL,
-                                                     NULL, ORCM_PNP_TAG_PS,
-                                                     &ans))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL,
+                                              NULL, ORCM_PNP_TAG_PS,
+                                              NULL, 0, &ans))) {
         ORTE_ERROR_LOG(rc);
     }
     OBJ_DESTRUCT(&ans);

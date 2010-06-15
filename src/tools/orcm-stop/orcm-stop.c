@@ -104,6 +104,7 @@ static bool waiting=true;
 static void ack_recv(int status,
                      orte_process_name_t *sender,
                      orcm_pnp_tag_t tag,
+                     struct iovec *msg, int count,
                      opal_buffer_t *buf, void *cbdata);
 
 
@@ -278,9 +279,10 @@ int main(int argc, char *argv[])
     }
     
     /* register to receive responses */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm", "0.1", "alpha",
-                                                              ORCM_PNP_TAG_TOOL,
-                                                              ack_recv))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-stop", "0.1", "alpha",
+                                                         ORCM_PNP_GROUP_INPUT_CHANNEL,
+                                                         ORCM_PNP_TAG_TOOL,
+                                                         ack_recv))) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
@@ -315,9 +317,9 @@ int main(int argc, char *argv[])
     }
     opal_argv_free(inpt);
     
-    if (ORCM_SUCCESS != (ret = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL,
-                                                      NULL, ORCM_PNP_TAG_TOOL,
-                                                      &buf))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.output(ORCM_PNP_GROUP_OUTPUT_CHANNEL,
+                                               NULL, ORCM_PNP_TAG_TOOL,
+                                               NULL, 0, &buf))) {
         ORTE_ERROR_LOG(ret);
     }
     OBJ_DESTRUCT(&buf);
@@ -339,36 +341,9 @@ cleanup:
 static void ack_recv(int status,
                      orte_process_name_t *sender,
                      orcm_pnp_tag_t tag,
+                     struct iovec *msg, int count,
                      opal_buffer_t *buf, void *cbdata)
 {
-    orcm_tool_cmd_t flag;
-    int32_t n;
-    int rc;
-    opal_buffer_t *ans;
-    uint16_t jfam;
-    
-    /* if it isn't for me, ignore it */
-    n=1;
-    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &jfam, &n, OPAL_UINT16))) {
-        ORTE_ERROR_LOG(rc);
-        return;
-    }
-    if (jfam != ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid)) {
-        opal_output(0, "%s NOT FOR ME!", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-        return;
-    }
-
-    /* unpack the cmd */
-    n=1;
-    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &flag, &n, ORCM_TOOL_CMD_T))) {
-        ORTE_ERROR_LOG(rc);
-        return;
-    }
-    /* if this isn't a response to us, ignore it */
-    if (ORCM_TOOL_STOP_CMD != flag) {
-        return;
-    }
-    
-    /* release the wait */
+    /* the fact we recvd this is enough - release the wait */
     OPAL_RELEASE_THREAD(&lock, &cond, &waiting);
 }

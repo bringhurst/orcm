@@ -63,6 +63,11 @@ while test "${var}" != ""; do
     var=$1
 done
 
+if [ "${withorte}" = " " ]; then
+    echo "Must supply --with-orte=<path-to-orte-installation> - Aborting"
+    exit 1
+fi
+
 #
 # First things first -- check that the auto versions that we have are
 # the ones that we want.

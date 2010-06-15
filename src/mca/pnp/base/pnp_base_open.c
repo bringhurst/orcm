@@ -34,9 +34,6 @@ orcm_pnp_base_module_t orcm_pnp = {
     NULL,
     NULL,
     NULL,
-    NULL,
-    NULL,
-    NULL,
     NULL
 };
 
@@ -95,11 +92,13 @@ OBJ_CLASS_INSTANCE(orcm_pnp_source_t,
 static void triplet_constructor(orcm_pnp_triplet_t *ptr)
 {
     ptr->string_id = NULL;
-    ptr->channel = ORTE_RMCAST_INVALID_CHANNEL;
+    ptr->output = ORTE_RMCAST_INVALID_CHANNEL;
+    ptr->input = ORTE_RMCAST_INVALID_CHANNEL;
     ptr->cbfunc = NULL;
     OBJ_CONSTRUCT(&ptr->members, opal_pointer_array_t);
     opal_pointer_array_init(&ptr->members, 8, INT_MAX, 8);
-    OBJ_CONSTRUCT(&ptr->requests, opal_list_t);
+    OBJ_CONSTRUCT(&ptr->input_recvs, opal_list_t);
+    OBJ_CONSTRUCT(&ptr->output_recvs, opal_list_t);
 }
 static void triplet_destructor(orcm_pnp_triplet_t *ptr)
 {
@@ -108,10 +107,14 @@ static void triplet_destructor(orcm_pnp_triplet_t *ptr)
     if (NULL != ptr->string_id) {
         free(ptr->string_id);
     }
-    while (NULL != (item = opal_list_remove_first(&ptr->requests))) {
+    while (NULL != (item = opal_list_remove_first(&ptr->input_recvs))) {
         OBJ_RELEASE(item);
     }
-    OBJ_DESTRUCT(&ptr->requests);
+    OBJ_DESTRUCT(&ptr->input_recvs);
+    while (NULL != (item = opal_list_remove_first(&ptr->output_recvs))) {
+        OBJ_RELEASE(item);
+    }
+    OBJ_DESTRUCT(&ptr->output_recvs);
 }
 OBJ_CLASS_INSTANCE(orcm_pnp_triplet_t,
                    opal_object_t,
@@ -120,14 +123,21 @@ OBJ_CLASS_INSTANCE(orcm_pnp_triplet_t,
 
 static void request_constructor(orcm_pnp_request_t *ptr)
 {
+    ptr->string_id = NULL;
     ptr->tag = ORCM_PNP_TAG_WILDCARD;
     ptr->cbfunc = NULL;
-    ptr->cbfunc_buf = NULL;
+}
+static void request_destructor(orcm_pnp_request_t *ptr)
+{
+    if (NULL != ptr->string_id) {
+        free(ptr->string_id);
+    }
 }
 /* no destruct required here */
 OBJ_CLASS_INSTANCE(orcm_pnp_request_t,
                    opal_list_item_t,
-                   request_constructor, NULL);
+                   request_constructor,
+                   request_destructor);
 
 static void send_constructor(orcm_pnp_send_t *ptr)
 {
@@ -142,7 +152,6 @@ static void send_constructor(orcm_pnp_send_t *ptr)
     ptr->count = 0;
     ptr->cbfunc = NULL;
     ptr->buffer = NULL;
-    ptr->cbfunc_buf = NULL;
     ptr->cbdata = NULL;
 }
 static void send_destructor(orcm_pnp_send_t *ptr) {

@@ -96,6 +96,7 @@ static void shutdown_signal(int fd, short flags, void *arg);
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
+                       struct iovec *msg, int count,
                        opal_buffer_t *buf,
                        void *cbdata);
 
@@ -105,6 +106,7 @@ static void vm_tracker(char *app, char *version, char *release,
 static void ps_request(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
+                       struct iovec *msg, int count,
                        opal_buffer_t *buffer,
                        void *cbdata);
 
@@ -482,17 +484,19 @@ int main(int argc, char *argv[])
     nid->index = opal_pointer_array_add(&orte_nidmap, nid);
     
     /* register an input to hear cmds sent to us */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm", "0.1", "alpha",
-                                                              ORCM_PNP_TAG_WILDCARD,
-                                                              recv_input))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm", "0.1", "alpha",
+                                                         ORCM_PNP_SYS_CHANNEL,
+                                                         ORCM_PNP_TAG_WILDCARD,
+                                                         recv_input))) {
         ORTE_ERROR_LOG(ret);
         orte_trigger_event(&orte_exit);
     }
 
     /* listen for PS requests */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-ps", "0.1", "alpha",
-                                                              ORCM_PNP_TAG_PS,
-                                                              ps_request))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-ps", "0.1", "alpha",
+                                                         ORCM_PNP_SYS_CHANNEL,
+                                                         ORCM_PNP_TAG_PS,
+                                                         ps_request))) {
         ORTE_ERROR_LOG(ret);
         orte_trigger_event(&orte_exit);
     }
@@ -574,6 +578,7 @@ static void shutdown_callback(int fd, short flags, void *arg)
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
+                       struct iovec *msg, int count,
                        opal_buffer_t *buf,
                        void *cbdata)
 {
@@ -689,6 +694,7 @@ static int orcmd_comm(orte_process_name_t *recipient,
 static void ps_request(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
+                       struct iovec *msg, int count,
                        opal_buffer_t *buffer,
                        void *cbdata)
 {

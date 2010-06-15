@@ -46,7 +46,7 @@ build_triplet = @build@
 host_triplet = @host@
 target_triplet = @target@
 subdir = src/mca/cfgi/confd
-DIST_COMMON = $(srcdir)/Makefile.am $(srcdir)/Makefile.in
+DIST_COMMON = README $(srcdir)/Makefile.am $(srcdir)/Makefile.in
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/config/libtool.m4 \
 	$(top_srcdir)/config/ltoptions.m4 \
@@ -90,10 +90,11 @@ am__base_list = \
   sed '$$!N;$$!N;$$!N;$$!N;s/\n/ /g'
 am__installdirs = "$(DESTDIR)$(mcacomponentdir)"
 LTLIBRARIES = $(mcacomponent_LTLIBRARIES) $(noinst_LTLIBRARIES)
-libmca_orcm_cfgi_confd_la_DEPENDENCIES =
+am__DEPENDENCIES_1 =
+libmca_orcm_cfgi_confd_la_DEPENDENCIES = $(am__DEPENDENCIES_1)
 am__libmca_orcm_cfgi_confd_la_SOURCES_DIST = cfgi_confd.h cfgi_confd.c \
-	cfgi_confd_component.c
-am__objects_1 = cfgi_confd.lo cfgi_confd_component.lo
+	cfgi_confd_component.c q_confd.h q_confd.c
+am__objects_1 = cfgi_confd.lo cfgi_confd_component.lo q_confd.lo
 @ORCM_BUILD_orcm_cfgi_confd_DSO_FALSE@am__objects_2 =  \
 @ORCM_BUILD_orcm_cfgi_confd_DSO_FALSE@	$(am__objects_1)
 am_libmca_orcm_cfgi_confd_la_OBJECTS = $(am__objects_2)
@@ -107,9 +108,9 @@ libmca_orcm_cfgi_confd_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_CFLAGS) $(CFLAGS) $(libmca_orcm_cfgi_confd_la_LDFLAGS) \
 	$(LDFLAGS) -o $@
 @ORCM_BUILD_orcm_cfgi_confd_DSO_FALSE@am_libmca_orcm_cfgi_confd_la_rpath =
-mca_orcm_cfgi_confd_la_DEPENDENCIES =
+mca_orcm_cfgi_confd_la_DEPENDENCIES = $(am__DEPENDENCIES_1)
 am__mca_orcm_cfgi_confd_la_SOURCES_DIST = cfgi_confd.h cfgi_confd.c \
-	cfgi_confd_component.c
+	cfgi_confd_component.c q_confd.h q_confd.c
 @ORCM_BUILD_orcm_cfgi_confd_DSO_TRUE@am__objects_3 = $(am__objects_1)
 am_mca_orcm_cfgi_confd_la_OBJECTS = $(am__objects_3)
 mca_orcm_cfgi_confd_la_OBJECTS = $(am_mca_orcm_cfgi_confd_la_OBJECTS)
@@ -166,10 +167,6 @@ CFLAGS = @CFLAGS@
 CONFIGURE_DEPENDENCIES = @CONFIGURE_DEPENDENCIES@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
-CXX = @CXX@
-CXXCPP = @CXXCPP@
-CXXDEPMODE = @CXXDEPMODE@
-CXXFLAGS = @CXXFLAGS@
 CYGPATH_W = @CYGPATH_W@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
@@ -241,7 +238,6 @@ OPENRCM_SVN_R = @OPENRCM_SVN_R@
 OPENRCM_VERSION = @OPENRCM_VERSION@
 OPENRCM_WRAPPER_EXTRA_CFLAGS = @OPENRCM_WRAPPER_EXTRA_CFLAGS@
 OPENRCM_WRAPPER_EXTRA_CPPFLAGS = @OPENRCM_WRAPPER_EXTRA_CPPFLAGS@
-OPENRCM_WRAPPER_EXTRA_CXXFLAGS = @OPENRCM_WRAPPER_EXTRA_CXXFLAGS@
 OPENRCM_WRAPPER_EXTRA_INCLUDES = @OPENRCM_WRAPPER_EXTRA_INCLUDES@
 OPENRCM_WRAPPER_EXTRA_LDFLAGS = @OPENRCM_WRAPPER_EXTRA_LDFLAGS@
 OPENRCM_WRAPPER_EXTRA_LIBS = @OPENRCM_WRAPPER_EXTRA_LIBS@
@@ -274,7 +270,6 @@ abs_srcdir = @abs_srcdir@
 abs_top_builddir = @abs_top_builddir@
 abs_top_srcdir = @abs_top_srcdir@
 ac_ct_CC = @ac_ct_CC@
-ac_ct_CXX = @ac_ct_CXX@
 ac_ct_DUMPBIN = @ac_ct_DUMPBIN@
 am__include = @am__include@
 am__leading_dot = @am__leading_dot@
@@ -311,6 +306,9 @@ lt_ECHO = @lt_ECHO@
 mandir = @mandir@
 mkdir_p = @mkdir_p@
 oldincludedir = @oldincludedir@
+orcm_cfgi_confd_CPPFLAGS = @orcm_cfgi_confd_CPPFLAGS@
+orcm_cfgi_confd_LDFLAGS = @orcm_cfgi_confd_LDFLAGS@
+orcm_cfgi_confd_LIBS = @orcm_cfgi_confd_LIBS@
 pdfdir = @pdfdir@
 prefix = @prefix@
 program_transform_name = @program_transform_name@
@@ -331,7 +329,9 @@ AM_CPPFLAGS = $(orcm_cfgi_confd_CPPFLAGS)
 sources = \
         cfgi_confd.h \
         cfgi_confd.c \
-        cfgi_confd_component.c
+        cfgi_confd_component.c \
+	q_confd.h \
+	q_confd.c
 
 @ORCM_BUILD_orcm_cfgi_confd_DSO_FALSE@lib = libmca_orcm_cfgi_confd.la
 
@@ -349,11 +349,11 @@ mcacomponentdir = $(pkglibdir)
 mcacomponent_LTLIBRARIES = $(component)
 mca_orcm_cfgi_confd_la_SOURCES = $(component_sources)
 mca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
-mca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBADD)
+mca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS)
 noinst_LTLIBRARIES = $(lib)
 libmca_orcm_cfgi_confd_la_SOURCES = $(lib_sources)
 libmca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
-libmca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBADD)
+libmca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS)
 all: all-am
 
 .SUFFIXES:
@@ -441,6 +441,7 @@ distclean-compile:
 
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cfgi_confd.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cfgi_confd_component.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/q_confd.Plo@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(AM_V_CC)depbase=`echo $@ | sed 's|[^/]*$$|$(DEPDIR)/&|;s|\.o$$||'`;\

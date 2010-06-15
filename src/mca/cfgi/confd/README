@@ -30,3 +30,20 @@ orcm
  !
 !
 
+Getting confd:
+ /ws/schaefer-sjc/Tail-f
+
+and pick the release you want (i.e. the latest).  Copy the appropriate
+installer ".bin" file (i686 or x86_64) to the virtual linux box.  You
+might also want the examples and doc tar files.  Then run the installer
+script, pointing at a destination directory, e.g.
+
+ sh /tmp/confd-3.2.1.linux.i686.installer.bin /usr/confd
+
+If you then source the installed setup script (assuming you use a Bourne
+shell):
+
+ . /usr/confd/confdrc
+
+you'll be able to start the daemon, run the CLI, etc.
+

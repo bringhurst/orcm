@@ -50,7 +50,8 @@ static struct {
     bool help;
     bool monitor;
     int update_rate;
-    char *master;
+    char *sched;
+    char *hnp_uri;
     bool all;
 } my_globals;
 
@@ -67,9 +68,13 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       &my_globals.update_rate, OPAL_CMD_LINE_TYPE_INT,
       "Update rate in seconds (default: 5)" },
     
-    { NULL, NULL, NULL, 's', "source", "source", 1,
-      &my_globals.master, OPAL_CMD_LINE_TYPE_STRING,
-      "ORCM DVM or scheduler to be contacted [number or file:name of file containing it" },
+    { NULL, NULL, NULL, 'd', "dvm", "dvm", 1,
+      &my_globals.sched, OPAL_CMD_LINE_TYPE_STRING,
+      "ORCM DVM to be contacted [number or file:name of file containing it" },
+    
+    { NULL, NULL, NULL, '\0', "uri", "uri", 1,
+      &my_globals.hnp_uri, OPAL_CMD_LINE_TYPE_STRING,
+      "The uri of the ORCM DVM [uri or file:name of file containing it" },
     
     { NULL, NULL, NULL, 'a', "all", "all", 0,
       &my_globals.all, OPAL_CMD_LINE_TYPE_BOOL,
@@ -96,6 +101,7 @@ static void pretty_print(opal_buffer_t *buf);
 static void ps_recv(int status,
                     orte_process_name_t *sender,
                     orcm_pnp_tag_t tag,
+                    struct iovec *msg, int count,
                     opal_buffer_t *buf, void *cbdata);
 
 static void vm_tracker(char *app, char *version, char *release,
@@ -111,24 +117,18 @@ static void update_data(int fd, short flg, void *arg)
     time_t mytime;
     orte_process_name_t name;
 
-    if (NULL == my_globals.master) {
-        /* if no dvm was given, then just find out what dvm's are out there */
-        name.jobid = ORTE_JOBID_WILDCARD;
-        name.vpid = ORTE_VPID_INVALID;
+    /* indicate the dvm */
+    name.jobid = jobfam;
+    if (my_globals.all) {
+        /* if the user asked for -all- info, then we indicate
+         * that all members of the dvm are to respond
+         */
+        name.vpid = ORTE_VPID_WILDCARD;
     } else {
-        /* if a dvm was given, indicate it */
-        name.jobid = jobfam;
-        if (my_globals.all) {
-            /* if the user asked for -all- info, then we indicate
-             * that all members of the dvm are to respond
-             */
-            name.vpid = ORTE_VPID_WILDCARD;
-        } else {
-            /* indicate that only the lead member is to respond */
-            name.vpid = ORTE_VPID_INVALID;
-        }
-
+        /* indicate that only the lead member is to respond */
+        name.vpid = ORTE_VPID_INVALID;
     }
+
     if (NULL != arg) {
         /* print a separator for the next output */
         fprintf(stderr, "\n=========================================================\n");
@@ -144,9 +144,9 @@ static void update_data(int fd, short flg, void *arg)
         goto cleanup;
     }
     
-    if (ORCM_SUCCESS != (ret = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL,
-                                                      NULL, ORCM_PNP_TAG_PS,
-                                                      &buf))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL,
+                                               NULL, ORCM_PNP_TAG_PS,
+                                               NULL, 0, &buf))) {
         ORTE_ERROR_LOG(ret);
     }
     
@@ -169,7 +169,6 @@ int main(int argc, char *argv[])
     int32_t ret;
     opal_cmd_line_t cmd_line;
     char *args = NULL;
-    int master;
     
     /***************
      * Initialize
@@ -188,7 +187,8 @@ int main(int argc, char *argv[])
     my_globals.help = false;
     my_globals.monitor = false;
     my_globals.update_rate = 5;
-    my_globals.master = 0;
+    my_globals.sched = NULL;
+    my_globals.hnp_uri = NULL;
     my_globals.all = false;
     
     /* Parse the command line options */
@@ -211,46 +211,50 @@ int main(int argc, char *argv[])
         return ORTE_ERROR;
     }
     
-    if (0 != master) {
-        if (0 == strncmp(my_globals.master, "file", strlen("file")) ||
-            0 == strncmp(my_globals.master, "FILE", strlen("FILE"))) {
+    /* need to specify scheduler */
+    if (NULL == my_globals.sched && NULL == my_globals.hnp_uri) {
+        opal_output(0, "Must specify ORCM DVM to be contacted");
+        return ORTE_ERROR;
+    }
+
+    if (NULL != my_globals.sched) {
+        if (0 == strncmp(my_globals.sched, "file", strlen("file")) ||
+            0 == strncmp(my_globals.sched, "FILE", strlen("FILE"))) {
             char input[1024], *filename;
             FILE *fp;
             
             /* it is a file - get the filename */
-            filename = strchr(my_globals.master, ':');
+            filename = strchr(my_globals.sched, ':');
             if (NULL == filename) {
                 /* filename is not correctly formatted */
-                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "master", my_globals.master);
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "scheduler", my_globals.sched);
                 return ORTE_ERROR;
             }
             ++filename; /* space past the : */
             
             if (0 >= strlen(filename)) {
                 /* they forgot to give us the name! */
-                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "master", my_globals.master);
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "scheduler", my_globals.sched);
                 return ORTE_ERROR;
             }
             
             /* open the file and extract the pid */
             fp = fopen(filename, "r");
             if (NULL == fp) { /* can't find or read file! */
-                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, "master", filename);
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, "scheduler", filename);
                 return ORTE_ERROR;
             }
             if (NULL == fgets(input, 1024, fp)) {
                 /* something malformed about file */
                 fclose(fp);
-                orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", "master", true, filename);
+                orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", "scheduler", true, filename);
                 return ORTE_ERROR;
             }
             fclose(fp);
             input[strlen(input)-1] = '\0';  /* remove newline */
-            /* convert the pid */
-            master = strtoul(input, NULL, 10);
+            /* get the hnp uri and convert it */
         } else {
-            /* should just be the master itself */
-            master = strtoul(my_globals.master, NULL, 10);
+            /* must just be the hnp uri - convert it */
         }
     }
             
@@ -266,15 +270,10 @@ int main(int argc, char *argv[])
     }
 
     /* register to receive responses */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm", "0.1", "alpha",
-                                                              ORCM_PNP_TAG_PS,
-                                                              ps_recv))) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
-    }
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcmd", "0.1", "alpha",
-                                                              ORCM_PNP_TAG_PS,
-                                                              ps_recv))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-ps", "0.1", "alpha",
+                                                         ORCM_PNP_GROUP_INPUT_CHANNEL,
+                                                         ORCM_PNP_TAG_PS,
+                                                         ps_recv))) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
@@ -283,12 +282,6 @@ int main(int argc, char *argv[])
     if (ORCM_SUCCESS != (ret = orcm_pnp.announce("orcm-ps", "0.1", "alpha", vm_tracker))) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
-    }
-    
-    if (NULL == my_globals.master) {
-        /* we just want to report who is out there - give us a little time
-         * to catch all the announce responses
-         */
     }
     
     /* we know we need to print the data once */
@@ -308,12 +301,6 @@ int main(int argc, char *argv[])
      * Cleanup
      ***************/
  cleanup:
-    /* cancel the recvs */
-    orcm_pnp.deregister_input("orcm", "0.1", "alpha",
-                              ORCM_PNP_TAG_PS);
-    orcm_pnp.deregister_input("orcmd", "0.1", "alpha",
-                              ORCM_PNP_TAG_PS);
-    
     OBJ_DESTRUCT(&lock);
     OBJ_DESTRUCT(&cond);
     
@@ -363,6 +350,7 @@ static void pretty_print(opal_buffer_t *buf)
 static void ps_recv(int status,
                     orte_process_name_t *sender,
                     orcm_pnp_tag_t tag,
+                    struct iovec *msg, int count,
                     opal_buffer_t *buf, void *cbdata)
 {
     orcm_tool_cmd_t flag;

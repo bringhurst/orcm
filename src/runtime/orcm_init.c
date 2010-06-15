@@ -67,7 +67,8 @@ int orcm_init(orcm_proc_type_t flags)
     int i, ret;
     char *error, *mcp, *new_mcp;
     int spin;
-    
+    char *destdir;
+
     if (NULL != getenv("ORCM_MCA_spin")) {
         spin = 1;
         /* spin until a debugger can attach */
@@ -102,7 +103,11 @@ int orcm_init(orcm_proc_type_t flags)
         error = "Could not find mca_component_path";
         goto error;
     }
-    asprintf(&new_mcp, "%s:%s", ORCM_PKGLIBDIR, mcp);
+    if (NULL != (destdir = getenv("ORCM_DESTDIR"))) {
+        asprintf(&new_mcp, "%s%s:%s", destdir, ORCM_PKGLIBDIR, mcp);
+    } else {
+        asprintf(&new_mcp, "%s:%s", ORCM_PKGLIBDIR, mcp);
+    }
     mca_base_param_set_string(i, new_mcp);
     free(new_mcp);
 
@@ -136,7 +141,8 @@ int orcm_init_util(void)
 {
     int ret;
     char *error;
-    
+    char *destdir, *tmp;
+
     /* Ensure that enough of OPAL is setup for us to be able to run */
     if( ORTE_SUCCESS != (ret = opal_init_util(NULL, NULL)) ) {
         error = "opal_init_util";
@@ -145,10 +151,16 @@ int orcm_init_util(void)
     /* register handler for errnum -> string conversion */
     opal_error_register("OPENRCM", ORCM_ERR_BASE, ORCM_ERR_MAX, orcm_err2str);
     /* register where the OPENRCM show_help files are located */
-    if (ORTE_SUCCESS != (ret = opal_show_help_add_dir(OPENRCM_HELPFILES))) {
-        error = "register show_help_dir";
-    goto error;
+    if (NULL != (destdir = getenv("ORCM_DESTDIR"))) {
+        asprintf(&tmp, "%s%s", destdir, ORCM_PKGHELPDIR);
+    } else {
+        tmp = strdup(ORCM_PKGHELPDIR);
     }
+    if (ORTE_SUCCESS != (ret = opal_show_help_add_dir(tmp))) {
+        error = "register show_help_dir";
+        goto error;
+    }
+    free(tmp);
     
     orcm_util_initialized = true;
     

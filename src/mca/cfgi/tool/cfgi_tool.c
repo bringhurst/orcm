@@ -43,6 +43,7 @@ orcm_cfgi_base_module_t orcm_cfgi_tool_module = {
 static void tool_messages(int status,
                           orte_process_name_t *sender,
                           orcm_pnp_tag_t tag,
+                          struct iovec *msg, int count,
                           opal_buffer_t *buffer,
                           void *cbdata);
 
@@ -51,17 +52,19 @@ static int tool_init(void)
     int ret;
     
     /* register to catch launch requests */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-start", "0.1", "alpha",
-                                                              ORCM_PNP_TAG_TOOL,
-                                                              tool_messages))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-start", "0.1", "alpha",
+                                                         ORCM_PNP_GROUP_OUTPUT_CHANNEL,
+                                                         ORCM_PNP_TAG_TOOL,
+                                                         tool_messages))) {
         ORTE_ERROR_LOG(ret);
         return ret;
     }
     
     /* register to catch stop requests */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_input_buffer("orcm-stop", "0.1", "alpha",
-                                                              ORCM_PNP_TAG_TOOL,
-                                                              tool_messages))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-stop", "0.1", "alpha",
+                                                         ORCM_PNP_GROUP_OUTPUT_CHANNEL,
+                                                         ORCM_PNP_TAG_TOOL,
+                                                         tool_messages))) {
         ORTE_ERROR_LOG(ret);
         return ret;
     }
@@ -72,10 +75,12 @@ static int tool_init(void)
 
 static int tool_finalize(void)
 {
-    orcm_pnp.deregister_input("orcm-start", "0.1", "alpha",
-                              ORCM_PNP_TAG_TOOL);
-    orcm_pnp.deregister_input("orcm-stop", "0.1", "alpha",
-                              ORCM_PNP_TAG_TOOL);
+    orcm_pnp.cancel_receive("orcm-start", "0.1", "alpha",
+                            ORCM_PNP_GROUP_OUTPUT_CHANNEL,
+                            ORCM_PNP_TAG_TOOL);
+    orcm_pnp.cancel_receive("orcm-stop", "0.1", "alpha",
+                            ORCM_PNP_GROUP_OUTPUT_CHANNEL,
+                            ORCM_PNP_TAG_TOOL);
     
     return ORCM_SUCCESS;
 }
@@ -84,6 +89,8 @@ static int tool_finalize(void)
 static void tool_messages(int status,
                           orte_process_name_t *sender,
                           orcm_pnp_tag_t tag,
+                          struct iovec *msg,
+                          int count,
                           opal_buffer_t *buffer,
                           void *cbdata)
 {
@@ -237,9 +244,9 @@ static void tool_messages(int status,
     
 cleanup:
     opal_output(0, "%s sending tool ack", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL,
-                                                     sender, ORCM_PNP_TAG_TOOL,
-                                                     &response))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL,
+                                              sender, ORCM_PNP_TAG_TOOL,
+                                              NULL, 0, &response))) {
         ORTE_ERROR_LOG(rc);
     }
     OBJ_DESTRUCT(&response);

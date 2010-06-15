@@ -27,12 +27,8 @@ static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
                        struct iovec *msg, int count,
+                       opal_buffer_t *buf,
                        void *cbdata);
-
-static void ldr_failed(char *app,
-                       char *version,
-                       char *release,
-                       int sibling);
 
 int main(int argc, char* argv[])
 {
@@ -56,18 +52,15 @@ int main(int argc, char* argv[])
     }
     
     /* we want to listen to the TALKER app */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input("TALKER_IOVEC", "1.0", "alpha",
-                                                      ORCM_PNP_TAG_OUTPUT, recv_input))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("TALKER_IOVEC", "1.0", "alpha",
+                                                        ORCM_PNP_GROUP_OUTPUT_CHANNEL,
+                                                        ORCM_PNP_TAG_OUTPUT, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
     
     /* just sit here */
-    while (1) {
-        for (i=0; i < 100000; i++) {
-            pi = 3.14159 * (double)i;
-        }
-    }
+    opal_event_dispatch();
     
 cleanup:
 
@@ -79,6 +72,7 @@ static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
                        struct iovec *msg, int count,
+                       opal_buffer_t *buf,
                        void *cbdata)
 {
     int rc;

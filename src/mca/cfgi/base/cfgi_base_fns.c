@@ -147,8 +147,8 @@ void orcm_cfgi_base_spawn_app(char *cmd, bool add_procs, bool continuous, bool d
             free(param);
         }
     }
-    /* assign this group of apps a multicast group */
-    asprintf(&value, "%s:%d", app->app, (orcm_cfgi_base.num_active_apps+ORTE_RMCAST_DYNAMIC_CHANNELS));
+    /* assign this group of apps a pair of multicast groups */
+    asprintf(&value, "%s:%d", app->app, ((2*orcm_cfgi_base.num_active_apps)+ORTE_RMCAST_DYNAMIC_CHANNELS));
     opal_setenv("OMPI_MCA_rmcast_base_group", value, true, &app->env);
     free(value);
     orcm_cfgi_base.num_active_apps++;
@@ -215,9 +215,9 @@ launch:
     }
     
     /* send it to the vm */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL,
-                                                     NULL, ORCM_PNP_TAG_COMMAND,
-                                                     &buffer))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL,
+                                              NULL, ORCM_PNP_TAG_COMMAND,
+                                              NULL, 0,  &buffer))) {
         ORTE_ERROR_LOG(rc);
     }
     OBJ_DESTRUCT(&buffer);
@@ -296,9 +296,9 @@ int orcm_cfgi_base_kill_app(orte_job_t *jdata, char *replicas)
     }
     
     /* send it to the vm */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL,
-                                                     NULL, ORCM_PNP_TAG_COMMAND,
-                                                     &cmd))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL,
+                                              NULL, ORCM_PNP_TAG_COMMAND,
+                                              NULL, 0,  &cmd))) {
         ORTE_ERROR_LOG(rc);
     }
     OBJ_DESTRUCT(&cmd);

@@ -316,6 +316,7 @@ static int setup_launch(int *argcptr, char ***argvptr,
          * with the prefix directory
          */
         char *opal_prefix = getenv("OPAL_PREFIX");
+        char *orcm_destdir = getenv("ORCM_DESTDIR");
         char* full_orted_cmd = NULL;
 
         if( NULL != orted_cmd ) {
@@ -489,6 +490,8 @@ static void ssh_child(int argc, char **argv, orte_vpid_t vpid,
     
     node_name = argv[node_name_index1];
     
+    opal_output(0, "LAUNCHING ON NODE %s FROM NODE %s", node_name, orte_process_info.nodename);
+
     /* if this is a local launch, then we just exec - we were already fork'd */
     if (0 == strcmp(node_name, orte_process_info.nodename) ||
         0 == strcmp(node_name, "localhost") ||
@@ -631,8 +634,8 @@ static int launch(orte_job_t *jdata)
             goto cleanup;
         }
         /* send it */
-        if (ORTE_SUCCESS != (rc = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL, NULL,
-                                                         ORCM_PNP_TAG_COMMAND, buffer))) {
+        if (ORTE_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL, NULL,
+                                                  ORCM_PNP_TAG_COMMAND, NULL, 0, buffer))) {
             ORTE_ERROR_LOG(rc);
         }
         OBJ_RELEASE(buffer);
@@ -900,8 +903,8 @@ static int terminate_orteds(void)
     OBJ_CONSTRUCT(&buf, opal_buffer_t);
     opal_dss.pack(&buf, &cmd, 1, ORTE_DAEMON_CMD_T);
     
-    if (ORTE_SUCCESS != (rc = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL, NULL,
-                                                     ORCM_PNP_TAG_COMMAND, &buf))) {
+    if (ORTE_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL, NULL,
+                                              ORCM_PNP_TAG_COMMAND, NULL, 0, &buf))) {
         ORTE_ERROR_LOG(rc);
     }
     
@@ -919,8 +922,8 @@ static int signal_job(orte_jobid_t jobid, int32_t signal)
     opal_dss.pack(&buf, &jobid, 1, ORTE_JOBID);
     opal_dss.pack(&buf, &signal, 1, OPAL_INT32);
     
-    if (ORTE_SUCCESS != (rc = orcm_pnp.output_buffer(ORCM_PNP_SYS_CHANNEL, NULL,
-                                                     ORCM_PNP_TAG_COMMAND, &buf))) {
+    if (ORTE_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL, NULL,
+                                              ORCM_PNP_TAG_COMMAND, NULL, 0, &buf))) {
         ORTE_ERROR_LOG(rc);
     }
     

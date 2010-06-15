@@ -35,6 +35,7 @@ static void send_data(int fd, short flags, void *arg);
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
+                       struct iovec *msg, int count,
                        opal_buffer_t *buffer,
                        void *cbdata);
 
@@ -55,19 +56,20 @@ int main(int argc, char* argv[])
         exit(1);
     }
     
+    /* for this application, register to recv anything sent to our input  */
+    if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("client", "1.0", "alpha",
+                                                        ORCM_PNP_GROUP_OUTPUT_CHANNEL,
+                                                        ORCM_PNP_TAG_WILDCARD, recv_input))) {
+        ORTE_ERROR_LOG(rc);
+        goto cleanup;
+    }
+
     /* announce our existence */
     if (ORCM_SUCCESS != (rc = orcm_pnp.announce("CLIENT", "1.0", "alpha", NULL))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
     
-    /* for this application, register to recv anything sent to my input  */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.register_input_buffer("client", "1.0", "alpha",
-                                                             ORCM_PNP_TAG_WILDCARD, recv_input))) {
-        ORTE_ERROR_LOG(rc);
-        goto cleanup;
-    }
-
     /* init the msg number */
     msg_num = 0;
     
@@ -80,8 +82,10 @@ cleanup:
     return rc;
 }
 
-static void cbfunc(int status, orte_process_name_t *name, orcm_pnp_tag_t tag,
-                   struct iovec *msg, int count, void *cbdata)
+static void cbfunc(int status, orte_process_name_t *name,
+                   orcm_pnp_tag_t tag,
+                   struct iovec *msg, int count,
+                   opal_buffer_t *buf, void *cbdata)
 {
     int i;
     
@@ -116,8 +120,8 @@ static void send_data(int fd, short flags, void *arg)
     
     /* output the values */
     opal_output(0, "%s sending data for msg number %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_CHANNEL, NULL,
-                                                 ORCM_PNP_TAG_OUTPUT, msg, count, cbfunc, NULL))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, NULL,
+                                                 ORCM_PNP_TAG_OUTPUT, msg, count, NULL, cbfunc, NULL))) {
         ORTE_ERROR_LOG(rc);
     }
     
@@ -134,6 +138,7 @@ static void send_data(int fd, short flags, void *arg)
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
+                       struct iovec *msg, int count,
                        opal_buffer_t *buffer,
                        void *cbdata)
 {

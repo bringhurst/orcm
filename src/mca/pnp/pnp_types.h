@@ -59,7 +59,8 @@ typedef int32_t orcm_pnp_channel_t;
 
 /* inherited channels */
 enum {
-    ORCM_PNP_GROUP_CHANNEL          = ORTE_RMCAST_GROUP_CHANNEL,
+    ORCM_PNP_GROUP_INPUT_CHANNEL    = ORTE_RMCAST_GROUP_INPUT_CHANNEL,
+    ORCM_PNP_GROUP_OUTPUT_CHANNEL   = ORTE_RMCAST_GROUP_OUTPUT_CHANNEL,
     ORCM_PNP_WILDCARD_CHANNEL       = ORTE_RMCAST_WILDCARD_CHANNEL,
     ORCM_PNP_INVALID_CHANNEL        = ORTE_RMCAST_INVALID_CHANNEL,
     ORCM_PNP_SYS_CHANNEL            = ORTE_RMCAST_SYS_CHANNEL,
@@ -81,13 +82,8 @@ typedef void (*orcm_pnp_callback_fn_t)(int status,
                                        orcm_pnp_tag_t tag,
                                        struct iovec *msg,
                                        int count,
+                                       opal_buffer_t *buf,
                                        void *cbdata);
-
-typedef void (*orcm_pnp_callback_buffer_fn_t)(int status,
-                                              orte_process_name_t *sender,
-                                              orcm_pnp_tag_t tag,
-                                              opal_buffer_t *buf,
-                                              void *cbdata);
 
 END_C_DECLS
 

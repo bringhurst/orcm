@@ -29,7 +29,7 @@ typedef int (*orcm_pnp_module_finalize_fn_t)(void);
  * be returned. If non-NULL, the cbfunc will be called whenever a new
  * group announcement is received. The callback will return the
  * app/version/release triplet of the new group, along with its
- * pnp channel id.
+ * GROUP_OUTPUT channel id.
  */
 typedef int (*orcm_pnp_module_announce_fn_t)(char *app, char *version, char *release,
                                              orcm_pnp_announce_fn_t cbfunc);
@@ -38,46 +38,57 @@ typedef int (*orcm_pnp_module_announce_fn_t)(char *app, char *version, char *rel
  * Open a channel to another app/version/release triplet. A callback will be
  * made whenever the first announcement is recvd from a process matching the specified
  * triplet (NULL => WILDCARD for that field, will recv callback for each unique
- * triplet that fits)
+ * triplet that fits), with the GROUP_INPUT channel for that triplet provided
+ * in the call to the cbfunc
  */
 typedef int (*orcm_pnp_module_open_channel_fn_t)(char *app, char *version, char *release,
                                                  orcm_pnp_open_channel_cbfunc_t cbfunc);
 
 /*
- * Register to receive messages from the specified app/version/release.
+ * Register to
  * The callback function MUST be specified. Providing a NULL for app, version,
- and/or release acts as a wildcard for those values.
+ * and/or release acts as a wildcard for those values.
  *
- * NOTE: because it would be impossible to unpack a message that was sent
- * as an array of iovecs as if it were a buffer, an application's output type
- * will be checked against only its corresponding registered input type. Thus,
- * a message sent as a buffer will only be delivered to a callback function
- * specified in a register_input_buffer call.
  */
-typedef int (*orcm_pnp_module_register_input_fn_t)(char *app,
+typedef int (*orcm_pnp_module_listen_to_input_fn_t)(char *app,
                                                    char *version,
                                                    char *release,
                                                    orcm_pnp_tag_t tag,
                                                    orcm_pnp_callback_fn_t cbfunc);
 
 /*
- * Register to receive message buffers instead of iovec arrays
+ * Receive messages associated with the specified app/version/release triplet.
+ * A channel of GROUP_INPUT  will listen to messages sent TO the specified triplet
+ * on their input channel. A channel of GROUP_OUTPUT will listen to messages sent
+ * by the specified triplet on their GROUP_OUTPUT channel. A NULL can be provided
+ * in any triplet field to act as a wildcard.
+ *
+ * Note: it is permissable to register a receive against a triplet on a channel
+ * other than its GROUP_INPUT or GROUP_OUTPUT (e.g., SYSTEM_CHANNEL). This will
+ * result in the caller receiving messages sent by the specified triplet on
+ * that channel.
  */
-typedef int (*orcm_pnp_module_register_input_buffer_fn_t)(char *app,
-                                                          char *version,
-                                                          char *release,
-                                                          orcm_pnp_tag_t tag,
-                                                          orcm_pnp_callback_buffer_fn_t cbfunc);
-
-/* Deregister an input */
-typedef int (*orcm_pnp_module_deregister_input_fn_t)(char *app,
+typedef int (*orcm_pnp_module_register_receive_fn_t)(char *app,
                                                      char *version,
                                                      char *release,
-                                                     orcm_pnp_tag_t tag);
+                                                     orcm_pnp_channel_t channel,
+                                                     orcm_pnp_tag_t tag,
+                                                     orcm_pnp_callback_fn_t cbfunc);
+
+/* Cancel a receive - must provide the triplet and the channel (GROUP_OUTPUT or GROUP_INPUT)
+ * and tag to get cancelled. A wildcard value for tag will cancel all receives on the
+ * given channel. Likewise, a wildcard value for channel will cancel both output and
+ * input receives
+ */
+typedef int (*orcm_pnp_module_cancel_recv_fn_t)(char *app,
+                                                char *version,
+                                                char *release,
+                                                orcm_pnp_channel_t channel,
+                                                orcm_pnp_tag_t tag);
 
 
 /*
- * Send an iovec stream from this process. If the process name is WILDCARD, or is NULL, then
+ * Send an iovec stream or buffer from this process. If the process name is WILDCARD, or is NULL, then
  * the message will be multicast to the proper recipients. If the name is a specific one, then
  * the message will be directly sent to that process via an available point-to-point
  * protocol
@@ -89,28 +100,16 @@ typedef int (*orcm_pnp_module_deregister_input_fn_t)(char *app,
 typedef int (*orcm_pnp_module_output_fn_t)(orcm_pnp_channel_t channel,
                                            orte_process_name_t *recipient,
                                            orcm_pnp_tag_t tag,
-                                           struct iovec *msg, int count);
+                                           struct iovec *msg, int count,
+                                           opal_buffer_t *buffer);
 
 typedef int (*orcm_pnp_module_output_nb_fn_t)(orcm_pnp_channel_t channel,
                                               orte_process_name_t *recipient,
                                               orcm_pnp_tag_t tag,
                                               struct iovec *msg, int count,
+                                              opal_buffer_t *buffer,
                                               orcm_pnp_callback_fn_t cbfunc,
                                               void *cbdata);
-/*
- * Send a buffer from this process, subject to same notes as above
- */
-typedef int (*orcm_pnp_module_output_buffer_fn_t)(orcm_pnp_channel_t channel,
-                                                  orte_process_name_t *recipient,
-                                                  orcm_pnp_tag_t tag,
-                                                  opal_buffer_t *buffer);
-
-typedef int (*orcm_pnp_module_output_buffer_nb_fn_t)(orcm_pnp_channel_t channel,
-                                                     orte_process_name_t *recipient,
-                                                     orcm_pnp_tag_t tag,
-                                                     opal_buffer_t *buffer,
-                                                     orcm_pnp_callback_buffer_fn_t cbfunc,
-                                                     void *cbdata);
 
 /* dynamically define a new tag */
 typedef orcm_pnp_tag_t (*orcm_pnp_module_define_new_tag_fn_t)(void);
@@ -130,13 +129,10 @@ typedef struct {
     orcm_pnp_module_init_fn_t                       init;
     orcm_pnp_module_announce_fn_t                   announce;
     orcm_pnp_module_open_channel_fn_t               open_channel;
-    orcm_pnp_module_register_input_fn_t             register_input;
-    orcm_pnp_module_register_input_buffer_fn_t      register_input_buffer;
-    orcm_pnp_module_deregister_input_fn_t           deregister_input;
+    orcm_pnp_module_register_receive_fn_t           register_receive;
+    orcm_pnp_module_cancel_recv_fn_t                cancel_receive;
     orcm_pnp_module_output_fn_t                     output;
     orcm_pnp_module_output_nb_fn_t                  output_nb;
-    orcm_pnp_module_output_buffer_fn_t              output_buffer;
-    orcm_pnp_module_output_buffer_nb_fn_t           output_buffer_nb;
     orcm_pnp_module_define_new_tag_fn_t             define_new_tag;
     orcm_pnp_module_finalize_fn_t                   finalize;
 } orcm_pnp_base_module_t;

@@ -62,6 +62,8 @@ extern orte_iof_base_module_t orte_iof_orcm_module;
 void orte_iof_orcm_recv(int status,
                         orte_process_name_t *sender,
                         orcm_pnp_tag_t tag,
+                        struct iovec *msg,
+                        int count,
                         opal_buffer_t *buffer,
                         void *cbdata);
 
