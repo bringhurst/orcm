@@ -698,6 +698,6 @@ static void ps_request(int status,
                        opal_buffer_t *buffer,
                        void *cbdata)
 {
-    
+    opal_output(0, "%s GOT PS REQUEST", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
 }
 

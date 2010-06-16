@@ -64,6 +64,25 @@ int orcm_pnp_base_open(void)
 }
 
 /****    INSTANTIATE CLASSES    ****/
+static void channel_constructor(orcm_pnp_channel_obj_t *ptr)
+{
+    ptr->channel = ORCM_PNP_INVALID_CHANNEL;
+    OBJ_CONSTRUCT(&ptr->recvs, opal_list_t);
+}
+static void channel_destructor(orcm_pnp_channel_obj_t *ptr)
+{
+    opal_list_item_t *item;
+
+    while (NULL != (item = opal_list_remove_first(&ptr->recvs))) {
+        OBJ_RELEASE(item);
+    }
+    OBJ_DESTRUCT(&ptr->recvs);
+}
+OBJ_CLASS_INSTANCE(orcm_pnp_channel_obj_t,
+                   opal_object_t,
+                   channel_constructor,
+                   channel_destructor);
+
 static void source_constructor(orcm_pnp_source_t *ptr)
 {
     ptr->name.jobid = ORTE_JOBID_INVALID;
@@ -97,24 +116,12 @@ static void triplet_constructor(orcm_pnp_triplet_t *ptr)
     ptr->cbfunc = NULL;
     OBJ_CONSTRUCT(&ptr->members, opal_pointer_array_t);
     opal_pointer_array_init(&ptr->members, 8, INT_MAX, 8);
-    OBJ_CONSTRUCT(&ptr->input_recvs, opal_list_t);
-    OBJ_CONSTRUCT(&ptr->output_recvs, opal_list_t);
 }
 static void triplet_destructor(orcm_pnp_triplet_t *ptr)
 {
-    opal_list_item_t *item;
-
     if (NULL != ptr->string_id) {
         free(ptr->string_id);
     }
-    while (NULL != (item = opal_list_remove_first(&ptr->input_recvs))) {
-        OBJ_RELEASE(item);
-    }
-    OBJ_DESTRUCT(&ptr->input_recvs);
-    while (NULL != (item = opal_list_remove_first(&ptr->output_recvs))) {
-        OBJ_RELEASE(item);
-    }
-    OBJ_DESTRUCT(&ptr->output_recvs);
 }
 OBJ_CLASS_INSTANCE(orcm_pnp_triplet_t,
                    opal_object_t,

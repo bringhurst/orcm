@@ -243,7 +243,6 @@ static void tool_messages(int status,
     }
     
 cleanup:
-    opal_output(0, "%s sending tool ack", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
     if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL,
                                               sender, ORCM_PNP_TAG_TOOL,
                                               NULL, 0, &response))) {

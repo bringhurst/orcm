@@ -54,8 +54,8 @@ enum {
 
 #define ORCM_PNP_TAG_DYNAMIC    100
 
-typedef int32_t orcm_pnp_channel_t;
-#define ORCM_PNP_CHANNEL_T  OPAL_INT32
+typedef uint32_t orcm_pnp_channel_t;
+#define ORCM_PNP_CHANNEL_T  OPAL_UINT32
 
 /* inherited channels */
 enum {

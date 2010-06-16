@@ -78,13 +78,18 @@ ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_request_t);
 
 typedef struct {
     opal_object_t super;
+    orcm_pnp_channel_t channel;
+    opal_list_t recvs;
+} orcm_pnp_channel_obj_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_channel_obj_t);
+
+typedef struct {
+    opal_object_t super;
     char *string_id;
-    orcm_pnp_channel_t output;
     orcm_pnp_channel_t input;
+    orcm_pnp_channel_t output;
     orcm_pnp_open_channel_cbfunc_t cbfunc;
     opal_pointer_array_t members;
-    opal_list_t input_recvs;
-    opal_list_t output_recvs;
 } orcm_pnp_triplet_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_triplet_t);
 

@@ -58,7 +58,7 @@ int main(int argc, char* argv[])
     
     /* for this application, register to recv anything sent to our input  */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("client", "1.0", "alpha",
-                                                        ORCM_PNP_GROUP_OUTPUT_CHANNEL,
+                                                        ORCM_PNP_GROUP_INPUT_CHANNEL,
                                                         ORCM_PNP_TAG_WILDCARD, recv_input))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
@@ -89,7 +89,6 @@ static void cbfunc(int status, orte_process_name_t *name,
 {
     int i;
     
-    opal_output(0, "%s mesg sent", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
     for (i=0; i < count; i++) {
         if (NULL != msg[i].iov_base) {
             free(msg[i].iov_base);

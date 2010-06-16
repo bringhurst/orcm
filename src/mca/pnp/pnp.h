@@ -45,18 +45,6 @@ typedef int (*orcm_pnp_module_open_channel_fn_t)(char *app, char *version, char 
                                                  orcm_pnp_open_channel_cbfunc_t cbfunc);
 
 /*
- * Register to
- * The callback function MUST be specified. Providing a NULL for app, version,
- * and/or release acts as a wildcard for those values.
- *
- */
-typedef int (*orcm_pnp_module_listen_to_input_fn_t)(char *app,
-                                                   char *version,
-                                                   char *release,
-                                                   orcm_pnp_tag_t tag,
-                                                   orcm_pnp_callback_fn_t cbfunc);
-
-/*
  * Receive messages associated with the specified app/version/release triplet.
  * A channel of GROUP_INPUT  will listen to messages sent TO the specified triplet
  * on their input channel. A channel of GROUP_OUTPUT will listen to messages sent

@@ -35,7 +35,8 @@ static void send_data(int fd, short flags, void *arg);
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
-                       struct iovec *msg, int count,
+                       
+struct iovec *msg, int count,
                        opal_buffer_t *buffer,
                        void *cbdata);
 static void found_channel(char *app, char *version, char *release,
@@ -98,7 +99,6 @@ static void cbfunc(int status, orte_process_name_t *name,
 {
     int i;
     
-    opal_output(0, "%s mesg sent", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
     for (i=0; i < count; i++) {
         if (NULL != msg[i].iov_base) {
             free(msg[i].iov_base);
@@ -169,7 +169,6 @@ static void recv_input(int status,
 static void found_channel(char *app, char *version, char *release,
                           orcm_pnp_channel_t channel)
 {
-    opal_output(0, "%s found channel %d for %s:%s:%s",
                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                 channel, app, version, release);
     peer = channel;
