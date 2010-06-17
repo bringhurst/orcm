@@ -210,7 +210,13 @@ static int setup_launch(int *argcptr, char ***argvptr,
     char *orted_cmd, *orted_prefix, *final_cmd;
     int orted_index;
     int rc;
+    char *opal_prefix = getenv("OPAL_PREFIX");
+    char *opal_destdir = getenv("OPAL_DESTDIR");
+    char *orcm_destdir = getenv("ORCM_DESTDIR");
+    char* full_orted_cmd = NULL, *tmp_path=NULL, *tmp_lib=NULL;
+    int i;
 
+    opal_output(0, "SETUP LAUNCH");
     
     /* Figure out the basenames for the libdir and bindir.  This
      requires some explanation:
@@ -308,23 +314,36 @@ static int setup_launch(int *argcptr, char ***argvptr,
     opal_argv_free(orted_argv);  /* done with this */
     
     /* we now need to assemble the actual cmd that will be executed - this depends
-     * upon whether or not a prefix directory is being used
+     * upon whether or not prefix directory, opal_destdir, and orcm_destdir are being used
      */
-    if (NULL != prefix_dir) {
-        /* if we have a prefix directory, we need to set the PATH and
-         * LD_LIBRARY_PATH on the remote node, and prepend just the orted_cmd
-         * with the prefix directory
-         */
-        char *opal_prefix = getenv("OPAL_PREFIX");
-        char *orcm_destdir = getenv("ORCM_DESTDIR");
-        char* full_orted_cmd = NULL;
-
-        if( NULL != orted_cmd ) {
-            asprintf( &full_orted_cmd, "%s/%s/%s", prefix_dir, bin_base, orted_cmd );
+    if (NULL != orted_cmd) {
+      if (NULL == prefix_dir) {
+	full_orted_cmd = strdup(orted_cmd);
+      } else {
+        asprintf( &full_orted_cmd, "%s/%s/%s", prefix_dir, bin_base, orted_cmd );
+      }
+	if (NULL != orcm_destdir) {
+           asprintf(&tmp_path, "%s/%s", orcm_destdir, full_orted_cmd);
+           free(full_orted_cmd);
+           full_orted_cmd = tmp_path;
         }
+    }
 
-        if (ORTE_PLM_RSH_SHELL_SH == remote_shell ||
-            ORTE_PLM_RSH_SHELL_KSH == remote_shell ||
+    if (NULL != orcm_destdir) {
+      if (NULL == prefix_dir) {
+	asprintf(&tmp_path, "%s/%s", orcm_destdir, bin_base);
+	asprintf(&tmp_lib, "%s/%s", orcm_destdir, lib_base);
+      } else {
+        asprintf(&tmp_path, "%s/%s/%s", orcm_destdir, prefix_dir, bin_base);
+        asprintf(&tmp_lib, "%s/%s/%s", orcm_destdir, prefix_dir, lib_base);
+      }
+    } else if (NULL != prefix_dir) {
+        asprintf(&tmp_path, "%s/%s", prefix_dir, bin_base);
+        asprintf(&tmp_lib, "%s/%s", prefix_dir, lib_base);
+    }
+
+    if (ORTE_PLM_RSH_SHELL_SH == remote_shell ||
+         ORTE_PLM_RSH_SHELL_KSH == remote_shell ||
             ORTE_PLM_RSH_SHELL_ZSH == remote_shell ||
             ORTE_PLM_RSH_SHELL_BASH == remote_shell) {
             /* if there is nothing preceding orted, then we can just
@@ -332,14 +351,22 @@ static int setup_launch(int *argcptr, char ***argvptr,
              * we have to insert the orted_prefix in the right place
              */
             asprintf (&final_cmd,
-                      "%s%s%s PATH=%s/%s:$PATH ; export PATH ; "
-                      "LD_LIBRARY_PATH=%s/%s:$LD_LIBRARY_PATH ; export LD_LIBRARY_PATH ; "
-                      "%s %s",
+                      "%s%s%s %s%s%s %s%s%s %s%s%s %s%s%s %s %s",
                       (opal_prefix != NULL ? "OPAL_PREFIX=" : " "),
                       (opal_prefix != NULL ? opal_prefix : " "),
                       (opal_prefix != NULL ? " ; export OPAL_PREFIX;" : " "),
-                      prefix_dir, bin_base,
-                      prefix_dir, lib_base,
+		      (opal_destdir != NULL ? "OPAL_DESTDIR=" : " "),
+		      (opal_destdir != NULL ? opal_destdir : " "),
+		      (opal_destdir != NULL ? " ; export OPAL_DESTDIR;" : " "),
+		      (orcm_destdir != NULL ? "ORCM_DESTDIR=" : " "),
+		      (orcm_destdir != NULL ? orcm_destdir : " "),
+		      (orcm_destdir != NULL ? " ; export ORCM_DESTDIR;" : " "),
+		      (tmp_path != NULL ? "PATH=" : " "),
+		      (tmp_path != NULL ? tmp_path : " "),
+		      (tmp_path != NULL ? ":$PATH ; export PATH ; " : " "),
+		      (tmp_lib != NULL ? "LD_LIBRARY_PATH=" : " "),
+		      (tmp_lib != NULL ? tmp_lib : " "),
+		      (tmp_lib != NULL ? ":$LD_LIBRARY_PATH ; export LD_LIBRARY_PATH ; " : " "),
                       (orted_prefix != NULL ? orted_prefix : " "),
                       (full_orted_cmd != NULL ? full_orted_cmd : " "));
         } else if (ORTE_PLM_RSH_SHELL_TCSH == remote_shell ||
@@ -357,39 +384,51 @@ static int setup_launch(int *argcptr, char ***argvptr,
              * we have to insert the orted_prefix in the right place
              */
             asprintf (&final_cmd,
-                      "%s%s%s set path = ( %s/%s $path ) ; "
-                      "if ( $?LD_LIBRARY_PATH == 1 ) "
-                      "set OMPI_have_llp ; "
-                      "if ( $?LD_LIBRARY_PATH == 0 ) "
-                      "setenv LD_LIBRARY_PATH %s/%s ; "
-                      "if ( $?OMPI_have_llp == 1 ) "
-                      "setenv LD_LIBRARY_PATH %s/%s:$LD_LIBRARY_PATH ; "
-                      "%s %s",
+                      "%s%s%s %s%s%s %s%s%s %s%s%s  %s%s%s%s%s %s %s",
                       (opal_prefix != NULL ? "setenv OPAL_PREFIX " : " "),
                       (opal_prefix != NULL ? opal_prefix : " "),
                       (opal_prefix != NULL ? " ;" : " "),
-                      prefix_dir, bin_base,
-                      prefix_dir, lib_base,
-                      prefix_dir, lib_base,
+		      (opal_destdir != NULL ? "setenv OPAL_DESTDIR=" : " "),
+		      (opal_destdir != NULL ? opal_destdir : " "),
+		      (opal_destdir != NULL ? " ;" : " "),
+		      (orcm_destdir != NULL ? "setenv ORCM_DESTDIR=" : " "),
+		      (orcm_destdir != NULL ? orcm_destdir : " "),
+		      (orcm_destdir != NULL ? " ;" : " "),
+		      (tmp_path != NULL ? "set path = ( " : " "),
+		      (tmp_path != NULL ? tmp_path : " "),
+		      (tmp_path != NULL ? " $path ) ; " : " "),
+		      (tmp_lib != NULL ? "if ( $?LD_LIBRARY_PATH == 1 ) set OMPI_have_llp ; if ( $?LD_LIBRARY_PATH == 0 ) setenv LD_LIBRARY_PATH " : " "),
+		      (tmp_lib != NULL ? tmp_lib : " "),
+		      (tmp_lib != NULL ? " ; if ( $?OMPI_have_llp == 1 ) setenv LD_LIBRARY_PATH" : " "),
+		      (tmp_lib != NULL ? tmp_lib : " "),
+		      (tmp_lib != NULL ? ":$LD_LIBRARY_PATH ; " : " "),
                       (orted_prefix != NULL ? orted_prefix : " "),
                       (full_orted_cmd != NULL ? full_orted_cmd : " "));
         } else {
             orte_show_help("help-plm-orcm.txt", "cannot-resolve-shell-with-prefix", true,
                            (NULL == opal_prefix) ? "NULL" : opal_prefix,
                            prefix_dir);
+	    free(tmp_path);
+	    free(tmp_lib);
             return ORTE_ERR_SILENT;
         }
         if( NULL != full_orted_cmd ) {
             free(full_orted_cmd);
         }
-    } else {
-        /* no prefix directory, so just aggregate the result */
-        asprintf(&final_cmd, "%s %s",
-                 (orted_prefix != NULL ? orted_prefix : ""),
-                 (orted_cmd != NULL ? orted_cmd : ""));
+    free(tmp_path);
+    free(tmp_lib);
+
+    /* strip all but one space from beginning of cmd */
+    tmp_path = final_cmd;
+    for (i=0; i < strlen(final_cmd)-1; i++) {
+      if (' ' != final_cmd[i+1]) {
+	break;
+      }
+      tmp_path++;
     }
+
     /* now add the final cmd to the argv array */
-    opal_argv_append(&argc, &argv, final_cmd);
+    opal_argv_append(&argc, &argv, tmp_path);
     free(final_cmd);  /* done with this */
     if (NULL != orted_prefix) free(orted_prefix);
     if (NULL != orted_cmd) free(orted_cmd);
@@ -448,9 +487,12 @@ static int setup_launch(int *argcptr, char ***argvptr,
         opal_argv_append(&argc, &argv, ")");
     }
 
-    if (0 < opal_output_get_verbosity(orte_plm_globals.output)) {
+    if (0 < 1) {
+#if 0
+ opal_output_get_verbosity(orte_plm_globals.output)) {
+#endif
         param = opal_argv_join(argv, ' ');
-        OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output,
+        OPAL_OUTPUT_VERBOSE((0, orte_plm_globals.output,
                              "%s plm:orcm: final template argv:\n\t%s",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                              (NULL == param) ? "NULL" : param));
@@ -496,6 +538,7 @@ static void ssh_child(int argc, char **argv, orte_vpid_t vpid,
     if (0 == strcmp(node_name, orte_process_info.nodename) ||
         0 == strcmp(node_name, "localhost") ||
         opal_ifislocal(node_name)) {
+      opal_output(0, "LOCAL LAUNCH");
         getcwd(cwd, OPAL_PATH_MAX);
         exec_argv = &argv[node_name_index1+1];
         /* sounds strange, but there is a space at the beginning of this
@@ -512,6 +555,7 @@ static void ssh_child(int argc, char **argv, orte_vpid_t vpid,
         }
     } else {
         /* remote launch */
+      opal_output(0, "REMOTE LAUNCH");
         exec_argv = argv;
         exec_path = strdup(orte_plm_globals.rsh_agent_path);
     }
@@ -560,7 +604,7 @@ static void ssh_child(int argc, char **argv, orte_vpid_t vpid,
     
     /* exec the daemon */
     var = opal_argv_join(exec_argv, ' ');
-    OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output,
+    OPAL_OUTPUT_VERBOSE((0, orte_plm_globals.output,
                          "%s plm:orcm: executing: (%s) [%s]",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                          exec_path, (NULL == var) ? "NULL" : var));
