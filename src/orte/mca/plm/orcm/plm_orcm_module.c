@@ -150,6 +150,8 @@ static struct timeval joblaunchstart, joblaunchstop;
 
 /* local global storage */
 static orte_jobid_t active_job=ORTE_JOBID_INVALID;
+static char *orted_rsh_cmd_line=NULL;
+static char *orted_setup_line=NULL;
 
 /**
  * Init the module
@@ -215,7 +217,7 @@ static int setup_launch(int *argcptr, char ***argvptr,
     char *opal_prefix = getenv("OPAL_PREFIX");
     char *opal_destdir = getenv("OPAL_DESTDIR");
     char *orcm_destdir = getenv("ORCM_DESTDIR");
-    char* full_orted_cmd = NULL, *tmp_path=NULL, *tmp_lib=NULL;
+    char *tmp_path=NULL, *tmp_lib=NULL;
     int i;
 
     /* Figure out the basenames for the libdir and bindir.  This
@@ -316,19 +318,27 @@ static int setup_launch(int *argcptr, char ***argvptr,
     /* we now need to assemble the actual cmd that will be executed - this depends
      * upon whether or not prefix directory, opal_destdir, and orcm_destdir are being used
      */
+    if (NULL != orted_rsh_cmd_line) {
+        free(orted_rsh_cmd_line);
+        orted_rsh_cmd_line = NULL;
+    }
     if (NULL != orted_cmd) {
         if (NULL == prefix_dir) {
-            full_orted_cmd = strdup(orted_cmd);
+            orted_rsh_cmd_line = strdup(orted_cmd);
         } else {
-            asprintf( &full_orted_cmd, "%s/%s/%s", prefix_dir, bin_base, orted_cmd );
+            asprintf( &orted_rsh_cmd_line, "%s/%s/%s", prefix_dir, bin_base, orted_cmd );
         }
 	if (NULL != orcm_destdir) {
-            asprintf(&tmp_path, "%s/%s/%s", orcm_destdir, bin_base, full_orted_cmd);
-            free(full_orted_cmd);
-            full_orted_cmd = tmp_path;
+            asprintf(&tmp_path, "%s/%s/%s", orcm_destdir, bin_base, orted_rsh_cmd_line);
+            free(orted_rsh_cmd_line);
+            orted_rsh_cmd_line = tmp_path;
         }
     }
 
+    /* now create the setup line for launching the orted. this is the environ
+     * mangling required to ensure that the remote orted can find its bin
+     * and libs
+     */
     if (NULL != orcm_destdir) {
         if (NULL == prefix_dir) {
             asprintf(&tmp_path, "%s/%s", orcm_destdir, bin_base);
@@ -350,7 +360,7 @@ static int setup_launch(int *argcptr, char ***argvptr,
          * assemble the cmd with the orted_cmd at the end. Otherwise,
          * we have to insert the orted_prefix in the right place
          */
-        asprintf (&final_cmd,
+        asprintf (&orted_setup_line,
                   "%s%s%s %s%s%s %s%s%s %s%s%s %s%s%s",
                   (opal_prefix != NULL ? "OPAL_PREFIX=" : " "),
                   (opal_prefix != NULL ? opal_prefix : " "),
@@ -381,7 +391,7 @@ static int setup_launch(int *argcptr, char ***argvptr,
          * assemble the cmd with the orted_cmd at the end. Otherwise,
          * we have to insert the orted_prefix in the right place
          */
-        asprintf (&final_cmd,
+        asprintf (&orted_setup_line,
                   "%s%s%s %s%s%s %s%s%s %s%s%s  %s%s%s%s%s",
                   (opal_prefix != NULL ? "setenv OPAL_PREFIX " : " "),
                   (opal_prefix != NULL ? opal_prefix : " "),
@@ -408,36 +418,11 @@ static int setup_launch(int *argcptr, char ***argvptr,
 	free(tmp_lib);
         return ORTE_ERR_SILENT;
     }
-    if (NULL != full_orted_cmd) {
-        free(full_orted_cmd);
-    }
     free(tmp_path);
     free(tmp_lib);
 
-    /* strip all spaces from beginning of cmd */
-    tmp_path = final_cmd;
-    for (i=0; i < strlen(final_cmd); i++) {
-        if (' ' != final_cmd[i]) {
-            break;
-        }
-        tmp_path++;
-    }
-
-    /* now add the final cmd to the argv array */
-    opal_argv_append(&argc, &argv, tmp_path);
-    free(final_cmd);  /* done with this */
-
-    /* add the orted prefix, if it was given */
-    if (NULL != orted_prefix) {
-        opal_argv_append(&argc, &argv, orted_prefix);
-        free(orted_prefix);
-    }
-
-    /* now add the orted cmd to the argv array */
-    opal_argv_append(&argc, &argv, full_orted_cmd);
-    free(orted_cmd);
-    free(full_orted_cmd);
-    /* mark its location */
+    /* now add a placeholder to the argv array for the final cmd */
+    opal_argv_append(&argc, &argv, "<template>");
     *orted_cmd_index = argc-1;
     
 #if 0
@@ -494,10 +479,7 @@ static int setup_launch(int *argcptr, char ***argvptr,
         opal_argv_append(&argc, &argv, ")");
     }
 
-    if (0 < 1) {
-#if 0
-        opal_output_get_verbosity(orte_plm_globals.output)) {
-#endif
+    if (opal_output_get_verbosity(orte_plm_globals.output)) {
         param = opal_argv_join(argv, ' ');
         OPAL_OUTPUT_VERBOSE((0, orte_plm_globals.output,
                              "%s plm:orcm: final template argv:\n\t%s",
@@ -540,14 +522,14 @@ static void ssh_child(int argc, char **argv, orte_vpid_t vpid,
     
     node_name = argv[node_name_index1];
     
-    opal_output(0, "LAUNCHING ON NODE %s FROM NODE %s", node_name, orte_process_info.nodename);
-
     /* if this is a local launch, then we just exec - we were already fork'd */
     if (0 == strcmp(node_name, orte_process_info.nodename) ||
         0 == strcmp(node_name, "localhost") ||
         opal_ifislocal(node_name)) {
-        opal_output(0, "LOCAL LAUNCH");
         getcwd(cwd, OPAL_PATH_MAX);
+        /* for a local launch, we only need the orted_cmd_line itself */
+        free(argv[orted_cmd_index]);
+        argv[orted_cmd_index] = strdup(orted_rsh_cmd_line);
         exec_argv = &argv[orted_cmd_index];
         exec_path = opal_path_findv(exec_argv[0], X_OK, orte_launch_environ, cwd);
         if (NULL == exec_path) {
@@ -556,7 +538,11 @@ static void ssh_child(int argc, char **argv, orte_vpid_t vpid,
         }
     } else {
         /* remote launch */
-        opal_output(0, "REMOTE LAUNCH");
+        /* insert a combination of the orted_setup_line and orted_cmd_line to
+         * ensure that the remote orted gets the correct environment when launched
+         */
+        free(argv[orted_cmd_index]);
+        asprintf(&argv[orted_cmd_index], "%s %s", orted_setup_line, orted_cmd_line);
         exec_argv = argv;
         exec_path = strdup(orte_plm_globals.rsh_agent_path);
     }
@@ -605,7 +591,7 @@ static void ssh_child(int argc, char **argv, orte_vpid_t vpid,
     
     /* exec the daemon */
     var = opal_argv_join(exec_argv, ' ');
-    OPAL_OUTPUT_VERBOSE((0, orte_plm_globals.output,
+    OPAL_OUTPUT_VERBOSE((2, orte_plm_globals.output,
                          "%s plm:orcm: executing: (%s) [%s]",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                          exec_path, (NULL == var) ? "NULL" : var));
