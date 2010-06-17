@@ -18,7 +18,7 @@ sources = \
 # Building outside of the ORTE tree, we can *ONLY* build components as
 # DSOs (because libopen-rte.* has already been created/finalized).
 
-ortemcacomponentdir = $(ORTE_PLUGIN_DIR)
-ortemcacomponent_LTLIBRARIES = mca_plm_orcm.la
+mcacomponentdir = $(pkglibdir)
+mcacomponent_LTLIBRARIES = mca_plm_orcm.la
 mca_plm_orcm_la_SOURCES = $(sources)
 mca_plm_orcm_la_LDFLAGS = -module -avoid-version

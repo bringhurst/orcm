@@ -64,10 +64,9 @@ static bool forcibly_die=false;
 
 int orcm_init(orcm_proc_type_t flags)
 {
-    int i, ret;
-    char *error, *mcp, *new_mcp;
+    int ret;
+    char *error;
     int spin;
-    char *destdir;
 
     if (NULL != getenv("ORCM_MCA_spin")) {
         spin = 1;
@@ -88,28 +87,6 @@ int orcm_init(orcm_proc_type_t flags)
         error = "orte_init";
         goto error;
     }
-
-    /* Add ORCM's component directory into the
-       mca_base_param_component_path */
-    i = mca_base_param_find("mca", NULL, "component_path");
-    if (i < 0) {
-        ret = ORCM_ERR_NOT_FOUND;
-        error = "Could not find mca_component_path";
-        goto error;
-    }
-    mca_base_param_lookup_string(i, &mcp);
-    if (NULL == mcp) {
-        ret = ORCM_ERR_NOT_FOUND;
-        error = "Could not find mca_component_path";
-        goto error;
-    }
-    if (NULL != (destdir = getenv("ORCM_DESTDIR"))) {
-        asprintf(&new_mcp, "%s%s:%s", destdir, ORCM_PKGLIBDIR, mcp);
-    } else {
-        asprintf(&new_mcp, "%s:%s", ORCM_PKGLIBDIR, mcp);
-    }
-    mca_base_param_set_string(i, new_mcp);
-    free(new_mcp);
 
     /* setup the pnp framework */
     if (ORCM_SUCCESS != (ret = orcm_pnp_base_open())) {
@@ -139,12 +116,12 @@ error:
 
 int orcm_init_util(void)
 {
-    int ret;
+    int ret, i;
     char *error;
-    char *destdir, *tmp;
+    char *destdir, *tmp, *mcp, *new_mcp;
 
-    /* Ensure that enough of OPAL is setup for us to be able to run */
-    if( ORTE_SUCCESS != (ret = opal_init_util(NULL, NULL)) ) {
+    /* Setup OPAL */
+    if( ORTE_SUCCESS != (ret = opal_init(NULL, NULL)) ) {
         error = "opal_init_util";
         goto error;
     }
@@ -162,6 +139,28 @@ int orcm_init_util(void)
     }
     free(tmp);
     
+    /* Add ORCM's component directory into the
+       mca_base_param_component_path */
+    i = mca_base_param_find("mca", NULL, "component_path");
+    if (i < 0) {
+        ret = ORCM_ERR_NOT_FOUND;
+        error = "Could not find mca_component_path";
+        goto error;
+    }
+    mca_base_param_lookup_string(i, &mcp);
+    if (NULL == mcp) {
+        ret = ORCM_ERR_NOT_FOUND;
+        error = "Could not find mca_component_path";
+        goto error;
+    }
+    if (NULL != destdir) {
+        asprintf(&new_mcp, "%s%s:%s", destdir, ORCM_PKGLIBDIR, mcp);
+    } else {
+        asprintf(&new_mcp, "%s:%s", ORCM_PKGLIBDIR, mcp);
+    }
+    mca_base_param_set_string(i, new_mcp);
+    free(new_mcp);
+
     orcm_util_initialized = true;
     
     return ORCM_SUCCESS;
