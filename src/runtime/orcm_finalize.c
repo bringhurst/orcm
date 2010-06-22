@@ -20,20 +20,17 @@
 
 int orcm_finalize(void)
 {
-    if (orcm_util_initialized) {
-        opal_finalize_util();
-        orcm_util_initialized = false;
-    }
-    
     if (!orcm_initialized) {
         return ORCM_SUCCESS;
     }
-    
+
     /* remove all signal handlers */
     orcm_remove_signal_handlers();
 
-    if (ORTE_PROC_IS_APP) {
-        orcm_pnp_base_close();
+    orcm_pnp_base_close();
+    
+    if (ORCM_PROC_IS_MASTER) {
+        orcm_cfgi_base_close();
     }
 
     orte_finalize();

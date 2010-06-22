@@ -67,10 +67,12 @@
 #include "orte/mca/errmgr/errmgr.h"
 #include "orte/runtime/orte_globals.h"
 #include "orte/runtime/orte_locks.h"
+#include "orte/runtime/orte_wait.h"
 #include "orte/mca/plm/plm.h"
 #include "orte/mca/plm/base/plm_private.h"
 #include "orte/mca/rml/rml.h"
 #include "orte/mca/rmcast/base/base.h"
+#include "orte/mca/rmaps/rmaps_types.h"
 
 #include "mca/pnp/pnp.h"
 
@@ -132,6 +134,7 @@ static uint32_t my_uid;
 static bool start_flag;
 static opal_mutex_t start_lock;
 static opal_condition_t start_cond;
+static opal_event_t *exit_event;
 
 static void ps_request(int status,
                        orte_process_name_t *sender,
@@ -145,9 +148,11 @@ static void vm_tracker(char *app, char *version, char *release,
 
 static void release(int fd, short flag, void *dump);
 
+static void failed_startup(int trigpipe, short event, void *arg);
+
 int main(int argc, char *argv[])
 {
-    int ret;
+    int ret, i;
     opal_cmd_line_t cmd_line;
     orte_proc_t *proc;
     orte_app_context_t *app=NULL;
@@ -222,6 +227,19 @@ int main(int argc, char *argv[])
         return 1;
     }
     
+    /* setup an event we can wait for that will tell
+     * us to terminate - both normal and abnormal
+     * termination will call us here. Use the
+     * same exit fd as the daemon does so that orted_comm
+     * can cause either of us to exit since we share that code
+     */
+    if (ORTE_SUCCESS != (ret = orte_wait_event(&exit_event, &orte_exit, "failed-startup", failed_startup))) {
+        orte_show_help("help-orterun.txt", "orterun:event-def-failed", true,
+                       "orcm", ORTE_ERROR_NAME(ret));
+        ORTE_UPDATE_EXIT_STATUS(ORTE_ERROR_DEFAULT_EXIT_CODE);
+        goto cleanup;
+    }
+    
     /* check for request to report uri */
     if (NULL != my_globals.report_uri) {
         FILE *fp;
@@ -247,17 +265,6 @@ int main(int argc, char *argv[])
         if (NULL != rml_uri) {
             free(rml_uri);
         }        
-    }
-    
-    /* need the cfgi framework too */
-    if (ORTE_SUCCESS != (ret = orcm_cfgi_base_open())) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
-    }
-    
-    if (ORTE_SUCCESS != (ret = orcm_cfgi_base_select())) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
     }
     
     /* lookup the daemon job data object */
@@ -295,8 +302,8 @@ int main(int argc, char *argv[])
     
     /* ensure our mapping policy will utilize any VM */
     ORTE_ADD_MAPPING_POLICY(ORTE_MAPPING_USE_VM);
-    /* use byslot mapping by default */
-    ORTE_ADD_MAPPING_POLICY(ORTE_MAPPING_BYSLOT);
+    /* use bynode mapping by default */
+    ORTE_ADD_MAPPING_POLICY(ORTE_MAPPING_BYNODE);
 
     /* create an app */
     app = OBJ_NEW(orte_app_context_t);
@@ -305,9 +312,14 @@ int main(int argc, char *argv[])
     /* add to the daemon job - always must be an app for a job */
     opal_pointer_array_add(daemons->apps, app);
     
-    /* if we were given hosts to startup, create an app for the
-     * daemon job so it can start the virtual machine
+    /* setup the daemon map so it knows how to map them */
+    daemons->map = OBJ_NEW(orte_job_map_t);
+    daemons->map->policy = ORTE_MAPPING_BYNODE;
+
+    /* if we were given hosts to startup, add them to the global
+     * node array
      */
+    
     if (NULL != my_globals.hosts || NULL != my_globals.hostfile) {
         if (NULL != my_globals.hosts) {
             app->dash_host = opal_argv_split(my_globals.hosts, ',');
@@ -320,6 +332,16 @@ int main(int argc, char *argv[])
     /* ensure we always utilize the local node as well */
     orte_hnp_is_allocated = true;
     
+    /* set the number of daemons to launch to be the number
+     * of nodes known to the system
+     */
+    app->num_procs = 0;
+    for (i=0; i < orte_node_pool->size; i++) {
+        if (NULL != opal_pointer_array_get_item(orte_node_pool, i)) {
+            app->num_procs++;
+        }
+    }
+
     /* launch the virtual machine - this will launch a daemon on
      * each node. It will simply return if there are no known
      * nodes other than the one we are on
@@ -332,6 +354,20 @@ int main(int argc, char *argv[])
     
     opal_output(orte_clean_output, "\nORCM DISTRIBUTED VIRTUAL MACHINE %s RUNNING...\n",
                 ORTE_JOB_FAMILY_PRINT(ORTE_PROC_MY_NAME->jobid));
+    
+    /* now open the cfgi framework - need to wait until AFTER we
+     * launch the daemons in case the cfgi module immediately tells
+     * us to launch apps
+     */
+    if (ORTE_SUCCESS != (ret = orcm_cfgi_base_open())) {
+        ORTE_ERROR_LOG(ret);
+        goto cleanup;
+    }
+    
+    if (ORTE_SUCCESS != (ret = orcm_cfgi_base_select())) {
+        ORTE_ERROR_LOG(ret);
+        goto cleanup;
+    }
     
     opal_event_dispatch();
     
@@ -545,3 +581,10 @@ respond:
     }
     OBJ_DESTRUCT(&ans);
 }
+
+static void failed_startup(int trigpipe, short event, void *arg)
+{
+    orcm_finalize();
+    exit(orte_exit_status);
+}
+
