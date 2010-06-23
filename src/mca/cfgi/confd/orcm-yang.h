@@ -28,38 +28,44 @@ extern void orcm__init(void);
 #define orcm_ORTE_JOB_STATE_ABORTED_WO_SYNC 10
 #define orcm_ORTE_JOB_STATE_INIT 1
 #define orcm_LCs 2
+#define orcm_ORTE_PROC_STATE_HEARTBEAT_FAILED 16
 #define orcm_ORTE_JOB_STATE_FAILED_TO_START 8
+#define orcm_ORTE_PROC_STATE_REGISTERED 5
 #define orcm_ORTE_JOB_STATE_ABORTED 7
-#define orcm_ORTE_PROC_STATE_TERMINATED 6
+#define orcm_ORTE_PROC_STATE_TERMINATED 7
 #define orcm_ORTE_PROC_STATE_LAUNCHED 3
 #define orcm_ORTE_JOB_STATE_RUNNING 4
 #define orcm_ORTE_JOB_STATE_UNDEF 0
+#define orcm_ORTE_PROC_STATE_SENSOR_BOUND_EXCEEDED 14
 #define orcm_ORTE_JOB_STATE_ABORTED_BY_SIG 9
 #define orcm_RPs 1
-#define orcm_ORTE_PROC_STATE_ABORTED_WO_SYNC 10
 #define orcm_not_SPs 3
-#define orcm_ORTE_PROC_STATE_ABORTED_BY_SIG 9
+#define orcm_ORTE_PROC_STATE_ABORTED_BY_SIG 11
 #define orcm_ORTE_JOB_STATE_ABORT_ORDERED 13
 #define orcm_ORTE_JOB_STATE_NEVER_LAUNCHED 12
-#define orcm_ORTE_PROC_STATE_FAILED_TO_START 8
+#define orcm_ORTE_PROC_STATE_FAILED_TO_START 10
 #define orcm_ORTE_JOB_STATE_UNTERMINATED 5
 #define orcm_ORTE_PROC_STATE_INIT 1
 #define orcm_ORTE_JOB_STATE_RESTART 2
 #define orcm_ORTE_PROC_STATE_RESTART 2
-#define orcm_ORTE_PROC_STATE_KILLED_BY_CMD 11
+#define orcm_ORTE_PROC_STATE_KILLED_BY_CMD 8
 #define orcm_ORTE_PROC_STATE_UNDEF 0
 #define orcm_ORTE_JOB_STATE_KILLED_BY_CMD 11
-#define orcm_ORTE_PROC_STATE_UNTERMINATED 5
+#define orcm_ORTE_PROC_STATE_UNTERMINATED 6
 #define orcm_all 0
 #define orcm_ORTE_PROC_STATE_RUNNING 4
 #define orcm_ORTE_JOB_STATE_TERMINATED 6
-#define orcm_ORTE_PROC_STATE_ABORTED 7
+#define orcm_ORTE_PROC_STATE_CALLED_ABORT 15
+#define orcm_ORTE_PROC_STATE_TERM_WO_SYNC 12
+#define orcm_ORTE_PROC_STATE_COMM_FAILED 13
+#define orcm_ORTE_PROC_STATE_ABORTED 9
 #define orcm_ORTE_JOB_STATE_LAUNCHED 3
 #define orcm_loc 2031061964
 #define orcm_max_global_restarts 910723330
 #define orcm_replica 861726632
 #define orcm_sensor_data 1175993476
 #define orcm_app_name 1425497104
+#define orcm_vpid 865825590
 #define orcm_replicas 423945804
 #define orcm_job_state 707599105
 #define orcm_rml_contact_info 835057509
@@ -74,8 +80,8 @@ extern void orcm__init(void);
 #define orcm_app_context_id 1986328700
 #define orcm_local_max_restarts 2042655077
 #define orcm_exec 1716494663
-#define orcm_instance_name 965600200
 #define orcm_global_max_restarts 1621547032
+#define orcm_instance_name 965600200
 #define orcm_replica_name 996821894
 #define orcm_job_id 1787667438
 #define orcm_leader_exclude 739990340
@@ -83,6 +89,7 @@ extern void orcm__init(void);
 #define orcm_exec_name 1057029957
 #define orcm_num_replicas_launched 362091585
 #define orcm_app_context 540634402
+#define orcm_node_name 122353445
 #define orcm_num_procs 1596763349
 #define orcm_version 1714291735
 #define orcm_orte_node 1848244854
@@ -114,7 +121,6 @@ extern void orcm__init(void);
 #define orcm_oper 1313484953
 #define orcm_working_dir 1669518446
 #define orcm__callpointid_orcm_oper "orcm_oper"
-#define orcm__callpointid_orte_node "orte-node"
 
 #ifdef __cplusplus
 }

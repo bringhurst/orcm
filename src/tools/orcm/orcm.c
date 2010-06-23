@@ -274,6 +274,8 @@ int main(int argc, char *argv[])
     }
     /* ensure the accounting starts correctly */
     daemons->num_reported = 1;
+    /* define a job name */
+    daemons->name = strdup("ORCM DVM");
     
     /* listen for PS requests */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-ps", "0.1", "alpha",
@@ -308,6 +310,7 @@ int main(int argc, char *argv[])
     /* create an app */
     app = OBJ_NEW(orte_app_context_t);
     app->app = strdup("orcmd");
+    app->name = strdup("ORCM DAEMON");
     opal_argv_append_nosize(&app->argv, "orcmd");
     /* add to the daemon job - always must be an app for a job */
     opal_pointer_array_add(daemons->apps, app);

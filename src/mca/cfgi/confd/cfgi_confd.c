@@ -24,6 +24,7 @@ typedef unsigned int boolean;
 #include "opal/util/opal_environ.h"
 #include "opal/util/basename.h"
 
+#include "orte/mca/plm/base/plm_private.h"
 #include "orte/runtime/orte_globals.h"
 
 #include "mca/cfgi/cfgi.h"
@@ -284,18 +285,28 @@ static boolean parse(confd_hkeypath_t *kp,
 	      return TRUE;
             } else if (CDB_SUB_ABORT == notify_type) {
               opal_output(0, "NOTIFY: ABORT - ignoring");
+	      if (NULL != jdata) {
+		OBJ_RELEASE(jdata);
+	      }
+	      return TRUE;
             } else if (CDB_SUB_COMMIT == notify_type) {
               opal_output(0, "NOTIFY: COMMIT");
+	      /* get the next jobid */
+	      orte_plm_base_create_jobid(jdata);
+	      /* add this to the job data array */
+	      opal_pointer_array_set_item(orte_job_data, ORTE_LOCAL_JOBID(jdata->jobid), jdata);
+	      /* display the result */
               opal_dss.dump(0, jdata, ORTE_JOB);
+	      /* protect that data */
+	      jdata = NULL;
+	      return TRUE;
             } else {
               opal_output(0, "NOTIFY: UNKNOWN");
+	      return TRUE;
             }
         } else {
             opal_output(0, "event completed - null jdata");
         }
-	if (NULL !=  jdata) {
-	  OBJ_RELEASE(jdata);
-	}
         return TRUE;
     }
     
@@ -439,29 +450,590 @@ static boolean install_handler(confd_hkeypath_t *kp,
 static int orcm_get_elem (struct confd_trans_ctx *tctx,
 			  confd_hkeypath_t       *kp)
 {
-    int index, arr_ix;
-    char *cp;
-    confd_value_t val, *vp;
+  int index, arr_ix, ret;
+  char *cp;
+  confd_value_t val, *vp;
+  orte_job_t *jdat;
+  orte_proc_t *proc;
+  orte_node_t *node;
+  uint16_t ui16;
+  int32_t i32;
 
-    /*
-     * look at the first XML tag in the keypath to see which element
-     * is being requested
-     */
-    switch (qc_get_xmltag(kp, 1)) {
-    case orcm_job_state:
-        CONFD_SET_ENUM_HASH(&val, 1);
-        confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
-
-    case orcm_job_id:
-      CONFD_SET_UINT32(&val, 123);
-      break;
-
-    default:
-      confd_data_reply_not_found(tctx);
+  /*
+   * look at the first XML tag in the keypath to see which element
+   * is being requested
+   */
+  switch (qc_get_xmltag(kp, 1)) {
+  case orcm_job_id:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      goto notfound;
     }
-
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      /* job no longer exists */
+      goto notfound;
+    }
+    CONFD_SET_UINT32(&val, jdat->jobid);
+    confd_data_reply_value(tctx, &val);
     return CONFD_OK;
+
+  case orcm_job_name:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      goto notfound;
+    }
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      /* job no longer exists */
+      goto notfound;
+    }
+    if (NULL == jdat->name) {
+      CONFD_SET_CBUF(&val, "NONE", 4);
+    } else {
+      CONFD_SET_CBUF(&val, jdat->name, strlen(jdat->name));
+    }
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+    break;
+
+  case orcm_job_state:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      goto notfound;
+    }
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_XMLTAG(vp));
+    if (NULL == jdat) {
+      /* job no longer exists */
+      goto notfound;
+    }
+    /* sadly, have to translate job state into yang's enum values */
+    switch (jdat->state) {
+    case ORTE_JOB_STATE_UNDEF:
+      ret = 0;
+      break;
+    case ORTE_JOB_STATE_INIT:
+      ret = 1;
+      break;
+    case ORTE_JOB_STATE_RESTART:
+      ret = 2;
+      break;
+    case ORTE_JOB_STATE_LAUNCHED:
+      ret = 3;
+      break;
+    case ORTE_JOB_STATE_RUNNING:
+      ret = 4;
+      break;
+    case ORTE_JOB_STATE_UNTERMINATED:
+      ret = 5;
+      break;
+    case ORTE_JOB_STATE_TERMINATED:
+      ret = 6;
+      break;
+    case ORTE_JOB_STATE_ABORTED:
+      ret = 7;
+      break;
+    case ORTE_JOB_STATE_FAILED_TO_START:
+      ret = 8;
+      break;
+    case ORTE_JOB_STATE_ABORTED_BY_SIG:
+      ret = 9;
+      break;
+    case ORTE_JOB_STATE_ABORTED_WO_SYNC:
+      ret = 10;
+      break;
+    case ORTE_JOB_STATE_KILLED_BY_CMD:
+      ret = 11;
+      break;
+    case ORTE_JOB_STATE_NEVER_LAUNCHED:
+      ret = 12;
+      break;
+    case ORTE_JOB_STATE_ABORT_ORDERED:
+      ret = 13;
+      break;
+    default:
+      goto notfound;
+    }
+    CONFD_SET_ENUM_HASH(&val, ret);
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  case orcm_num_replicas_requested:
+  case orcm_num_replicas_launched:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      goto notfound;
+    }
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      /* job no longer exists */
+      goto notfound;
+    }
+    ui16 = jdat->num_procs;
+    CONFD_SET_UINT16(&val, ui16);
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  case orcm_num_replicas_terminated:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      goto notfound;
+    }
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      /* job no longer exists */
+      goto notfound;
+    }
+    ui16 = jdat->num_terminated;
+    CONFD_SET_UINT16(&val, ui16);
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  case orcm_aborted:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      goto notfound;
+    }
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      /* job no longer exists */
+      goto notfound;
+    }
+    break;
+
+  case orcm_aborted_procedure:
+    goto notfound;
+    break;
+
+  case orcm_app_context:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      goto notfound;
+    }
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      /* job no longer exists */
+      goto notfound;
+    }
+    goto notfound;
+    break;
+
+  case orcm_path:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      opal_output(0, "JOB ID NOT FOUND");
+      goto notfound;
+    }
+    /* get the referenced app_context */
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      /* job no longer exists */
+      goto notfound;
+    }
+    vp = qc_find_key(kp, orcm_app_context, 0);
+    if (NULL == vp) {
+      opal_output(0, "APP IDX NOT FOUND");
+      goto notfound;
+    }
+    app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_INT32(vp));
+    if (NULL == app) {
+      opal_output(0, "APP NOT FOUND");
+      goto notfound;
+    }
+    if (NULL == app->name) {
+      CONFD_SET_CBUF(&val, "NONE", 4);
+    } else {
+      CONFD_SET_CBUF(&val, app->name, strlen(app->name));
+    }
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+    break;
+
+  case orcm_max_local_restarts:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      opal_output(0, "JOB ID NOT FOUND");
+      goto notfound;
+    }
+    /* get the referenced app_context */
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      opal_output(0, "JOB %d NOT FOUND", CONFD_GET_UINT32(vp));
+      /* job no longer exists */
+      goto notfound;
+    }
+    vp = qc_find_key(kp, orcm_app_context, 0);
+    if (NULL == vp) {
+      opal_output(0, "APP IDX NOT FOUND");
+      goto notfound;
+    }
+    app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_INT32(vp));
+    if (NULL == app) {
+      opal_output(0, "APP %d NOT FOUND", CONFD_GET_INT32(vp));
+      goto notfound;
+    }
+    i32 = app->max_local_restarts;
+    CONFD_SET_INT32(&val, i32);
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+    break;
+
+  case orcm_max_global_restarts:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      opal_output(0, "JOB ID NOT FOUND");
+      goto notfound;
+    }
+    /* get the referenced app_context */
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      /* job no longer exists */
+      goto notfound;
+    }
+    vp = qc_find_key(kp, orcm_app_context, 0);
+    if (NULL == vp) {
+      opal_output(0, "APP IDX NOT FOUND");
+      goto notfound;
+    }
+    app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_INT32(vp));
+    if (NULL == app) {
+      opal_output(0, "APP NOT FOUND");
+      goto notfound;
+    }
+    i32 = app->max_global_restarts;
+    CONFD_SET_INT32(&val, i32);
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+    break;
+
+  case orcm_replica:
+    opal_output(0, "REPLICA");
+    goto notfound;
+    break;
+
+  case orcm_app_name:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      opal_output(0, "JOB ID NOT FOUND");
+      goto notfound;
+    }
+    /* get the referenced app_context */
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      /* job no longer exists */
+      goto notfound;
+    }
+    vp = qc_find_key(kp, orcm_app_context, 0);
+    if (NULL == vp) {
+      opal_output(0, "APP IDX NOT FOUND");
+      goto notfound;
+    }
+    app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_INT32(vp));
+    if (NULL == app) {
+      opal_output(0, "APP NOT FOUND");
+      goto notfound;
+    }
+    if (NULL == app->name) {
+      CONFD_SET_CBUF(&val, "UNNAMED", strlen("UNNAMED"));
+    } else {
+      CONFD_SET_CBUF(&val, app->name, strlen(app->name));
+    }
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  case orcm_pid:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      opal_output(0, "JOB ID NOT FOUND");
+      goto notfound;
+    }
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      opal_output(0, "JOB %d NOT FOUND", CONFD_GET_UINT32(vp));
+      /* job no longer exists */
+      goto notfound;
+    }
+    vp = qc_find_key(kp, orcm_replica, 0);
+    if (NULL == vp) {
+      opal_output(0, "PROC ID NOT FOUND");
+      goto notfound;
+    }
+    proc = (orte_proc_t*)opal_pointer_array_get_item(jdat->procs, CONFD_GET_INT32(vp));
+    if (NULL == proc) {
+      opal_output(0, "PROC %s NOT FOUND", ORTE_VPID_PRINT(CONFD_GET_INT32(vp)));
+    }
+    CONFD_SET_UINT32(&val, proc->pid);
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  case orcm_exit_code:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      opal_output(0, "JOB ID NOT FOUND");
+      goto notfound;
+    }
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      opal_output(0, "JOB %d NOT FOUND", CONFD_GET_UINT32(vp));
+      /* job no longer exists */
+      goto notfound;
+    }
+    vp = qc_find_key(kp, orcm_replica, 0);
+    if (NULL == vp) {
+      opal_output(0, "PROC ID NOT FOUND");
+      goto notfound;
+    }
+    proc = (orte_proc_t*)opal_pointer_array_get_item(jdat->procs, CONFD_GET_INT32(vp));
+    if (NULL == proc) {
+      opal_output(0, "PROC %s NOT FOUND", ORTE_VPID_PRINT(CONFD_GET_INT32(vp)));
+    }
+    CONFD_SET_INT32(&val, proc->exit_code);
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  case orcm_app_context_id:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      opal_output(0, "JOB ID NOT FOUND");
+      goto notfound;
+    }
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      opal_output(0, "JOB %d NOT FOUND", CONFD_GET_UINT32(vp));
+      /* job no longer exists */
+      goto notfound;
+    }
+    vp = qc_find_key(kp, orcm_replica, 0);
+    if (NULL == vp) {
+      opal_output(0, "PROC ID NOT FOUND");
+      goto notfound;
+    }
+    proc = (orte_proc_t*)opal_pointer_array_get_item(jdat->procs, CONFD_GET_INT32(vp));
+    if (NULL == proc) {
+      opal_output(0, "PROC %s NOT FOUND", ORTE_VPID_PRINT(CONFD_GET_INT32(vp)));
+    }
+    CONFD_SET_UINT32(&val, proc->app_idx);
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  case orcm_rml_contact_info:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      opal_output(0, "JOB ID NOT FOUND");
+      goto notfound;
+    }
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      opal_output(0, "JOB %d NOT FOUND", CONFD_GET_UINT32(vp));
+      /* job no longer exists */
+      goto notfound;
+    }
+    vp = qc_find_key(kp, orcm_replica, 0);
+    if (NULL == vp) {
+      opal_output(0, "PROC ID NOT FOUND");
+      goto notfound;
+    }
+    proc = (orte_proc_t*)opal_pointer_array_get_item(jdat->procs, CONFD_GET_INT32(vp));
+    if (NULL == proc) {
+      opal_output(0, "PROC %s NOT FOUND", ORTE_VPID_PRINT(CONFD_GET_INT32(vp)));
+    }
+    if (NULL == proc->rml_uri) {
+      goto notfound;
+    }
+    CONFD_SET_CBUF(&val, proc->rml_uri, strlen(proc->rml_uri));
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  case orcm_replica_state:
+    vp = qc_find_key(kp, orcm_job, 0);
+    if (NULL == vp) {
+      opal_output(0, "JOB ID NOT FOUND");
+      goto notfound;
+    }
+    jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
+    if (NULL == jdat) {
+      opal_output(0, "JOB %d NOT FOUND", CONFD_GET_UINT32(vp));
+      /* job no longer exists */
+      goto notfound;
+    }
+    vp = qc_find_key(kp, orcm_replica, 0);
+    if (NULL == vp) {
+      opal_output(0, "PROC ID NOT FOUND");
+      goto notfound;
+    }
+    proc = (orte_proc_t*)opal_pointer_array_get_item(jdat->procs, CONFD_GET_INT32(vp));
+    if (NULL == proc) {
+      opal_output(0, "PROC %s NOT FOUND", ORTE_VPID_PRINT(CONFD_GET_INT32(vp)));
+    }
+    /* sadly, have to translate proc state into yang's enum values */
+    switch (proc->state) {
+    case ORTE_PROC_STATE_UNDEF:
+      ret = 0;
+      break;
+    case ORTE_PROC_STATE_INIT:
+      ret = 1;
+      break;
+    case ORTE_PROC_STATE_RESTART:
+      ret = 2;
+      break;
+    case ORTE_PROC_STATE_LAUNCHED:
+      ret = 3;
+      break;
+    case ORTE_PROC_STATE_RUNNING:
+      ret = 4;
+      break;
+    case ORTE_PROC_STATE_REGISTERED:
+      ret = 5;
+      break;
+    case ORTE_PROC_STATE_UNTERMINATED:
+      ret = 6;
+      break;
+    case ORTE_PROC_STATE_TERMINATED:
+      ret = 7;
+      break;
+    case ORTE_PROC_STATE_KILLED_BY_CMD:
+      ret = 8;
+      break;
+    case ORTE_PROC_STATE_ABORTED:
+      ret = 9;
+      break;
+    case ORTE_PROC_STATE_FAILED_TO_START:
+      ret = 10;
+      break;
+    case ORTE_PROC_STATE_ABORTED_BY_SIG:
+      ret = 11;
+      break;
+    case ORTE_PROC_STATE_TERM_WO_SYNC:
+      ret = 12;
+      break;
+    case ORTE_PROC_STATE_COMM_FAILED:
+      ret = 13;
+      break;
+    case ORTE_PROC_STATE_SENSOR_BOUND_EXCEEDED:
+      ret = 14;
+      break;
+    case ORTE_PROC_STATE_CALLED_ABORT:
+      ret = 15;
+      break;
+    case ORTE_PROC_STATE_HEARTBEAT_FAILED:
+      ret = 16;
+      break;
+    default:
+      goto notfound;
+    }
+    CONFD_SET_ENUM_HASH(&val, ret);
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  case orcm_node_id:
+    opal_output(0, "NODE");
+    break;
+
+  case orcm_node_name:
+    vp = qc_find_key(kp, orcm_orte_node, 0);
+    if (NULL == vp) {
+      opal_output(0, "NODE ID NOT FOUND");
+      goto notfound;
+    }
+    if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_INT32(vp)))) {
+      opal_output(0, "NODE %d NOT FOUND", CONFD_GET_INT32(vp));
+      goto notfound;
+    }
+    CONFD_SET_CBUF(&val, node->name, strlen(node->name));
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  case orcm_heartbeat_seconds:
+    vp = qc_find_key(kp, orcm_orte_node, 0);
+    if (NULL == vp) {
+      opal_output(0, "NODE ID NOT FOUND");
+      goto notfound;
+    }
+    if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_INT32(vp)))) {
+      opal_output(0, "NODE %d NOT FOUND", CONFD_GET_INT32(vp));
+      goto notfound;
+    }
+    CONFD_SET_UINT8(&val, 1);
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  case orcm_state:
+    vp = qc_find_key(kp, orcm_orte_node, 0);
+    if (NULL == vp) {
+      opal_output(0, "NODE ID NOT FOUND");
+      goto notfound;
+    }
+    if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_INT32(vp)))) {
+      opal_output(0, "NODE %d NOT FOUND", CONFD_GET_INT32(vp));
+      goto notfound;
+    }
+    switch (node->state) {
+    case ORTE_NODE_STATE_UP:
+      CONFD_SET_CBUF(&val, "UP", strlen("UP"));
+      break;
+    case ORTE_NODE_STATE_DOWN:
+      CONFD_SET_CBUF(&val, "DOWN", strlen("DOWN"));
+      break;
+    case ORTE_NODE_STATE_REBOOT:
+      CONFD_SET_CBUF(&val, "REBOOTING", strlen("REBOOTING"));
+      break;
+    default:
+      CONFD_SET_CBUF(&val, "UNKNOWN", strlen("UNKNOWN"));
+    }
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  case orcm_daemon_id:
+    vp = qc_find_key(kp, orcm_orte_node, 0);
+    if (NULL == vp) {
+      opal_output(0, "NODE ID NOT FOUND");
+      goto notfound;
+    }
+    if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_INT32(vp)))) {
+      opal_output(0, "NODE %d NOT FOUND", CONFD_GET_INT32(vp));
+      goto notfound;
+    }
+    CONFD_SET_CBUF(&val, ORTE_VPID_PRINT(node->daemon->name.vpid),
+		   strlen(ORTE_VPID_PRINT(node->daemon->name.vpid)));
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  case orcm_temperature:
+    vp = qc_find_key(kp, orcm_orte_node, 0);
+    if (NULL == vp) {
+      opal_output(0, "NODE ID NOT FOUND");
+      goto notfound;
+    }
+    if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_INT32(vp)))) {
+      opal_output(0, "NODE %d NOT FOUND", CONFD_GET_INT32(vp));
+      goto notfound;
+    }
+    CONFD_SET_INT8(&val, 1);
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  case orcm_num_procs:
+    vp = qc_find_key(kp, orcm_orte_node, 0);
+    if (NULL == vp) {
+      opal_output(0, "NODE ID NOT FOUND");
+      goto notfound;
+    }
+    if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_INT32(vp)))) {
+      opal_output(0, "NODE %d NOT FOUND", CONFD_GET_INT32(vp));
+      goto notfound;
+    }
+    CONFD_SET_INT32(&val, node->num_procs);
+    confd_data_reply_value(tctx, &val);
+    return CONFD_OK;
+
+  default:
+    goto notfound;
+  }
+
+ notfound:
+  confd_data_reply_not_found(tctx);
+
+  return CONFD_OK;
 }
 
 
@@ -472,13 +1044,16 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
 			  confd_hkeypath_t       *kp,
 			  long next)
 {
-    confd_value_t key;
+  confd_value_t key, *ky;
     int i;
+    orte_job_t *jdat;
+    orte_proc_t *p;
+    int32_t app_idx;
 
     switch (qc_get_xmltag(kp, 1)) {
-    case orcm_job:                  // handle the table
+    case orcm_job:
         if (next == -1) {
-            next = 0;                   // first entry has index 1
+            next = 0;
         }
 	/* look for next non-NULL job site */
 	for (i=next; i < orte_job_data->size; i++) {
@@ -488,40 +1063,89 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
               return CONFD_OK;
 	  }
 	}
-        confd_data_reply_next_key(tctx, NULL, -1, -1);
-        return CONFD_OK;
+        goto notfound;
         break;
+
+    case orcm_app_context:
+      ky = qc_find_key(kp, orcm_job, 0);
+      if (NULL == ky) {
+	opal_output(0, "APP_CTX KEY NOT FOUND");
+	goto notfound;
+      }
+      jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_INT32(ky));
+      if (NULL == jdat) {
+	goto notfound;
+      }
+      if (next == -1) {
+	next = 0;
+      }
+      /* look for next non-NULL app context */
+	for (i=next; i < jdat->apps->size; i++) {
+	  if (NULL != opal_pointer_array_get_item(jdat->apps, i)) {
+              CONFD_SET_INT32(&key, i);
+              confd_data_reply_next_key(tctx, &key, 1, i + 1);
+              return CONFD_OK;
+	  }
+	}
+        goto notfound;
+        break;
+
+     case orcm_replica:
+       ky = qc_find_key(kp, orcm_job, 0);
+       if (NULL == ky) {
+	 opal_output(0, "JOB KEY NOT FOUND FOR REPLICA");
+	 goto notfound;
+       }
+      jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(ky));
+      if (NULL == jdat) {
+	goto notfound;
+      }
+      ky = qc_find_key(kp, orcm_app_context, 0);
+      if (NULL == ky) {
+	opal_output(0, "APP KEY NOT FOUND FOR REPLICA");
+	goto notfound;
+      }
+      app_idx = CONFD_GET_INT32(ky);
+      if (next == -1) {
+	next = 0;
+      }
+      /* look for next non-NULL proc for this app */
+	for (i=next; i < jdat->procs->size; i++) {
+	  if (NULL != (p = (orte_proc_t*)opal_pointer_array_get_item(jdat->procs, i)) &&
+	      p->app_idx == app_idx) {
+              CONFD_SET_UINT32(&key, i);
+              confd_data_reply_next_key(tctx, &key, 1, i + 1);
+              return CONFD_OK;
+	  }
+	}
+        goto notfound;
+        break;
+
+    case orcm_orte_node:
+      /* look for next non-NULL node */
+      if (next == -1) {
+	next = 0;
+      }
+      for (i=next; i < orte_node_pool->size; i++) {
+	if (NULL != opal_pointer_array_get_item(orte_node_pool, i)) {
+	  CONFD_SET_INT32(&key, i);
+	  confd_data_reply_next_key(tctx, &key, 1, i+1);
+	  return CONFD_OK;
+	}
+      }
+      goto notfound;
+      break;
+
+    default:
+      opal_output(0, "OPER: UNRECOGNIZED OPTION");
+      break;
     }
 
     /*
      * not found
      */
+ notfound:
     confd_data_reply_next_key(tctx, NULL, -1, -1);
 
     return CONFD_OK;
 }
-
-
-#if 0
-    container main {
-        config false;
-        tailf:callpoint "orcm-oper";
-
-        leaf pid {
-            type int16;
-        }
-
-        list environ {
-            key "index";
-            leaf index {
-                type uint16;
-            }
-            leaf name {
-                type string;
-            }
-            leaf value {
-                type string;
-            }
-        }
-    }
-#endif

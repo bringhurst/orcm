@@ -332,7 +332,11 @@ module orcm {
                 }
                 list replica {
                     description "Per replica (process) information";
-                    key "replica-name pid";
+                    key vpid;
+		    leaf vpid {
+		        description "Virtual process ID for launched replica";
+			type uint32;
+		    }
                     leaf replica-name {
                         description "Replica Name (vpid)";
                         type string;
@@ -343,7 +347,7 @@ module orcm {
                     }
                     leaf exit-code {
                         description "Exit code";
-                        type string;
+                        type int32;
                     }
                     leaf appl-context-id {
                         description "Application context that generated this replica";
@@ -380,33 +384,53 @@ module orcm {
                                 value 4;
                                 description "Local daemon has forked the replica";
                             }
+			    enum ORTE_PROC_STATE_REGISTERED {
+			        value 5;
+			        description "Has called orcm_init";
+			    }
                             enum ORTE_PROC_STATE_UNTERMINATED {
-                                value 5;
+                                value 6;
                                 description "Boundary value -- not terminated";
                             }
                             enum ORTE_PROC_STATE_TERMINATED {
-                                value 6;
+                                value 7;
                                 description "Replica has terminated and is no longer running";
                             }
+                            enum ORTE_PROC_STATE_KILLED_BY_CMD {
+                                value 8;
+                                description "Replica was killed by ORTE command";
+                            }
                             enum ORTE_PROC_STATE_ABORTED {
-                                value 7;
+                                value 9;
                                 description "Replica aborted";
                             }
                             enum ORTE_PROC_STATE_FAILED_TO_START {
-                                value 8;
+                                value 10;
                                 description "Replica failed to start";
                             }
                             enum ORTE_PROC_STATE_ABORTED_BY_SIG {
-                                value 9;
+                                value 11;
                                 description "Replica was killed by a signal";
                             }
-                            enum ORTE_PROC_STATE_ABORTED_WO_SYNC {
-                                value 10;
+                            enum ORTE_PROC_STATE_TERM_WO_SYNC {
+                                value 12;
                                 description "Replica exited w/o required sync";
+			    }
+                            enum ORTE_PROC_STATE_COMM_FAILED {
+                                value 13;
+                                description "Required communication channel failed";
                             }
-                            enum ORTE_PROC_STATE_KILLED_BY_CMD {
-                                value 11;
-                                description "Replica was killed by ORTE command";
+                            enum ORTE_PROC_STATE_SENSOR_BOUND_EXCEEDED {
+                                value 14;
+                                description "Sensor exceeded specified boundary value";
+                            }
+                            enum ORTE_PROC_STATE_CALLED_ABORT {
+                                value 15;
+                                description "Replica called abort";
+                            }
+                            enum ORTE_PROC_STATE_HEARTBEAT_FAILED {
+                                value 16;
+                                description "Replica did not provide a required heartbeat within the specified period";
                             }
                         }
                     }
@@ -415,7 +439,11 @@ module orcm {
         }
         list orte-node {
             key node-id;
-            leaf node-id {
+	    leaf node-id {
+	        description "Index of node in array";
+		type int32;
+	    }
+            leaf node-name {
                 description "Node name";
                 type string;
             }
@@ -437,7 +465,7 @@ module orcm {
                 description "Number of procs running on this node";
                 type int32;
             }
-            leaf hearbeat-seconds {
+            leaf heartbeat-seconds {
                 description "Seconds since last detected heartbeat";
                 type uint8;
             }
