@@ -542,7 +542,7 @@ static void ssh_child(int argc, char **argv, orte_vpid_t vpid,
          * ensure that the remote orted gets the correct environment when launched
          */
         free(argv[orted_cmd_index]);
-        asprintf(&argv[orted_cmd_index], "%s %s", orted_setup_line, orted_cmd_line);
+        asprintf(&argv[orted_cmd_index], "%s %s", orted_setup_line, orted_rsh_cmd_line);
         exec_argv = argv;
         exec_path = strdup(orte_plm_globals.rsh_agent_path);
     }
