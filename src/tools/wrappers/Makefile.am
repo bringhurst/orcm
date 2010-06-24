@@ -33,10 +33,10 @@ man_MANS = $(man_pages)
 
 install-exec-hook:
 	test -z "$(bindir)" || $(mkdir_p) "$(DESTDIR)$(bindir)"
-	(cd $(DESTDIR)$(bindir); rm -f orcmcc$(EXEEXT); $(LN_S) @ORTE_INSTALL_PREFIX@/bin/opal_wrapper orcmcc)
-	(cd $(DESTDIR)$(bindir); rm -f orcmcc++$(EXEEXT); $(LN_S) @ORTE_INSTALL_PREFIX@/bin/opal_wrapper orcmcc++)
+	(cd $(DESTDIR)$(bindir); rm -f orcmcc$(EXEEXT); cp -f @ORTE_INSTALL_PREFIX@/bin/opal_wrapper orcmcc)
+	(cd $(DESTDIR)$(bindir); rm -f orcmcc++$(EXEEXT); cp -f @ORTE_INSTALL_PREFIX@/bin/opal_wrapper orcmcc++)
 	(rm -f @ORTE_WRAPPER_DATA_DIR@/orcmcc-wrapper-data.txt; \
-	    $(LN_S) @OPENRCM_DATADIR@/openrcm/orcmcc-wrapper-data.txt @ORTE_WRAPPER_DATA_DIR@/orcmcc-wrapper-data.txt)
+	    cp -f @OPENRCM_DATADIR@/openrcm/orcmcc-wrapper-data.txt @ORTE_WRAPPER_DATA_DIR@/orcmcc-wrapper-data.txt)
 
 #orcmcc.1: @ORTE_INSTALL_PREFIX@/share/man/man1/ortecc.1
 #	rm -f orcmcc.1

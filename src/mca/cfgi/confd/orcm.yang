@@ -234,60 +234,64 @@ module orcm {
             leaf job-state {
                 description "State of the job";
                 type enumeration {
-                    enum ORTE_JOB_STATE_UNDEF {
+                    enum PENDING {
                         value 0;
-                        description "Undefined";
+                        description "Pending launch";
                     }
-                    enum ORTE_JOB_STATE_INIT {
+                    enum INIT {
                         value 1;
                         description "Created";
                     }
-                    enum ORTE_JOB_STATE_RESTART {
+                    enum RESTART {
                         value 2;
                         description "Ready for restart after one or more replicas failed";
                     }
-                    enum ORTE_JOB_STATE_LAUNCHED {
+                    enum LAUNCHED {
                         value 3;
                         description "Has been launched";
                     }
-                    enum ORTE_JOB_STATE_RUNNING {
+                    enum RUNNING {
                         value 4;
                         description "All replicas have been forked";
                     }
-                    enum ORTE_JOB_STATE_UNTERMINATED {
-                        value 5;
+		    enum REGISTERED {
+		        value 5;
+		        description "Has called orcm_init";
+		    }
+                    enum UNTERMINATED {
+                        value 6;
                         description "Boundary value - launch group not terminated";
                     }
-                    enum ORTE_JOB_STATE_TERMINATED {
-                        value 6;
+                    enum TERMINATED {
+                        value 7;
                         description "All replicas have terminated and launch group is no longer running";
                     }
-                    enum ORTE_JOB_STATE_ABORTED {
-                        value 7;
+                    enum KILLED_BY_CMD {
+                        value 8;
+                        description "Replica was killed by ORTE command";
+                    }
+                    enum ABORTED {
+                        value 9;
                         description "At least one replica aborted, causing the job to abort";
                     }
-                    enum ORTE_JOB_STATE_FAILED_TO_START {
-                        value 8;
+                    enum FAILED_TO_START {
+                        value 10;
                         description "At least one replica failed to start";
                     }
-                    enum ORTE_JOB_STATE_ABORTED_BY_SIG {
-                        value 9;
+                    enum ABORTED_BY_SIG {
+                        value 11;
                         description "Launch group was killed by a signal";
                     }
-                    enum ORTE_JOB_STATE_ABORTED_WO_SYNC {
-                        value 10;
+                    enum ABORTED_WO_SYNC {
+                        value 12;
                         description "Launch group was aborted because a replica exited w/o required sync";
                     }
-                    enum ORTE_JOB_STATE_KILLED_BY_CMD {
-                        value 11;
-                        description "Launch group was killed by ORTE command";
-                    }
-                    enum ORTE_JOB_STATE_NEVER_LAUNCHED {
-                        value 12;
+                    enum NEVER_LAUNCHED {
+                        value 13;
                         description "Launch group never attempted to launch due to an error earlier in the launch procedure";
                     }
-                    enum ORTE_JOB_STATE_ABORT_ORDERED {
-                        value 13;
+                    enum ABORT_ORDERED {
+                        value 14;
                         description "Replicas have been ordered to die, but may not have completed yet.";
                     }
                 }
@@ -357,78 +361,74 @@ module orcm {
                         description "Node where this replica is running";
                         type string;
                     }
-                    leaf rml-contact-info {
-                        description "RML contact information";
-                        type string;
-                    }
-                    leaf replica-state {
+                   leaf replica-state {
                         description "State of the replica";
                         type enumeration {
-                            enum ORTE_PROC_STATE_UNDEF {
+                            enum PENDING {
                                 value 0;
                                 description "Undefined";
                             }
-                            enum ORTE_PROC_STATE_INIT {
+                            enum INIT {
                                 value 1;
                                 description "Created";
                             }
-                            enum ORTE_PROC_STATE_RESTART {
+                            enum RESTART {
                                 value 2;
                                 description "Ready for restart";
                             }
-                            enum ORTE_PROC_STATE_LAUNCHED {
+                            enum LAUNCHED {
                                 value 3;
                                 description "Has been launched";
                             }
-                            enum ORTE_PROC_STATE_RUNNING {
+                            enum RUNNING {
                                 value 4;
                                 description "Local daemon has forked the replica";
                             }
-			    enum ORTE_PROC_STATE_REGISTERED {
+			    enum REGISTERED {
 			        value 5;
 			        description "Has called orcm_init";
 			    }
-                            enum ORTE_PROC_STATE_UNTERMINATED {
+                            enum UNTERMINATED {
                                 value 6;
                                 description "Boundary value -- not terminated";
                             }
-                            enum ORTE_PROC_STATE_TERMINATED {
+                            enum TERMINATED {
                                 value 7;
                                 description "Replica has terminated and is no longer running";
                             }
-                            enum ORTE_PROC_STATE_KILLED_BY_CMD {
+                            enum KILLED_BY_CMD {
                                 value 8;
                                 description "Replica was killed by ORTE command";
                             }
-                            enum ORTE_PROC_STATE_ABORTED {
+                            enum ABORTED {
                                 value 9;
                                 description "Replica aborted";
                             }
-                            enum ORTE_PROC_STATE_FAILED_TO_START {
+                            enum FAILED_TO_START {
                                 value 10;
                                 description "Replica failed to start";
                             }
-                            enum ORTE_PROC_STATE_ABORTED_BY_SIG {
+                            enum ABORTED_BY_SIG {
                                 value 11;
                                 description "Replica was killed by a signal";
                             }
-                            enum ORTE_PROC_STATE_TERM_WO_SYNC {
+                            enum TERM_WO_SYNC {
                                 value 12;
                                 description "Replica exited w/o required sync";
 			    }
-                            enum ORTE_PROC_STATE_COMM_FAILED {
+                            enum COMM_FAILED {
                                 value 13;
                                 description "Required communication channel failed";
                             }
-                            enum ORTE_PROC_STATE_SENSOR_BOUND_EXCEEDED {
+                            enum SENSOR_BOUND_EXCEEDED {
                                 value 14;
                                 description "Sensor exceeded specified boundary value";
                             }
-                            enum ORTE_PROC_STATE_CALLED_ABORT {
+                            enum CALLED_ABORT {
                                 value 15;
                                 description "Replica called abort";
                             }
-                            enum ORTE_PROC_STATE_HEARTBEAT_FAILED {
+                            enum HEARTBEAT_FAILED {
                                 value 16;
                                 description "Replica did not provide a required heartbeat within the specified period";
                             }

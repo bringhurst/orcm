@@ -276,7 +276,19 @@ int main(int argc, char *argv[])
     daemons->num_reported = 1;
     /* define a job name */
     daemons->name = strdup("ORCM DVM");
+    daemons->instance = strdup(ORTE_JOBID_PRINT(ORTE_PROC_MY_NAME->jobid));
+    /* create an app */
+    app = OBJ_NEW(orte_app_context_t);
+    app->app = strdup("orcmd");
+    app->name = strdup("ORCM DAEMON");
+    opal_argv_append_nosize(&app->argv, "orcmd");
+    /* add to the daemon job - always must be an app for a job */
+    opal_pointer_array_add(daemons->apps, app);
     
+    /* setup the daemon map so it knows how to map them */
+    daemons->map = OBJ_NEW(orte_job_map_t);
+    daemons->map->policy = ORTE_MAPPING_BYNODE;
+
     /* listen for PS requests */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-ps", "0.1", "alpha",
                                                          ORCM_PNP_SYS_CHANNEL,
@@ -307,18 +319,6 @@ int main(int argc, char *argv[])
     /* use bynode mapping by default */
     ORTE_ADD_MAPPING_POLICY(ORTE_MAPPING_BYNODE);
 
-    /* create an app */
-    app = OBJ_NEW(orte_app_context_t);
-    app->app = strdup("orcmd");
-    app->name = strdup("ORCM DAEMON");
-    opal_argv_append_nosize(&app->argv, "orcmd");
-    /* add to the daemon job - always must be an app for a job */
-    opal_pointer_array_add(daemons->apps, app);
-    
-    /* setup the daemon map so it knows how to map them */
-    daemons->map = OBJ_NEW(orte_job_map_t);
-    daemons->map->policy = ORTE_MAPPING_BYNODE;
-
     /* if we were given hosts to startup, add them to the global
      * node array
      */
@@ -346,8 +346,7 @@ int main(int argc, char *argv[])
     }
 
     /* launch the virtual machine - this will launch a daemon on
-     * each node. It will simply return if there are no known
-     * nodes other than the one we are on
+     * each node, including our own
      */
     if (ORTE_SUCCESS != orte_plm.spawn(daemons)) {
         opal_output(orte_clean_output, "\nORCM DISTRIBUTED VIRTUAL MACHINE %s FAILED TO LAUNCH\n",
@@ -435,6 +434,8 @@ static void vm_tracker(char *app, char *version, char *release,
     }
     /* ensure the state is set to running */
     proc->state = ORTE_PROC_STATE_RUNNING;
+    /* exit code is obviously zero */
+    proc->exit_code = 0;
     /* if it is a restart, check the node against the
      * new one to see if it changed location
      */
