@@ -75,13 +75,9 @@ static int tool_init(void)
 
 static int tool_finalize(void)
 {
-    orcm_pnp.cancel_receive("orcm-start", "0.1", "alpha",
-                            ORCM_PNP_GROUP_OUTPUT_CHANNEL,
-                            ORCM_PNP_TAG_TOOL);
-    orcm_pnp.cancel_receive("orcm-stop", "0.1", "alpha",
-                            ORCM_PNP_GROUP_OUTPUT_CHANNEL,
-                            ORCM_PNP_TAG_TOOL);
-    
+    /* cannot cancel the recvs as the pnp framework will
+     * already have been closed
+     */
     return ORCM_SUCCESS;
 }
 
