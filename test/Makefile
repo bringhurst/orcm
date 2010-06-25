@@ -2,10 +2,8 @@ PROGS = spinners/cm_spin spinners/cm_spin2 pnp/talker pnp/listener spinners/spin
 
 all: $(PROGS)
 
-CC = orcmcc
-
 %: %.c
-	$(CC) -g -o $@ $<
+	$(CC) $(CPPFLAGS) $(LDFLAGS) -g -o $@ $<
 
 # Simplistic install target for use by the ebuild system
 INSTALL_DIR = .
