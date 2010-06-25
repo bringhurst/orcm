@@ -349,6 +349,10 @@ module orcm {
                         description "Process ID for launched replica";
                         type uint32;
                     }
+		    leaf rml-contact-info {
+		        description "RML contact info";
+			type string;
+		    }
                     leaf exit-code {
                         description "Exit code";
                         type int32;
@@ -361,7 +365,7 @@ module orcm {
                         description "Node where this replica is running";
                         type string;
                     }
-                   leaf replica-state {
+                    leaf replica-state {
                         description "State of the replica";
                         type enumeration {
                             enum PENDING {

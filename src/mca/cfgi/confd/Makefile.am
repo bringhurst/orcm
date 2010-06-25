@@ -10,12 +10,22 @@
 
 AM_CPPFLAGS = $(orcm_cfgi_confd_CPPFLAGS)
 
+EXTRA_DIST = orcm.yang
+
 sources = \
         cfgi_confd.h \
         cfgi_confd.c \
-        cfgi_confd_component.c \
-	q_confd.h \
-	q_confd.c
+        cfgi_confd_component.c
+
+# Extra rules to build the orcm-confd.h file
+
+BUILT_SOURCES = orcm-confd.h
+
+orcm.fxs: orcm.yang
+	confdc -c $(srcdir)/orcm.yang
+
+orcm-confd.h: orcm.fxs
+	confdc --emit-h orcm-confd.h orcm.fxs
 
 # Make the output library in this directory, and name it either
 # mca_<project>_<type>_<name>.la (for DSO builds) or
@@ -36,10 +46,14 @@ endif
 mcacomponentdir = $(pkglibdir)
 mcacomponent_LTLIBRARIES = $(component)
 mca_orcm_cfgi_confd_la_SOURCES = $(component_sources)
-mca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
-mca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS)
+nodist_mca_orcm_cfgi_confd_la_SOURCES = orcm-confd.h
+mca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version
 
 noinst_LTLIBRARIES = $(lib)
 libmca_orcm_cfgi_confd_la_SOURCES = $(lib_sources)
-libmca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
-libmca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS)
+nodist_libmca_orcm_cfgi_confd_la_SOURCES = orcm-confd.h
+libmca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version
+
+# Clean out the generated files
+
+CLEANFILES = orcm.fxs orcm-confd.h

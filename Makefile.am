@@ -12,6 +12,7 @@ EXTRA_DIST = \
         config/openrcm_get_version.sh \
         test/Makefile \
         test/pnp/client.c \
+        test/pnp/client2.c \
         test/pnp/listener.c \
         test/pnp/listener_iovec.c \
         test/pnp/server.c \

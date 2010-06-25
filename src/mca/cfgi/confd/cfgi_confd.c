@@ -906,7 +906,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         CONFD_SET_UINT32(&val, proc->app_idx);
         confd_data_reply_value(tctx, &val);
         return CONFD_OK;
-#if 0
+
     case orcm_rml_contact_info:
         vp = qc_find_key(kp, orcm_job, 0);
         if (NULL == vp) {
@@ -929,12 +929,13 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
             opal_output(0, "PROC %s NOT FOUND", ORTE_VPID_PRINT(CONFD_GET_INT32(vp)));
         }
         if (NULL == proc->rml_uri) {
-            goto notfound;
+            CONFD_SET_CBUF(&val, "NULL", strlen("NULL"));
+        } else {
+            CONFD_SET_CBUF(&val, "SET", strlen("SET"));
         }
-        CONFD_SET_CBUF(&val, proc->rml_uri, strlen(proc->rml_uri));
         confd_data_reply_value(tctx, &val);
         return CONFD_OK;
-#endif
+
     case orcm_replica_state:
         vp = qc_find_key(kp, orcm_job, 0);
         if (NULL == vp) {

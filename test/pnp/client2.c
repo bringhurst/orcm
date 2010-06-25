@@ -169,6 +169,7 @@ static void recv_input(int status,
 static void found_channel(char *app, char *version, char *release,
                           orcm_pnp_channel_t channel)
 {
+    opal_output(0, "%s recvd channel %d for triplet %s:%s:%s",
                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                 channel, app, version, release);
     peer = channel;
