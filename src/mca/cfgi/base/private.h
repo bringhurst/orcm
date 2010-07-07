@@ -17,7 +17,8 @@
 
 BEGIN_C_DECLS
 void orcm_cfgi_base_spawn_app(char *cmd, bool add_procs, bool continuous, bool debug,
-                              int restarts, int np, char *hosts, bool constrain);
+                              int local_restarts, int global_restarts, int np,
+                              char *hosts, bool constrain);
 
 int orcm_cfgi_base_kill_app(orte_job_t *jdata, char *replicas);
 

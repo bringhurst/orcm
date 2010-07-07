@@ -91,7 +91,7 @@ static void tool_messages(int status,
                           void *cbdata)
 {
     char *cmd, *hosts;
-    int32_t rc=ORCM_SUCCESS, n, j, num_apps, restarts;
+    int32_t rc=ORCM_SUCCESS, n, j, num_apps, local_restarts, global_restarts;
     opal_buffer_t response;
     orte_job_t *jdata;
     orte_app_context_t *app;
@@ -149,9 +149,15 @@ static void tool_messages(int status,
             ORTE_ERROR_LOG(rc);
             goto cleanup;
         }
-        /* unpack the max number of restarts */
+        /* unpack the max number of local restarts */
         n=1;
-        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &restarts, &n, OPAL_INT32))) {
+        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &local_restarts, &n, OPAL_INT32))) {
+            ORTE_ERROR_LOG(rc);
+            goto cleanup;
+        }
+        /* unpack the max number of global restarts */
+        n=1;
+        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &global_restarts, &n, OPAL_INT32))) {
             ORTE_ERROR_LOG(rc);
             goto cleanup;
         }
@@ -186,7 +192,8 @@ static void tool_messages(int status,
                              cmd, num_apps,
                              (NULL == hosts) ? "NULL" : hosts,
                              (0 == constrain) ? "FALSE" : "TRUE"));
-        orcm_cfgi_base_spawn_app(cmd, add_procs, continuous, debug, restarts, num_apps, hosts, constrain);
+        orcm_cfgi_base_spawn_app(cmd, add_procs, continuous, debug, local_restarts,
+                                 global_restarts, num_apps, hosts, constrain);
     } else if (ORCM_TOOL_STOP_CMD == flag) {
         n=1;
         while (ORTE_SUCCESS == (rc = opal_dss.unpack(buffer, &cmd, &n, OPAL_STRING))) {

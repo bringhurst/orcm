@@ -2,6 +2,8 @@ PROGS = spinners/cm_spin spinners/cm_spin2 pnp/talker pnp/listener spinners/spin
 
 all: $(PROGS)
 
+CC = orcmcc
+
 %: %.c
 	$(CC) $(CPPFLAGS) $(LDFLAGS) -g -o $@ $<
 

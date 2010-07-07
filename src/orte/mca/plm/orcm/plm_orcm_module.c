@@ -414,12 +414,20 @@ static int setup_launch(int *argcptr, char ***argvptr,
         orte_show_help("help-plm-orcm.txt", "cannot-resolve-shell-with-prefix", true,
                        (NULL == opal_prefix) ? "NULL" : opal_prefix,
                        prefix_dir);
-	free(tmp_path);
-	free(tmp_lib);
+	if (NULL != tmp_path) {
+            free(tmp_path);
+        }
+	if (NULL != tmp_lib) {
+            free(tmp_lib);
+        }
         return ORTE_ERR_SILENT;
     }
-    free(tmp_path);
-    free(tmp_lib);
+    if (NULL != tmp_path) {
+        free(tmp_path);
+    }
+    if (NULL != tmp_lib) {
+        free(tmp_lib);
+    }
 
     /* now add a placeholder to the argv array for the final cmd */
     opal_argv_append(&argc, &argv, "<template>");
@@ -442,7 +450,7 @@ static int setup_launch(int *argcptr, char ***argvptr,
      * all debug options
      */
     orte_plm_base_orted_append_basic_args(&argc, &argv,
-                                          "cm",
+                                          "orcm",
                                           proc_vpid_index,
                                           NULL);
     

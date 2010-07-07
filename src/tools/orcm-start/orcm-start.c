@@ -72,7 +72,8 @@ static struct {
     char *hosts;
     bool constrained;
     bool gdb;
-    int max_restarts;
+    int local_restarts;
+    int global_restarts;
     char *sched;
     char *hnp_uri;
     bool continuous;
@@ -103,9 +104,13 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       &my_globals.constrained, OPAL_CMD_LINE_TYPE_BOOL,
       "Constrain processes to run solely on the specified hosts, even upon restart from failure" },
 
-    { NULL, NULL, NULL, 'r', "max-restarts", "max-restarts", 1,
-      &my_globals.max_restarts, OPAL_CMD_LINE_TYPE_INT,
-      "Maximum number of times a process in this job can be restarted (default: unbounded)" },
+    { NULL, NULL, NULL, '\0', "max-local-restarts", "max-local-restarts", 1,
+      &my_globals.local_restarts, OPAL_CMD_LINE_TYPE_INT,
+      "Maximum number of times a process in this job can be restarted on the same node (default: unbounded)" },
+
+    { NULL, NULL, NULL, '\0', "max-global-restarts", "max-global-restarts", 1,
+      &my_globals.global_restarts, OPAL_CMD_LINE_TYPE_INT,
+      "Maximum number of times a process in this job can be relocated to another node (default: unbounded)" },
 
     { NULL, NULL, NULL, 'c', "continuous", "continuous", 0,
       &my_globals.continuous, OPAL_CMD_LINE_TYPE_BOOL,
@@ -140,7 +145,7 @@ static void ack_recv(int status,
 
 int main(int argc, char *argv[])
 {
-    int32_t ret, i, num_apps, restarts;
+    int32_t ret, i, num_apps, local_restarts, global_restarts;
     opal_cmd_line_t cmd_line;
     FILE *fp;
     char *cmd, *mstr;
@@ -175,7 +180,8 @@ int main(int argc, char *argv[])
     my_globals.constrained = false;
     my_globals.add_procs = 0;
     my_globals.gdb = false;
-    my_globals.max_restarts = -1;
+    my_globals.local_restarts = -1;
+    my_globals.global_restarts = -1;
     my_globals.sched = NULL;
     my_globals.hnp_uri = NULL;
     my_globals.continuous = false;
@@ -314,11 +320,8 @@ int main(int argc, char *argv[])
     }
     
     /* setup the max number of restarts */
-    if (-1 == my_globals.max_restarts) {
-        restarts = INT32_MAX;
-    } else {
-        restarts = my_globals.max_restarts;
-    }
+    local_restarts = my_globals.local_restarts;
+    global_restarts = my_globals.global_restarts;
     
     /***************************
      * We need all of OPAL and ORTE - this will
@@ -388,9 +391,12 @@ int main(int argc, char *argv[])
     }
     opal_dss.pack(&buf, &constrain, 1, OPAL_INT8);
     
-    /* load the max restarts value */
-    opal_dss.pack(&buf, &restarts, 1, OPAL_INT32);
+    /* load the max local restarts value */
+    opal_dss.pack(&buf, &local_restarts, 1, OPAL_INT32);
     
+    /* load the max global restarts value */
+    opal_dss.pack(&buf, &global_restarts, 1, OPAL_INT32);
+
     /* pack the number of instances to start */
     num_apps = my_globals.num_procs;
     opal_dss.pack(&buf, &num_apps, 1, OPAL_INT32);

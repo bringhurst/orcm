@@ -34,7 +34,8 @@
 #include "mca/cfgi/base/private.h"
 
 void orcm_cfgi_base_spawn_app(char *cmd, bool add_procs, bool continuous, bool debug,
-                              int restarts, int np, char *hosts, bool constrain)
+                              int local_restarts, int global_restarts, int np,
+                              char *hosts, bool constrain)
 {
     int rc, i, n;
     orte_job_t *jdata;
@@ -177,7 +178,21 @@ void orcm_cfgi_base_spawn_app(char *cmd, bool add_procs, bool continuous, bool d
     jdata->stdin_target = ORTE_VPID_INVALID;
     
     /* pass max number of restarts */
-    app->max_global_restarts = restarts;
+    if (0 < local_restarts) {
+        app->max_local_restarts = local_restarts;
+    } else {
+        app->max_local_restarts = orte_max_local_restarts;
+    }
+    if (0 < global_restarts) {
+        app->max_global_restarts = global_restarts;
+    } else {
+        app->max_global_restarts = orte_max_global_restarts;
+    }
+    if (0 < app->max_global_restarts ||
+        0 < app->max_local_restarts ||
+        orte_enable_recovery) {
+        jdata->enable_recovery = true;
+    }
     
 launch:
     /* if we want to debug the apps, set the proper envar */
