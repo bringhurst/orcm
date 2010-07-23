@@ -51,7 +51,6 @@
 #include "opal/mca/base/base.h"
 #include "opal/mca/base/mca_base_param.h"
 #include "opal/runtime/opal.h"
-#include "opal/threads/threads.h"
 
 #include "orte/util/show_help.h"
 #include "orte/mca/errmgr/errmgr.h"
@@ -97,10 +96,6 @@ opal_cmd_line_init_t cmd_line_opts[] = {
 /*
  * Local variables & functions
  */
-static opal_mutex_t lock;
-static opal_condition_t cond;
-static bool waiting=true;
-
 static void ack_recv(int status,
                      orte_process_name_t *sender,
                      orcm_pnp_tag_t tag,
@@ -140,9 +135,6 @@ int main(int argc, char *argv[])
     my_globals.sched = NULL;
     my_globals.hnp_uri = NULL;
     
-    OBJ_CONSTRUCT(&lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&cond, opal_condition_t);
-    
     /* Parse the command line options */
     opal_cmd_line_create(&cmd_line, cmd_line_opts);
     
@@ -170,47 +162,49 @@ int main(int argc, char *argv[])
         return ORTE_ERROR;
     }
     
-    if (0 == strncmp(my_globals.sched, "file", strlen("file")) ||
-        0 == strncmp(my_globals.sched, "FILE", strlen("FILE"))) {
-        char input[1024], *filename;
-        FILE *fp;
+    if (NULL != my_globals.sched) {
+        if (0 == strncmp(my_globals.sched, "file", strlen("file")) ||
+            0 == strncmp(my_globals.sched, "FILE", strlen("FILE"))) {
+            char input[1024], *filename;
+            FILE *fp;
         
-        /* it is a file - get the filename */
-        filename = strchr(my_globals.sched, ':');
-        if (NULL == filename) {
-            /* filename is not correctly formatted */
-            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "scheduler", my_globals.sched);
-            return ORTE_ERROR;
-        }
-        ++filename; /* space past the : */
+            /* it is a file - get the filename */
+            filename = strchr(my_globals.sched, ':');
+            if (NULL == filename) {
+                /* filename is not correctly formatted */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "scheduler", my_globals.sched);
+                return ORTE_ERROR;
+            }
+            ++filename; /* space past the : */
         
-        if (0 >= strlen(filename)) {
-            /* they forgot to give us the name! */
-            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "scheduler", my_globals.sched);
-            return ORTE_ERROR;
-        }
+            if (0 >= strlen(filename)) {
+                /* they forgot to give us the name! */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "scheduler", my_globals.sched);
+                return ORTE_ERROR;
+            }
         
-        /* open the file and extract the pid */
-        fp = fopen(filename, "r");
-        if (NULL == fp) { /* can't find or read file! */
-            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, "scheduler", filename);
-            return ORTE_ERROR;
-        }
-        if (NULL == fgets(input, 1024, fp)) {
-            /* something malformed about file */
+            /* open the file and extract the pid */
+            fp = fopen(filename, "r");
+            if (NULL == fp) { /* can't find or read file! */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, "scheduler", filename);
+                return ORTE_ERROR;
+            }
+            if (NULL == fgets(input, 1024, fp)) {
+                /* something malformed about file */
+                fclose(fp);
+                orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", "scheduler", true, filename);
+                return ORTE_ERROR;
+            }
             fclose(fp);
-            orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", "scheduler", true, filename);
-            return ORTE_ERROR;
+            input[strlen(input)-1] = '\0';  /* remove newline */
+            /* convert the pid */
+            master = strtoul(input, NULL, 10);
+        } else {
+            /* should just be the master itself */
+            master = strtoul(my_globals.sched, NULL, 10);
         }
-        fclose(fp);
-        input[strlen(input)-1] = '\0';  /* remove newline */
-        /* convert the pid */
-        master = strtoul(input, NULL, 10);
-    } else {
-        /* should just be the master itself */
-        master = strtoul(my_globals.sched, NULL, 10);
     }
-    
+
     /* if we were given HNP contact info, parse it and
      * setup the process_info struct with that info
      */
@@ -287,6 +281,12 @@ int main(int argc, char *argv[])
         goto cleanup;
     }
     
+    /* announce my existence */
+    if (ORCM_SUCCESS != (ret = orcm_pnp.announce("orcm-stop", "0.1", "alpha", NULL))) {
+        ORTE_ERROR_LOG(ret);
+        goto cleanup;
+    }
+    
     /* setup the buffer to send our cmd */
     OBJ_CONSTRUCT(&buf, opal_buffer_t);
     
@@ -325,14 +325,12 @@ int main(int argc, char *argv[])
     OBJ_DESTRUCT(&buf);
     
     /* now wait for ack */
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &waiting);
+    opal_event_dispatch();
     
     /***************
      * Cleanup
      ***************/
-cleanup:
-    OBJ_DESTRUCT(&lock);
-    OBJ_DESTRUCT(&cond);
+ cleanup:
     orcm_finalize();
     
     return ret;
@@ -344,6 +342,29 @@ static void ack_recv(int status,
                      struct iovec *msg, int count,
                      opal_buffer_t *buf, void *cbdata)
 {
-    /* the fact we recvd this is enough - release the wait */
-    OPAL_RELEASE_THREAD(&lock, &cond, &waiting);
+    int rc, n;
+    orcm_tool_cmd_t flag;
+
+    /* unpack the cmd and verify it is us */
+    n=1;
+    opal_dss.unpack(buf, &flag, &n, ORCM_TOOL_CMD_T);
+    if (ORCM_TOOL_STOP_CMD != flag) {
+        /* wrong cmd */
+        opal_output(0, "GOT WRONG CMD");
+        return;
+    }
+
+    /* unpack the result of the stop command */
+    n=1;
+    opal_dss.unpack(buf, &rc, &n, OPAL_INT);
+    ORTE_UPDATE_EXIT_STATUS(rc);
+
+    if (0 == rc) {
+        opal_output(orte_clean_output, "Job stopped");
+    } else {
+        opal_output(orte_clean_output, "Job failed to stop with error %s", ORTE_ERROR_NAME(rc));
+    }
+
+    /* the fact we recvd this is enough */
+    orte_quit();
 }

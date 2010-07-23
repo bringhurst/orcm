@@ -23,30 +23,30 @@
 #include "orte/runtime/orte_globals.h"
 
 #include "orte/mca/ess/ess.h"
-#include "orte/mca/ess/orcm/ess_orcm.h"
+#include "orte/mca/ess/orcmapp/ess_orcmapp.h"
 
 #include "runtime/runtime.h"
 
-extern orte_ess_base_module_t orte_ess_orcm_module;
+extern orte_ess_base_module_t orte_ess_orcmapp_module;
 
 /*
  * Instantiate the public struct with all of our public information
  * and pointers to our public functions in it
  */
-orte_ess_base_component_t mca_ess_orcm_component = {
+orte_ess_base_component_t mca_ess_orcmapp_component = {
     {
         ORTE_ESS_BASE_VERSION_2_0_0,
             
         /* Component name and version */
-        "orcm",
+        "orcmapp",
         ORTE_MAJOR_VERSION,
         ORTE_MINOR_VERSION,
         ORTE_RELEASE_VERSION,
             
         /* Component open and close functions */
-        orte_ess_orcm_component_open,
-        orte_ess_orcm_component_close,
-        orte_ess_orcm_component_query
+        orte_ess_orcmapp_component_open,
+        orte_ess_orcmapp_component_close,
+        orte_ess_orcmapp_component_query
     },
     {
         /* The component is checkpoint ready */
@@ -56,18 +56,18 @@ orte_ess_base_component_t mca_ess_orcm_component = {
 
 
 int
-orte_ess_orcm_component_open(void)
+orte_ess_orcmapp_component_open(void)
 {
     return ORTE_SUCCESS;
 }
 
 
-int orte_ess_orcm_component_query(mca_base_module_t **module, int *priority)
+int orte_ess_orcmapp_component_query(mca_base_module_t **module, int *priority)
 {
-    /* if we are a ORCM daemon or master, then we are available */
-    if (ORCM_PROC_IS_DAEMON || ORCM_PROC_IS_MASTER) {
-        *priority = 1000;
-        *module = (mca_base_module_t *)&orte_ess_orcm_module;
+    /* if we are a CM program, then we are available */
+    if (ORCM_PROC_IS_APP) {
+        *priority = 50;
+        *module = (mca_base_module_t *)&orte_ess_orcmapp_module;
         return ORTE_SUCCESS;
     }
     *priority = 0;
@@ -77,7 +77,7 @@ int orte_ess_orcm_component_query(mca_base_module_t **module, int *priority)
 
 
 int
-orte_ess_orcm_component_close(void)
+orte_ess_orcmapp_component_close(void)
 {
     return ORTE_SUCCESS;
 }

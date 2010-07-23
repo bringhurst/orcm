@@ -61,6 +61,7 @@
 #include "orte/util/name_fns.h"
 #include "orte/util/nidmap.h"
 #include "orte/runtime/orte_locks.h"
+#include "orte/runtime/orte_quit.h"
 #include "orte/mca/rml/base/rml_contact.h"
 
 #include "orte/mca/errmgr/errmgr.h"
@@ -71,7 +72,6 @@
 #include "orte/mca/plm/base/plm_private.h"
 #include "orte/mca/ras/ras.h"
 #include "orte/mca/routed/routed.h"
-#include "orte/orted/orted.h"
 
 #include "mca/pnp/pnp.h"
 #include "mca/pnp/base/public.h"
@@ -79,12 +79,9 @@
 /*
  * Globals
  */
-
-char *log_path = NULL;
 static opal_event_t *orcmd_exit_event;
 static bool signals_set=false;
 static bool orcmd_spin_flag=false;
-static orte_job_t *daemons;
 
 static int orcmd_comm(orte_process_name_t *recipient,
                       opal_buffer_t *buf, orte_rml_tag_t tag,
@@ -98,16 +95,6 @@ static void recv_input(int status,
                        orcm_pnp_tag_t tag,
                        struct iovec *msg, int count,
                        opal_buffer_t *buf,
-                       void *cbdata);
-
-static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *node, uint32_t uid);
-
-static void ps_request(int status,
-                       orte_process_name_t *sender,
-                       orcm_pnp_tag_t tag,
-                       struct iovec *msg, int count,
-                       opal_buffer_t *buffer,
                        void *cbdata);
 
 static struct {
@@ -194,22 +181,11 @@ opal_cmd_line_init_t orte_cmd_line_opts[] = {
 int main(int argc, char *argv[])
 {
     int ret = 0;
-    int fd;
     opal_cmd_line_t *cmd_line = NULL;
-    char log_file[PATH_MAX];
-    char *jobidstring;
-    char *rml_uri;
     int i;
     opal_buffer_t *buffer;
     char hostname[100];
     char *tmp_env_var = NULL;
-    struct timeval starttime, setuptime;
-    orte_node_t *node;
-    orte_proc_t *proc;
-    orte_nid_t *nid;
-    
-    /* get our time for first executable */
-    gettimeofday(&starttime, NULL);
     
     /* initialize the globals */
     memset(&orcmd_globals, 0, sizeof(orcmd_globals));
@@ -261,9 +237,6 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    /* setup the exit triggers */
-    OBJ_CONSTRUCT(&orte_exit, orte_trigger_event_t);
- 
     /* save the environment for launch purposes. This MUST be
      * done so that we can pass it to any local procs we
      * spawn - otherwise, those local procs won't see any
@@ -303,26 +276,6 @@ int main(int argc, char *argv[])
         exit(1);
     }
     
-    /* set the odls comm function */
-    orte_comm = orcmd_comm;
-    
-    /* setup the primary daemon command receive function */
-    ret = orte_rml.recv_buffer_nb(ORTE_NAME_WILDCARD, ORTE_RML_TAG_DAEMON,
-                                  ORTE_RML_NON_PERSISTENT, orte_daemon_recv, NULL);
-    if (ret != ORTE_SUCCESS && OPAL_SOS_GET_ERROR_CODE(ret) != ORTE_ERR_NOT_IMPLEMENTED) {
-        ORTE_ERROR_LOG(ret);
-        goto DONE;
-    }
-
-    /* output a message indicating we are alive, our name, and our pid
-     * for debugging purposes
-     */
-    if (orte_debug_daemons_flag) {
-        fprintf(stderr, "Daemon %s checking in as pid %ld on host %s\n",
-                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), (long)orte_process_info.pid,
-                orte_process_info.nodename);
-    }
-    
     /* detach from controlling terminal
      * otherwise, remain attached so output can get to us
      */
@@ -333,185 +286,8 @@ int main(int argc, char *argv[])
         orcm_debug_output = 5;
     }
     
-    /* insert our contact info into our process_info struct so we
-     * have it for later use and set the local daemon field to our name
-     */
-    orte_process_info.my_daemon_uri = orte_rml.get_contact_info();
-    ORTE_PROC_MY_DAEMON->jobid = ORTE_PROC_MY_NAME->jobid;
-    ORTE_PROC_MY_DAEMON->vpid = ORTE_PROC_MY_NAME->vpid;
-    
-    /* if I am rank=1, then I am the lowest rank */
-    if (ORTE_PROC_MY_NAME->vpid == 1) {
-        orcm_lowest_rank = true;
-    }
-    
-    /* setup stdout/stderr */
-    if (orte_debug_daemons_file_flag) {
-        /* if we are debugging to a file, then send stdout/stderr to
-         * the orcmd log file
-         */
-        
-        /* get my jobid */
-        if (ORTE_SUCCESS != (ret = orte_util_convert_jobid_to_string(&jobidstring,
-                                                                     ORTE_PROC_MY_NAME->jobid))) {
-            ORTE_ERROR_LOG(ret);
-            goto DONE;
-        }
-        
-        /* define a log file name in the session directory */
-        snprintf(log_file, PATH_MAX, "output-orcmd-%s-%s.log",
-                 jobidstring, orte_process_info.nodename);
-        log_path = opal_os_path(false,
-                                orte_process_info.tmpdir_base,
-                                orte_process_info.top_session_dir,
-                                log_file,
-                                NULL);
-        
-        fd = open(log_path, O_RDWR|O_CREAT|O_TRUNC, 0640);
-        if (fd < 0) {
-            /* couldn't open the file for some reason, so
-             * just connect everything to /dev/null
-             */
-            fd = open("/dev/null", O_RDWR|O_CREAT|O_TRUNC, 0666);
-        } else {
-            dup2(fd, STDOUT_FILENO);
-            dup2(fd, STDERR_FILENO);
-            if(fd != STDOUT_FILENO && fd != STDERR_FILENO) {
-                close(fd);
-            }
-        }
-    }
-    
-    /* setup an event we can wait for to tell
-     * us to terminate - both normal and abnormal
-     * termination will call us here. Use the same exit
-     * fd as orterun so that orte_comm can wake either of us up
-     * since we share that code
-     */
-    if (ORTE_SUCCESS != (ret = orte_wait_event(&orcmd_exit_event, &orte_exit, "orcmd_shutdown", shutdown_callback))) {
-        ORTE_ERROR_LOG(ret);
-        goto DONE;
-    }
-    
-    /* We actually do *not* want the orcmd to voluntarily yield() the
-     processor more than necessary.  The orcmd already blocks when
-     it is doing nothing, so it doesn't use any more CPU cycles than
-     it should; but when it *is* doing something, we do not want it
-     to be unnecessarily delayed because it voluntarily yielded the
-     processor in the middle of its work.
-     
-     For example: when a message arrives at the orcmd, we want the
-     OS to wake up the orcmd in a timely fashion (which most OS's
-     seem good about doing) and then we want the orcmd to process
-     the message as fast as possible.  If the orcmd yields and lets
-     aggressive MPI applications get the processor back, it may be a
-     long time before the OS schedules the orcmd to run again
-     (particularly if there is no IO event to wake it up).  Hence,
-     routed OOB messages (for example) may be significantly delayed
-     before being delivered to MPI processes, which can be
-     problematic in some scenarios (e.g., COMM_SPAWN, BTL's that
-     require OOB messages for wireup, etc.). */
-    opal_progress_set_yield_when_idle(false);
-    
-    /* Change the default behavior of libevent such that we want to
-     continually block rather than blocking for the default timeout
-     and then looping around the progress engine again.  There
-     should be nothing in the orcmd that cannot block in libevent
-     until "something" happens (i.e., there's no need to keep
-     cycling through progress because the only things that should
-     happen will happen in libevent).  This is a minor optimization,
-     but what the heck... :-) */
-    opal_progress_set_event_flag(OPAL_EVLOOP_ONCE);
-    
-    /* setup the global job and node arrays */
-    orte_job_data = OBJ_NEW(opal_pointer_array_t);
-    if (ORTE_SUCCESS != (ret = opal_pointer_array_init(orte_job_data,
-                                                       1,
-                                                       ORTE_GLOBAL_ARRAY_MAX_SIZE,
-                                                       1))) {
-        ORTE_ERROR_LOG(ret);
-        orte_trigger_event(&orte_exit);
-    }
-    orte_node_pool = OBJ_NEW(opal_pointer_array_t);
-    if (ORTE_SUCCESS != (ret = opal_pointer_array_init(orte_node_pool,
-                                                       ORTE_GLOBAL_ARRAY_BLOCK_SIZE,
-                                                       ORTE_GLOBAL_ARRAY_MAX_SIZE,
-                                                       ORTE_GLOBAL_ARRAY_BLOCK_SIZE))) {
-        ORTE_ERROR_LOG(ret);
-        orte_trigger_event(&orte_exit);
-    }
-    /* Setup the job data object for the daemons */        
-    daemons = OBJ_NEW(orte_job_t);
-    daemons->jobid = ORTE_PROC_MY_NAME->jobid;
-    opal_pointer_array_set_item(orte_job_data, 0, daemons);
-    
-    /* create and store a node object where we are */
-    node = OBJ_NEW(orte_node_t);
-    node->name = strdup(orte_process_info.nodename);
-    node->index = opal_pointer_array_add(orte_node_pool, node);
-    
-    /* create and store a proc object for us */
-    proc = OBJ_NEW(orte_proc_t);
-    proc->name.jobid = ORTE_PROC_MY_NAME->jobid;
-    proc->name.vpid = ORTE_PROC_MY_NAME->vpid;
-    proc->pid = orte_process_info.pid;
-    proc->rml_uri = orte_rml.get_contact_info();
-    proc->state = ORTE_PROC_STATE_RUNNING;
-    OBJ_RETAIN(node);  /* keep accounting straight */
-    proc->node = node;
-    proc->nodename = node->name;
-    opal_pointer_array_set_item(daemons->procs, proc->name.vpid, proc);
-    
-    /* record that the daemon (i.e., us) is on this node 
-     * NOTE: we do not add the proc object to the node's
-     * proc array because we are not an application proc.
-     * Instead, we record it in the daemon field of the
-     * node object
-     */
-    OBJ_RETAIN(proc);   /* keep accounting straight */
-    node->daemon = proc;
-    node->daemon_launched = true;
-    node->state = ORTE_NODE_STATE_UP;
-    
-    /* record that the daemon job is running */
-    daemons->num_procs = 1;
-    daemons->state = ORTE_JOB_STATE_RUNNING;
-    
-    /* add us to the nidmap array to support odls and routed frameworks */
-    nid = OBJ_NEW(orte_nid_t);
-    nid->name = strdup(node->name);
-    nid->daemon = ORTE_PROC_MY_NAME->vpid;
-    nid->index = opal_pointer_array_add(&orte_nidmap, nid);
-    
-    /* register an input to hear cmds sent to us */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm", "0.1", "alpha",
-                                                         ORCM_PNP_SYS_CHANNEL,
-                                                         ORCM_PNP_TAG_WILDCARD,
-                                                         recv_input))) {
-        ORTE_ERROR_LOG(ret);
-        orte_trigger_event(&orte_exit);
-    }
-
-    /* listen for PS requests */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-ps", "0.1", "alpha",
-                                                         ORCM_PNP_SYS_CHANNEL,
-                                                         ORCM_PNP_TAG_PS,
-                                                         ps_request))) {
-        ORTE_ERROR_LOG(ret);
-        orte_trigger_event(&orte_exit);
-    }
-    
-    /* announce our existence - this carries with it our rml uri and
-     * our local node system info
-     */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.announce("ORCMD", "0.1", "alpha", vm_tracker))) {
-        ORTE_ERROR_LOG(ret);
-        orte_trigger_event(&orte_exit);
-    }
-    
-    if (orte_debug_daemons_flag) {
-        opal_output(0, "%s orcmd: up and running - waiting for commands!", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-    }
+    /* set the odls comm function */
+    orte_comm = orcmd_comm;
 
     /* wait to hear we are done */
     opal_event_dispatch();
@@ -521,9 +297,6 @@ DONE:
     /* cleanup any lingering session directories */
     orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
     
-    /* cleanup the triggers */
-    OBJ_DESTRUCT(&orte_exit);
-
     /* Finalize and clean up ourselves */
     orcm_finalize();
     return ret;
@@ -537,20 +310,12 @@ static void shutdown_callback(int fd, short flags, void *arg)
         opal_output(0, "%s orcmd: finalizing", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
     }
     
-    /* cleanup */
-    if (NULL != log_path) {
-        unlink(log_path);
-    }
-    
     /* make sure our local procs are dead */
     orte_odls.kill_local_procs(NULL);
     
     /* whack any lingering session directory files from our jobs */
     orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
     
-    /* cleanup the triggers */
-    OBJ_DESTRUCT(&orte_exit);
-
     /* if we were ordered to abort, do so */
     if (orcmd_globals.abort) {
         opal_output(0, "%s is executing clean abort", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
@@ -575,114 +340,6 @@ static void shutdown_callback(int fd, short flags, void *arg)
     exit(orte_exit_status);
 }
 
-static void recv_input(int status,
-                       orte_process_name_t *sender,
-                       orcm_pnp_tag_t tag,
-                       struct iovec *msg, int count,
-                       opal_buffer_t *buf,
-                       void *cbdata)
-{
-    int rc, n;
-    uint16_t jfam;
-    
-    opal_output(0, "%s GOT COMMAND FROM %s", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_NAME_PRINT(sender));
-    /* if this isn't intended for me, ignore it */
-    n=1;
-    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &jfam, &n, OPAL_UINT16))) {
-        ORTE_ERROR_LOG(rc);
-        return;
-    }
-    if (jfam != ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid)) {
-        opal_output(0, "%s GOT COMMAND FOR DVM %d - NOT FOR ME!", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), jfam);
-        return;
-    }
-    
-    /* pass it down to the cmd processor */
-    if (ORTE_SUCCESS != (rc = orte_daemon_process_commands(sender, buf, tag))) {
-        OPAL_OUTPUT_VERBOSE((1, orcm_debug_output,
-                             "%s orte:daemon:cmd:processor failed on error %s",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_ERROR_NAME(rc)));
-    }
-}
-
-
-static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *nodename, uint32_t uid)
-{
-    orte_proc_t *proc;
-    int i;
-    orte_node_t *node;
-    orte_nid_t *nid;
-
-    /* if this isn't one of my peers, ignore it */
-    if (name->jobid != ORTE_PROC_MY_NAME->jobid) {
-        return;
-    }
-    
-    /* have I heard from you before? */
-    if (NULL != (proc = (orte_proc_t*)opal_pointer_array_get_item(daemons->procs, name->vpid))) {
-        /* yep - got this one, check if it changed node */
-        goto check_node;
-    }
-    /* must be a new daemon - add it to our data */
-    proc = OBJ_NEW(orte_proc_t);
-    proc->name.jobid = name->jobid;
-    proc->name.vpid = name->vpid;
-    opal_pointer_array_set_item(daemons->procs, name->vpid, proc);
-    
-    /* increment our num_procs */
-    orte_process_info.num_procs++;
-
-check_node:
-    /* find this node in our array */
-    for (i=0; i < orte_node_pool->size; i++) {
-        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, i))) {
-            continue;
-        }
-        if (0 == strcmp(node->name, nodename)) {
-            /* already have this node - could be a race condition
-             * where the daemon died and has been replaced, so
-             * just assume that is the case
-             */
-            if (NULL != node->daemon) {
-                OBJ_RELEASE(node->daemon);
-            }
-            goto complete;
-        }
-    }
-    /* if we get here, this is a new node */
-    node = OBJ_NEW(orte_node_t);
-    node->name = strdup(nodename);
-    node->state = ORTE_NODE_STATE_UP;
-    node->index = opal_pointer_array_add(orte_node_pool, node);
-complete:
-    OBJ_RETAIN(node);  /* maintain accounting */
-    proc->node = node;
-    proc->nodename = node->name;
-    OBJ_RETAIN(proc);  /* maintain accounting */
-    node->daemon = proc;
-    node->daemon_launched = true;
-    
-    /* add this daemon/node to the nidmap so that the
-     * odls and routed modules can function
-     */
-    if (NULL == (nid = orte_util_lookup_nid(name))) {
-        /* doesn't exist yet - add it */
-        nid = OBJ_NEW(orte_nid_t);
-        nid->name = strdup(nodename);
-        nid->daemon = name->vpid;
-        nid->index = opal_pointer_array_add(&orte_nidmap, nid);
-    } else {
-        /* already exists - see if we need to update it */
-        if (NULL == nid->name) {
-            nid->name = strdup(nodename);
-        } else if (0 != strcmp(nodename, nid->name)) {
-            free(nid->name);
-            nid->name = strdup(nodename);
-        }
-    }
-}
-
 static int orcmd_comm(orte_process_name_t *recipient,
                       opal_buffer_t *buf, orte_rml_tag_t tag,
                       orte_default_cbfunc_t cbfunc)
@@ -690,14 +347,3 @@ static int orcmd_comm(orte_process_name_t *recipient,
     opal_output(0, "%s comm to %s tag %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_NAME_PRINT(recipient), tag);
     return ORCM_SUCCESS;
 }
-
-static void ps_request(int status,
-                       orte_process_name_t *sender,
-                       orcm_pnp_tag_t tag,
-                       struct iovec *msg, int count,
-                       opal_buffer_t *buffer,
-                       void *cbdata)
-{
-    opal_output(0, "%s GOT PS REQUEST", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-}
-

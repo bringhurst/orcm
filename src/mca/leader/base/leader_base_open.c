@@ -19,10 +19,10 @@
 #include "mca/leader/leader.h"
 #include "mca/leader/base/public.h"
 #include "mca/leader/base/private.h"
-#include "mca/leader/base/components.h"
 
 /* instantiate the module */
 orcm_leader_base_module_t orcm_leader = {
+    NULL,
     NULL,
     NULL,
     NULL,
@@ -54,22 +54,14 @@ int orcm_leader_base_open(void)
 
 static void leader_constructor(orcm_leader_t *ptr)
 {
-    ptr->app = NULL;
-    ptr->version = NULL;
-    ptr->release = NULL;
-    ptr->lead_rank = ORTE_VPID_WILDCARD;
+    ptr->stringid = NULL;
+    ptr->leader = NULL;
     ptr->cbfunc = NULL;
 }
 static void leader_destructor(orcm_leader_t *ptr)
 {
-    if (NULL != ptr->app) {
-        free(ptr->app);
-    }
-    if (NULL != ptr->version) {
-        free(ptr->version);
-    }
-    if (NULL != ptr->release) {
-        free(ptr->release);
+    if (NULL != ptr->stringid) {
+        free(ptr->stringid);
     }
 }
 OBJ_CLASS_INSTANCE(orcm_leader_t,

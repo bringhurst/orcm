@@ -12,6 +12,8 @@
 
 #include "opal/util/output.h"
 
+#include "runtime/runtime.h"
+
 #include "mca/cfgi/cfgi.h"
 #include "mca/cfgi/confd/cfgi_confd.h"
 
@@ -73,10 +75,16 @@ int orcm_cfgi_confd_component_close(void)
 
 int orcm_cfgi_confd_component_query(mca_base_module_t **module, int *priority)
 {
-    *module = (mca_base_module_t*)&orcm_cfgi_confd_module;
-    *priority = 100;
-    return ORCM_SUCCESS;
+    if (ORCM_PROC_IS_SCHEDULER) {
+        *module = (mca_base_module_t*)&orcm_cfgi_confd_module;
+        *priority = 100;
+        return ORCM_SUCCESS;
+    }
 
+    /* otherwise, cannot use this module */
+    *priority = 0;
+    *module = NULL;
+    return ORCM_ERROR;
 }
 
 int orcm_cfgi_confd_component_register(void)

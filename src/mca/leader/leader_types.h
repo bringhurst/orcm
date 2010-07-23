@@ -15,6 +15,7 @@
 #include "orte/types.h"
 
 #define ORCM_LEADER_WILDCARD    ORTE_VPID_WILDCARD
+#define ORCM_LEADER_INVALID     ORTE_VPID_INVALID
 
 typedef void (*orcm_leader_cbfunc_t)(char *app,
                                      char *version,

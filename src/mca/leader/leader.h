@@ -31,7 +31,7 @@ typedef int (*orcm_leader_module_init_fn_t)(void);
 /* finalize the module - called only from within the
  * framework setup code
  */
-typedef int (*orcm_leader_module_finalize_fn_t)(void);
+typedef void (*orcm_leader_module_finalize_fn_t)(void);
 
 /* check to see if the current leader has failed. The pnp
  * code will call this function upon receipt of each message
@@ -39,21 +39,19 @@ typedef int (*orcm_leader_module_finalize_fn_t)(void);
  * up to the individual leader module to use whatever algo
  * it wants to make this determination
  */
-typedef bool (*orcm_leader_module_has_leader_failed_fn_t)(orcm_pnp_group_t *grp,
-                                                          orcm_pnp_source_t *src);
+typedef bool (*orcm_leader_module_deliver_msg_fn_t)(orte_process_name_t *src);
 
 /* Manually set the leader for a given application triplet. A value
  * of ORCM_LEADER_WILDCARD will cause data from all siblings to be
- * passed through as if they all are leaders.
+ * passed through as if they all are leaders. A value of ORCM_LEADER_INVALID
+ * will cause the function to automatically select a "leader" based
+ * on its own internal algorithm
  *
  * NOTE: A value beyond the range of available siblings will result
  * in no data being passed through at all!
  *
- * NOTE: once manually set, the system will not auto-select a new
- * leader. Instead, the provided cbfunc will be called when the
- * selected leader is determined to have failed. If a NULL is
- * given for the cbfunc, then the system WILL auto-select a new
- * leader upon failure of the specified one.
+ * NOTE: If provided, the cbfunc will be called when the
+ * selected leader is determined to have failed.
  *
  * If ORCM_LEADER_WILDCARD and a cbfunc are provided, then the
  * cbfunc will be called whenever any sibling fails.
@@ -63,14 +61,11 @@ typedef int (*orcm_leader_module_set_leader_fn_t)(char *app,
                                                   char *release,
                                                   orte_vpid_t sibling,
                                                   orcm_leader_cbfunc_t cbfunc);
-/*
- * Given a list of members of an application group, select a leader
- * who will provide the "official" input.
- */
-typedef int (*orcm_leader_module_select_leader_fn_t)(orcm_pnp_group_t *grp);
-
 /* Get the current leader of a group */
-typedef orcm_pnp_source_t* (*orcm_leader_module_get_leader_fn_t)(orcm_pnp_group_t *grp);
+typedef int (*orcm_leader_module_get_leader_fn_t)(char *app,
+                                                  char *version,
+                                                  char *release,
+                                                  orte_process_name_t *leader);
 
 /* component struct */
 typedef struct {
@@ -85,11 +80,10 @@ typedef orcm_leader_base_component_2_0_0_t orcm_leader_base_component_t;
 /* module struct */
 typedef struct {
     orcm_leader_module_init_fn_t                init;
-    orcm_leader_module_set_leader_fn_t          set_leader;
-    orcm_leader_module_select_leader_fn_t       select_leader;
-    orcm_leader_module_has_leader_failed_fn_t   has_leader_failed;
-    orcm_leader_module_get_leader_fn_t          get_leader;
     orcm_leader_module_finalize_fn_t            finalize;
+    orcm_leader_module_deliver_msg_fn_t         deliver_msg;
+    orcm_leader_module_set_leader_fn_t          set_leader;
+    orcm_leader_module_get_leader_fn_t          get_leader;
 } orcm_leader_base_module_t;
 
 /** Interface for LEADER selection */

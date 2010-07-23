@@ -12,9 +12,11 @@
 
 #include "openrcm.h"
 
-#include "orte/mca/rmcast/rmcast_types.h"
+#include "opal/class/opal_list.h"
 
-#include "mca/pnp/pnp_types.h"
+#include "orte/runtime/orte_globals.h"
+
+#include "mca/leader/leader_types.h"
 
 BEGIN_C_DECLS
 
@@ -30,10 +32,8 @@ ORCM_DECLSPEC extern orcm_leader_base_t orcm_leader_base;
 
 typedef struct {
     opal_list_item_t super;
-    char *app;
-    char *version;
-    char *release;
-    orte_vpid_t lead_rank;
+    char *stringid;
+    orte_proc_t *leader;
     orcm_leader_cbfunc_t cbfunc;
 } orcm_leader_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_leader_t);

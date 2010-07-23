@@ -12,6 +12,8 @@
 
 #include "opal/util/output.h"
 
+#include "runtime/runtime.h"
+
 #include "mca/cfgi/cfgi.h"
 #include "mca/cfgi/file/cfgi_file.h"
 
@@ -58,7 +60,7 @@ int orcm_cfgi_file_component_close(void)
 
 int orcm_cfgi_file_component_query(mca_base_module_t **module, int *priority)
 {
-    if (NULL != mca_orcm_cfgi_file_component.file) {
+    if (ORCM_PROC_IS_DAEMON && NULL != mca_orcm_cfgi_file_component.file) {
         *module = (mca_base_module_t*)&orcm_cfgi_file_module;
         *priority = 100;
         return ORCM_SUCCESS;

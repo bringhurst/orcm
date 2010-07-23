@@ -22,7 +22,6 @@
 #include "mca/pnp/pnp.h"
 #include "mca/pnp/base/public.h"
 #include "mca/pnp/base/private.h"
-#include "mca/pnp/base/components.h"
 
 /* instantiate the module */
 orcm_pnp_base_module_t orcm_pnp = {
@@ -87,7 +86,6 @@ static void source_constructor(orcm_pnp_source_t *ptr)
 {
     ptr->name.jobid = ORTE_JOBID_INVALID;
     ptr->name.vpid = ORTE_VPID_INVALID;
-    ptr->failed = false;
     memset(ptr->msgs, 0, ORCM_PNP_MAX_MSGS*sizeof(opal_buffer_t*));
     ptr->start = 0;
     ptr->end = 0;

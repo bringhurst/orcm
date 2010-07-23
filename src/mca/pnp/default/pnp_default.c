@@ -736,6 +736,11 @@ static int default_output(orcm_pnp_channel_t channel,
     opal_buffer_t *buf;
     orcm_pnp_channel_t chan;
     
+    /* if we have not announced, ignore this message */
+    if (NULL == my_string_id) {
+        return ORCM_ERR_NOT_AVAILABLE;
+    }
+
     /* protect against threading */
     OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
     
@@ -755,6 +760,8 @@ static int default_output(orcm_pnp_channel_t channel,
         /* if this is going on the group channel, then substitute that channel here */
         if (ORCM_PNP_GROUP_OUTPUT_CHANNEL == channel) {
             chan = my_output_channel->channel;
+        } else if (ORCM_PNP_GROUP_INPUT_CHANNEL == channel) {
+            chan = my_input_channel->channel;
         } else {
             chan = channel;
         }
@@ -817,6 +824,11 @@ static int default_output_nb(orcm_pnp_channel_t channel,
     opal_buffer_t *buf;
     orcm_pnp_channel_t chan;
 
+    /* if we have not announced, ignore this message */
+    if (NULL == my_string_id) {
+        return ORCM_ERR_NOT_AVAILABLE;
+    }
+
     /* protect against threading */
     OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
     
@@ -845,6 +857,8 @@ static int default_output_nb(orcm_pnp_channel_t channel,
         /* if this is going on the group channel, then substitute that channel here */
         if (ORCM_PNP_GROUP_OUTPUT_CHANNEL == channel) {
             chan = my_output_channel->channel;
+        } else if (ORCM_PNP_GROUP_INPUT_CHANNEL == channel) {
+            chan = my_input_channel->channel;
         } else {
             chan = channel;
         }

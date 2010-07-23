@@ -21,7 +21,6 @@
 #include "orte/mca/grpcomm/grpcomm.h"
 #include "orte/runtime/orte_locks.h"
 
-#include "mca/pnp/base/public.h"
 #include "runtime/runtime.h"
 
 const char openrcm_version_string[] = "OPENRCM 0.1";
@@ -85,16 +84,6 @@ int orcm_init(orcm_proc_type_t flags)
     
     if (ORTE_SUCCESS != (ret = orte_init(NULL, NULL, flags))) {
         error = "orte_init";
-        goto error;
-    }
-
-    /* setup the pnp framework */
-    if (ORCM_SUCCESS != (ret = orcm_pnp_base_open())) {
-        error = "pnp_open";
-        goto error;
-    }
-    if (ORCM_SUCCESS != (ret = orcm_pnp_base_select())) {
-        error = "pnp_select";
         goto error;
     }
 

@@ -14,8 +14,6 @@
 
 #include "orte/runtime/runtime.h"
 
-#include "mca/pnp/base/public.h"
-
 #include "runtime/runtime.h"
 
 int orcm_finalize(void)
@@ -26,12 +24,6 @@ int orcm_finalize(void)
 
     /* remove all signal handlers */
     orcm_remove_signal_handlers();
-
-    orcm_pnp_base_close();
-    
-    if (ORCM_PROC_IS_MASTER) {
-        orcm_cfgi_base_close();
-    }
 
     orte_finalize();
     

@@ -112,7 +112,6 @@ ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_send_t);
 typedef struct {
     opal_object_t super;
     orte_process_name_t name;
-    bool failed;
     opal_buffer_t *msgs[ORCM_PNP_MAX_MSGS];
     int start, end;
     orte_rmcast_seq_t last_msg_num;

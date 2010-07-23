@@ -51,7 +51,6 @@
 #include "opal/mca/base/base.h"
 #include "opal/mca/base/mca_base_param.h"
 #include "opal/runtime/opal.h"
-#include "opal/threads/threads.h"
 
 #include "orte/runtime/runtime.h"
 #include "orte/util/show_help.h"
@@ -68,7 +67,6 @@
 static struct {
     bool help;
     int num_procs;
-    int add_procs;
     char *hosts;
     bool constrained;
     bool gdb;
@@ -88,10 +86,6 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       &my_globals.num_procs, OPAL_CMD_LINE_TYPE_INT,
       "Number of instances to start" },
 
-    { NULL, NULL, NULL, 'a', "add", "add", 1,
-      &my_globals.add_procs, OPAL_CMD_LINE_TYPE_BOOL,
-      "Number of instances to be added to an existing job" },
-    
     { NULL, NULL, NULL, '\0', "gdb", "gdb", 0,
       &my_globals.gdb, OPAL_CMD_LINE_TYPE_BOOL,
       "Have the application spin in init until a debugger attaches" },
@@ -132,10 +126,6 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       NULL }
 };
 
-static opal_mutex_t lock;
-static opal_condition_t cond;
-static bool waiting=true;
-
 static void ack_recv(int status,
                      orte_process_name_t *sender,
                      orcm_pnp_tag_t tag,
@@ -145,19 +135,19 @@ static void ack_recv(int status,
 
 int main(int argc, char *argv[])
 {
-    int32_t ret, i, num_apps, local_restarts, global_restarts;
+    int32_t ret, i;
     opal_cmd_line_t cmd_line;
     FILE *fp;
     char *cmd, *mstr;
-    char **inpt, **xfer;
+    char **inpt;
     opal_buffer_t buf;
     int count;
     char cwd[OPAL_PATH_MAX];
-    char *app;
     orcm_tool_cmd_t flag = ORCM_TOOL_START_CMD;
-    int8_t constrain;
     int32_t master;
     uint16_t jfam;
+    orte_job_t *jdata;
+    orte_app_context_t *app;
     
     /***************
      * Initialize
@@ -178,16 +168,12 @@ int main(int argc, char *argv[])
     my_globals.num_procs = 0;
     my_globals.hosts = NULL;
     my_globals.constrained = false;
-    my_globals.add_procs = 0;
     my_globals.gdb = false;
     my_globals.local_restarts = -1;
     my_globals.global_restarts = -1;
     my_globals.sched = NULL;
     my_globals.hnp_uri = NULL;
     my_globals.continuous = false;
-    
-    OBJ_CONSTRUCT(&lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&cond, opal_condition_t);
     
     /* Parse the command line options */
     opal_cmd_line_create(&cmd_line, cmd_line_opts);
@@ -303,25 +289,11 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* bozo check - cannot specify both add and num procs */
-    if (0 < my_globals.add_procs && 0 < my_globals.num_procs) {
-        opal_output(0, "Cannot specify both -a and -n options together");
-        return ORTE_ERROR;
-    }
-    if (my_globals.add_procs < 0 || my_globals.num_procs < 0) {
-        opal_output(0, "Error - negative number of procs given");
-        return ORTE_ERROR;
-    }
-    
-    /* get the current working directory */
+   /* get the current working directory */
     if (OPAL_SUCCESS != opal_getcwd(cwd, sizeof(cwd))) {
         fprintf(stderr, "failed to get cwd\n");
         return ORTE_ERR_NOT_FOUND;
     }
-    
-    /* setup the max number of restarts */
-    local_restarts = my_globals.local_restarts;
-    global_restarts = my_globals.global_restarts;
     
     /***************************
      * We need all of OPAL and ORTE - this will
@@ -366,72 +338,76 @@ int main(int argc, char *argv[])
     /* load the start cmd */
     opal_dss.pack(&buf, &flag, 1, ORCM_TOOL_CMD_T);
     
-    /* load the add procs flag */
-    if (0 < my_globals.add_procs) {
-        constrain = 1;
-        my_globals.num_procs = my_globals.add_procs;
-    } else {
-        constrain = 0;
-    }
-    opal_dss.pack(&buf, &constrain, 1, OPAL_INT8);
-    
-    /* load the gdb flag */
+    /* setup the job object to be launched */
+    jdata = OBJ_NEW(orte_job_t);
+
+    /* set the spin flag */
     if (my_globals.gdb) {
-        constrain = 1;
-    } else {
-        constrain = 0;
+        jdata->controls |= ORTE_JOB_CONTROL_SPIN_FOR_DEBUG;
     }
-    opal_dss.pack(&buf, &constrain, 1, OPAL_INT8);
 
-    /* load the continuous flag */
+    /* set the continuous flag */
     if (my_globals.continuous) {
-        constrain = 1;
-    } else {
-        constrain = 0;
+        jdata->controls |= ORTE_JOB_CONTROL_CONTINUOUS_OP;
     }
-    opal_dss.pack(&buf, &constrain, 1, OPAL_INT8);
     
-    /* load the max local restarts value */
-    opal_dss.pack(&buf, &local_restarts, 1, OPAL_INT32);
-    
-    /* load the max global restarts value */
-    opal_dss.pack(&buf, &global_restarts, 1, OPAL_INT32);
+    /* setup the application */
+    app = OBJ_NEW(orte_app_context_t);
+    opal_pointer_array_add(jdata->apps, app);
+    jdata->num_apps++;
 
-    /* pack the number of instances to start */
-    num_apps = my_globals.num_procs;
-    opal_dss.pack(&buf, &num_apps, 1, OPAL_INT32);
-    
-    /* pack the starting hosts - okay to pack a NULL string */
-    opal_dss.pack(&buf, &my_globals.hosts, 1, OPAL_STRING);
-    
-    /* pack the constraining flag */
-    if (my_globals.constrained) {
-        constrain = 1;
-    } else {
-        constrain = 0;
-    }
-    opal_dss.pack(&buf, &constrain, 1, OPAL_INT8);
-    
     /* get the things to start */
     inpt = NULL;
     opal_cmd_line_get_tail(&cmd_line, &count, &inpt);
-    
-    /* get the absolute path */
-    if (NULL == (app = opal_find_absolute_path(inpt[0]))) {
-        fprintf(stderr, "App %s could not be found - try changing path\n", inpt[0]);
+    if (0 == count || NULL == inpt) {
+        fprintf(stderr, "No application specified\n");
+        OBJ_RELEASE(jdata);
+        OBJ_DESTRUCT(&buf);
         goto cleanup;
     }
-    xfer = NULL;
-    opal_argv_append_nosize(&xfer, app);
-    for (i=1; NULL != inpt[i]; i++) {
-        opal_argv_append_nosize(&xfer, inpt[i]);
+
+    /* get the absolute path */
+    if (NULL == (app->app = opal_find_absolute_path(inpt[0]))) {
+        fprintf(stderr, "App %s could not be found - try changing path\n", inpt[0]);
+        OBJ_RELEASE(jdata);
+        OBJ_DESTRUCT(&buf);
+        goto cleanup;
+    }
+    for (i=0; NULL != inpt[i]; i++) {
+        opal_argv_append_nosize(&app->argv, inpt[i]);
     }
     opal_argv_free(inpt);
-    cmd = opal_argv_join(xfer, ' ');
-    opal_argv_free(xfer);
-    opal_dss.pack(&buf, &cmd, 1, OPAL_STRING);
-    free(cmd);
+
+    /* tell the app to use the right ess module */
+    opal_setenv("OMPI_MCA_ess", "orcmapp", true, &app->env);
+
+    /* set the max local restarts value */
+    app->max_local_restarts = my_globals.local_restarts;
     
+    /* set the max global restarts value */
+    app->max_global_restarts = my_globals.global_restarts;
+
+    /* set the number of instances to start */
+    app->num_procs = my_globals.num_procs;
+    
+    /* set the starting hosts */
+    if (NULL != my_globals.hosts) {
+        app->dash_host = opal_argv_split(my_globals.hosts, ',');
+    }
+    
+    /* set the constraining flag */
+    if (my_globals.constrained) {
+        app->constrain = true;
+    }
+    
+    /* pack the job object */
+    if (ORTE_SUCCESS != (ret = opal_dss.pack(&buf, &jdata, 1, ORTE_JOB))) {
+        ORTE_ERROR_LOG(ret);
+        OBJ_RELEASE(jdata);
+        OBJ_DESTRUCT(&buf);
+        goto cleanup;
+    }
+
     if (ORCM_SUCCESS != (ret = orcm_pnp.output(ORCM_PNP_GROUP_OUTPUT_CHANNEL,
                                                NULL, ORCM_PNP_TAG_TOOL,
                                                NULL, 0, &buf))) {
@@ -441,14 +417,12 @@ int main(int argc, char *argv[])
     OBJ_DESTRUCT(&buf);
     
     /* now wait for ack */
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &waiting);
+    opal_event_dispatch();
     
     /***************
      * Cleanup
      ***************/
  cleanup:
-    OBJ_DESTRUCT(&lock);
-    OBJ_DESTRUCT(&cond);
     orcm_finalize();
 
     return ret;
@@ -460,6 +434,29 @@ static void ack_recv(int status,
                      struct iovec *msg, int count,
                      opal_buffer_t *buf, void *cbdata)
 {
-    /* the fact we recvd this is enough - release the wait */
-    OPAL_RELEASE_THREAD(&lock, &cond, &waiting);
+    int rc, n;
+    orcm_tool_cmd_t flag;
+
+    /* unpack the cmd and verify it is us */
+    n=1;
+    opal_dss.unpack(buf, &flag, &n, ORCM_TOOL_CMD_T);
+    if (ORCM_TOOL_START_CMD != flag) {
+        /* wrong cmd */
+        opal_output(0, "GOT WRONG CMD");
+        return;
+    }
+
+    /* unpack the result of the start command */
+    n=1;
+    opal_dss.unpack(buf, &rc, &n, OPAL_INT);
+    ORTE_UPDATE_EXIT_STATUS(rc);
+
+    if (0 == rc) {
+        opal_output(orte_clean_output, "Job started");
+    } else {
+        opal_output(orte_clean_output, "Job failed to start with error %s", ORTE_ERROR_NAME(rc));
+    }
+
+    /* the fact we recvd this is enough */
+    orte_quit();
 }

@@ -43,6 +43,7 @@
 #include "orte/mca/filem/filem.h"
 #include "orte/mca/grpcomm/grpcomm.h"
 #include "orte/runtime/orte_wait.h"
+#include "orte/runtime/orte_quit.h"
 #include "orte/mca/rmaps/rmaps_types.h"
 #include "orte/mca/routed/routed.h"
 #include "orte/mca/snapc/snapc.h"
@@ -193,7 +194,7 @@ static int update_state(orte_jobid_t job,
         
         if (ORTE_SUCCESS != orte_plm.spawn(jdata)) {
             opal_output(0, "FAILED TO RESTART APP %s", app->app);
-            orte_trigger_event(&orte_exit);
+            orte_quit();
             return ORTE_ERROR;
         }
         /* get the new node */
