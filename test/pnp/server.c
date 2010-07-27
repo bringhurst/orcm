@@ -26,13 +26,17 @@
 
 #define ORCM_TEST_CLIENT_SERVER_TAG     110
 
-/* our message recv function */
+/* local functions */
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
                        struct iovec *msg, int count,
                        opal_buffer_t *buf,
                        void *cbdata);
+
+static void send_data(int fd, short flags, void *arg);
+
+static int msg_num=0;
 
 int main(int argc, char* argv[])
 {
@@ -49,12 +53,6 @@ int main(int argc, char* argv[])
         exit(1);
     }
     
-    /* announce our existence */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("SERVER", "1.0", "alpha", NULL))) {
-        ORTE_ERROR_LOG(rc);
-        goto cleanup;
-    }
-    
     /* we want to listen to output from all versions and releases of the CLIENT app */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("CLIENT", NULL, NULL,
                                                         ORCM_PNP_GROUP_OUTPUT_CHANNEL,
@@ -63,8 +61,17 @@ int main(int argc, char* argv[])
         goto cleanup;
     }
     
+    /* announce our existence */
+    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("SERVER", "1.0", "alpha", NULL))) {
+        ORTE_ERROR_LOG(rc);
+        goto cleanup;
+    }
+    
     opal_output(0, "SERVER %s ACTIVE", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
     
+    /* wake up every x seconds to send something */
+    ORTE_TIMER_EVENT(2, 0, send_data);
+
     /* just sit here */
     opal_event_dispatch();
     
@@ -99,7 +106,6 @@ static void recv_input(int status,
     int32_t i, j, n, *data, *ptr;
     struct iovec *response;
     int rc;
-    opal_buffer_t buf;
     
     opal_output(0, "%s recvd message from client %s on tag %d with %d iovecs",
                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
@@ -143,12 +149,66 @@ static void recv_input(int status,
         opal_output(0, "%s sending response to %s for msg number %d",
                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                     ORTE_NAME_PRINT(sender), data[0]);
-        OBJ_CONSTRUCT(&buf, opal_buffer_t);
         if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_GROUP_OUTPUT_CHANNEL, sender,
                                                   ORCM_TEST_CLIENT_SERVER_TAG,
-                                                  NULL, 0, &buf))) {
+                                                  response, count, NULL))) {
             ORTE_ERROR_LOG(rc);
         }
-        OBJ_DESTRUCT(&buf);
+        for (j=0; j < count; j++) {
+            free(response[j].iov_base);
+        }
+        free(response);
     }
+}
+
+static void cbfunc_mcast(int status, orte_process_name_t *name,
+                   orcm_pnp_tag_t tag,
+                   struct iovec *msg, int count,
+                   opal_buffer_t *buf, void *cbdata)
+{
+    int i;
+    
+    for (i=0; i < count; i++) {
+        if (NULL != msg[i].iov_base) {
+            free(msg[i].iov_base);
+        }
+    }
+    free(msg);
+}
+static void send_data(int fd, short flags, void *arg)
+{
+    int32_t count, *ptr;
+    int rc;
+    int j, n;
+    struct iovec *msg;
+    opal_event_t *tmp = (opal_event_t*)arg;
+    struct timeval now;
+
+    count = ORTE_PROC_MY_NAME->vpid+1;
+    msg = (struct iovec*)malloc(count * sizeof(struct iovec));
+    for (j=0; j < count; j++) {
+        msg[j].iov_base = (void*)malloc(5 * sizeof(int32_t));
+        ptr = msg[j].iov_base;
+        for (n=0; n < 5; n++) {
+            *ptr = msg_num;
+            ptr++;
+        }
+        msg[j].iov_len = 5 * sizeof(int32_t);
+    }
+    
+    /* output the values */
+    opal_output(0, "%s multicasting data for msg number %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, NULL,
+                                                 ORCM_PNP_TAG_OUTPUT, msg, count, NULL, cbfunc_mcast, NULL))) {
+        ORTE_ERROR_LOG(rc);
+    }
+    
+    /* increment the msg number */
+    msg_num++;
+    
+    /* reset the timer */
+    now.tv_sec = 2;
+    now.tv_usec = 0;
+    opal_evtimer_add(tmp, &now);
+    
 }

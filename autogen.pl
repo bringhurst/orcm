@@ -92,11 +92,11 @@ sub process_component {
         foreach my $f (@output_files) {
             $f =~ s@$cdir@$pdir/mca/$framework/$component@;
             push(@dirs, $f);
-            @output_files = @dirs;
         }
+        @output_files = @dirs;
     }
     # Deep copy the list of files because @output_files is a global.
-    $found_component->{"output_files"};
+    @{$found_component->{"output_files"}} = @output_files;
     push(@{$found_items->{$pname}->{$framework}->{"components"}}, 
          $found_component);
 }

@@ -105,7 +105,8 @@ static void ps_recv(int status,
                     opal_buffer_t *buf, void *cbdata);
 
 static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *nodename, uint32_t uid);
+                       orte_process_name_t *name, char *nodename,
+                       char *rml_uri, uint32_t uid);
 
 /* update data function */
 static void update_data(int fd, short flg, void *arg)
@@ -400,7 +401,8 @@ cleanup:
 }
 
 static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *nodename, uint32_t uid)
+                       orte_process_name_t *name, char *nodename,
+                       char *rml_uri, uint32_t uid)
 {
     orte_proc_t *proc;
     orte_node_t *node;

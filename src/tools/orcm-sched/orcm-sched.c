@@ -146,7 +146,8 @@ static void vm_commands(int status,
                         void *cbdata);
 
 static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *node, uint32_t uid);
+                       orte_process_name_t *name, char *node,
+                       char *rml_uri, uint32_t uid);
 
 static void ps_request(int status,
                        orte_process_name_t *sender,
@@ -453,7 +454,8 @@ cleanup:
 }
 
 static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *nodename, uint32_t uid)
+                       orte_process_name_t *name, char *nodename,
+                       char *rml_uri, uint32_t uid)
 {
     orte_proc_t *proc;
     orte_node_t *node;

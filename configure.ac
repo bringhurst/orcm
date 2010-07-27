@@ -96,7 +96,7 @@ AS_IF([test "$with_orte_wrapper_dir" != ""],
               ORTE_WRAPPER_DATA_DIR=$with_orte_wrapper_dir])],
       [AS_IF([test -d "$with_orte/share"],
              [files=`find "$with_orte/share" | grep ortecc-wrapper-data.txt`
-              num_files=`echo $files | wc -w`
+              num_files=`echo $files | wc -l`
               AS_IF([test $num_files = 1],
                     [ORTE_WRAPPER_DATA_DIR=`echo $files | sed -e s@/ortecc-wrapper-data.txt@@`
 	             happy=1

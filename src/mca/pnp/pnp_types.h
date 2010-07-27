@@ -73,7 +73,8 @@ enum {
 
 /* callback functions */
 typedef void (*orcm_pnp_announce_fn_t)(char *app, char *version, char *release,
-                                       orte_process_name_t *name, char *node, uint32_t uid);
+                                       orte_process_name_t *name, char *node,
+                                       char *rml_uri, uint32_t uid);
 
 typedef void (*orcm_pnp_open_channel_cbfunc_t)(char *app, char *version, char *release,
                                                orcm_pnp_channel_t channel);

@@ -103,7 +103,8 @@ static uint32_t my_uid;
 static void local_fin(void);
 static int local_setup(char **hosts);
 static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *node, uint32_t uid);
+                       orte_process_name_t *name, char *node,
+                       char *rml_uri, uint32_t uid);
 static void ps_request(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
@@ -937,11 +938,13 @@ static int local_setup(char **hosts)
     /* give ourselves a second to wait for announce responses to detect
      * any pre-existing daemons/orcms that might conflict
      */
-    ORTE_TIMER_EVENT(1, 0, release);
+    if (ORCM_PROC_IS_MASTER) {
+        ORTE_TIMER_EVENT(1, 0, release);
     
-    OPAL_ACQUIRE_THREAD(&start_lock, &start_cond, &start_flag);
-    OPAL_THREAD_UNLOCK(&start_lock);
-    
+        OPAL_ACQUIRE_THREAD(&start_lock, &start_cond, &start_flag);
+        OPAL_THREAD_UNLOCK(&start_lock);
+    }
+
     /* if we are an orcmd, open the cfgi framework so
      * we can receive configuration instructions
      */
@@ -1051,21 +1054,22 @@ static void local_fin(void)
 }
 
 static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *nodename, uint32_t uid)
+                       orte_process_name_t *name, char *nodename,
+                       char *rml_uri, uint32_t uid)
 {
     orte_proc_t *proc;
     orte_node_t *node;
     orte_nid_t *nid;
     int i;
     
-    OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
+    OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
                          "%s Received announcement from %s:%s:%s proc %s on node %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), app, version, release,
                          ORTE_NAME_PRINT(name), nodename));
     
-    /* if this isn't something I launched, ignore it */
-    if (ORTE_JOB_FAMILY(name->jobid) != ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid)) {
-        /* if this is an orcmd that belongs to this user, then we have a problem */
+    /* if this isn't one of my peers, ignore it */
+    if (name->jobid != ORTE_PROC_MY_NAME->jobid) {
+        /* if this is an orcm or orcmd that belongs to this user, then we have a problem */
         if ((0 == strcasecmp(app, "orcmd") || (0 == strcasecmp(app, "orcm"))) && uid == my_uid) {
             orte_show_help("help-orcm.txt", "preexisting-orcmd", true, nodename);
             goto exitout;
@@ -1075,69 +1079,54 @@ static void vm_tracker(char *app, char *version, char *release,
     
     /* look up this proc */
     if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(daemons->procs, name->vpid))) {
-        OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
-                             "%s adding new daemon",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
+                             "%s adding new daemon %s",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             ORTE_NAME_PRINT(name)));
         
         /* new daemon - add it */
         proc = OBJ_NEW(orte_proc_t);
         proc->name.jobid = name->jobid;
         proc->name.vpid = name->vpid;
+        proc->rml_uri = strdup(rml_uri);
         daemons->num_procs++;
         opal_pointer_array_set_item(daemons->procs, name->vpid, proc);
+        /* if we are a daemon, update our num_procs */
+        if (ORCM_PROC_IS_DAEMON) {
+            orte_process_info.num_procs++;
+        }
+    }
+    /* update the rml_uri if required */
+    if (NULL == proc->rml_uri) {
+        proc->rml_uri = strdup(rml_uri);
+    } else if (0 != strcmp(proc->rml_uri, rml_uri)) {
+        free(proc->rml_uri);
+        proc->rml_uri = strdup(rml_uri);
     }
     /* ensure the state is set to running */
     proc->state = ORTE_PROC_STATE_RUNNING;
     /* exit code is obviously zero */
     proc->exit_code = 0;
 
-    /* see if we need to update the nidmap */
-    if (NULL == (nid = (orte_nid_t*)opal_pointer_array_get_item(&orte_nidmap, proc->name.vpid))) {
-        nid = OBJ_NEW(orte_nid_t);
-        nid->daemon = proc->name.vpid;
-        nid->name = strdup(nodename);
-        opal_pointer_array_set_item(&orte_nidmap, proc->name.vpid, nid);
-    }
-
-    /* if it is a restart, check the node against the
-     * new one to see if it changed location
-     */
-    if (NULL != proc->nodename) {
-        if (0 != strcmp(nodename, proc->nodename)) {
-            OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
-                                 "%s restart detected",
-                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-            /* must have moved */
-            OBJ_RELEASE(proc->node);  /* maintain accounting */
-            proc->nodename = NULL;
+    /* get the node - it is at the index of the daemon's vpid */
+    if (NULL != (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, name->vpid))) {
+        /* already have this node - could be a race condition
+         * where the daemon died and has been replaced, so
+         * just assume that is the case
+         */
+        if (NULL != node->daemon) {
+            OBJ_RELEASE(node->daemon);
         }
+        node->state = ORTE_NODE_STATE_UP;
+        goto complete;
     }
-    
-    /* find this node in our array */
-    for (i=0; i < orte_node_pool->size; i++) {
-        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, i))) {
-            continue;
-        }
-        if (0 == strcmp(node->name, nodename)) {
-            /* already have this node - could be a race condition
-             * where the daemon died and has been replaced, so
-             * just assume that is the case
-             */
-            if (NULL != node->daemon) {
-                OBJ_RELEASE(node->daemon);
-            }
-            goto complete;
-        }
-    }
-    OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
-                         "%s adding new node",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-    
     /* if we get here, this is a new node */
     node = OBJ_NEW(orte_node_t);
     node->name = strdup(nodename);
     node->state = ORTE_NODE_STATE_UP;
-    node->index = opal_pointer_array_add(orte_node_pool, node);
+    node->slots = 1;  /* min number */
+    node->slots_alloc = node->slots;
+    node->index = opal_pointer_array_set_item(orte_node_pool, name->vpid, node);
  complete:
     OBJ_RETAIN(node);  /* maintain accounting */
     proc->node = node;
@@ -1145,22 +1134,60 @@ static void vm_tracker(char *app, char *version, char *release,
     OBJ_RETAIN(proc);  /* maintain accounting */
     node->daemon = proc;
     node->daemon_launched = true;
-    /* track number we have heard from */
-    daemons->num_reported++;
+    if (ORCM_PROC_IS_MASTER) {
+        daemons->num_reported++;
+    }
 
-    OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
-                         "%s %d of %d reported",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         daemons->num_reported, daemons->num_procs));
-
-    /* check if we have heard from them all */
-    if (daemons->num_procs <= daemons->num_reported) {
-        OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
-                             "%s declaring launch complete",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+    /* see if we need to update the nidmap */
+    if (NULL == (nid = (orte_nid_t*)orte_util_lookup_nid(name))) {
+        OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
+                             "%s adding new nid for %s",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             ORTE_NAME_PRINT(name)));
         
-        OPAL_WAKEUP_THREAD(&orte_plm_globals.spawn_in_progress_cond,
-                           &orte_plm_globals.spawn_in_progress);
+        nid = OBJ_NEW(orte_nid_t);
+        nid->daemon = name->vpid;
+        nid->name = strdup(nodename);
+        nid->index = opal_pointer_array_add(&orte_nidmap, nid);
+    } else {
+        /* already exists - see if we need to update it */
+        if (NULL == nid->name) {
+            nid->name = strdup(nodename);
+        } else if (0 != strcmp(nodename, nid->name)) {
+            free(nid->name);
+            nid->name = strdup(nodename);
+        }
+    }
+
+    /* if it is a restart, check the node against the
+     * new one to see if it changed location
+     */
+    if (NULL != proc->nodename) {
+        if (0 != strcmp(nodename, proc->nodename)) {
+            OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
+                                 "%s restart detected",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+            /* must have moved */
+            OBJ_RELEASE(proc->node);  /* maintain accounting */
+            proc->nodename = NULL;
+        }
+    }
+
+    if (ORCM_PROC_IS_MASTER) {
+        OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
+                             "%s %d of %d reported",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             daemons->num_reported, daemons->num_procs));
+
+        /* check if we have heard from them all */
+        if (daemons->num_procs <= daemons->num_reported) {
+            OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
+                                 "%s declaring launch complete",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        
+            OPAL_WAKEUP_THREAD(&orte_plm_globals.spawn_in_progress_cond,
+                               &orte_plm_globals.spawn_in_progress);
+        }
     }
     
     return;
@@ -1273,7 +1300,7 @@ static void recv_input(int status,
     
     /* pass it down to the cmd processor */
     if (ORTE_SUCCESS != (rc = orte_daemon_process_commands(sender, buf, tag))) {
-        OPAL_OUTPUT_VERBOSE((1, orcm_debug_output,
+        OPAL_OUTPUT_VERBOSE((1, orte_ess_base_output,
                              "%s orte:daemon:cmd:processor failed on error %s",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_ERROR_NAME(rc)));
     }

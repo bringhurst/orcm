@@ -35,8 +35,7 @@ static void send_data(int fd, short flags, void *arg);
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
-                       
-struct iovec *msg, int count,
+                       struct iovec *msg, int count,
                        opal_buffer_t *buffer,
                        void *cbdata);
 static void found_channel(char *app, char *version, char *release,
@@ -129,14 +128,15 @@ static void send_data(int fd, short flags, void *arg)
     
     /* output the values */
     if (ORCM_PNP_INVALID_CHANNEL == peer) {
-        opal_output(0, "%s sending data for msg number %d on GROUP output", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
+        opal_output(0, "%s mcasting data for msg number %d on GROUP output", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
         if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, NULL,
                                                      ORCM_PNP_TAG_OUTPUT, msg, count,
                                                      NULL, cbfunc, NULL))) {
             ORTE_ERROR_LOG(rc);
         }
     } else {
-        opal_output(0, "%s sending data for msg number %d to client 1.0 directly", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
+        opal_output(0, "%s mcasting data for msg number %d on channel %d directly",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num, peer);
         if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(peer, NULL,
                                                      ORCM_TEST_CLIENT_CLIENT_TAG, msg, count,
                                                      NULL, cbfunc, NULL))) {

@@ -1048,7 +1048,7 @@ static void recv_announcements(int status,
                 /* if the user requested a callback, they probably intend to send
                  * something to this triplet - so ensure the channel to its input is open
                  */
-                 if (ORTE_SUCCESS != (rc = orte_rmcast.open_channel(input, string_id, NULL, -1, NULL, ORTE_RMCAST_XMIT))) {
+                if (ORTE_SUCCESS != (rc = orte_rmcast.open_channel(input, string_id, NULL, -1, NULL, ORTE_RMCAST_XMIT))) {
                     ORTE_ERROR_LOG(rc);
                     goto RELEASE;
                 }
@@ -1084,7 +1084,7 @@ static void recv_announcements(int status,
     /* check any pending recvs */
     check_pending_recvs(triplet);
 
-recvs:
+ recvs:
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:received announcement from source %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
@@ -1121,6 +1121,29 @@ recvs:
         if (ORTE_SUCCESS != (rc = orte_routed.update_route(sender, sender))) {
             ORTE_ERROR_LOG(rc);
             goto RELEASE;
+        }
+    }
+
+    /* if this is a new source and they wanted a callback,
+     * now is the time to do it in case it needs to do some
+     * prep before we can send our return announcement
+     */
+    if (!known && NULL != my_announce_cbfunc) {
+        /* break the stringid into its elements */
+        ORCM_PNP_DECOMPOSE_STRING_ID(string_id, app, version, release);
+        /* have to release the thread in case this function does something right away */
+        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        my_announce_cbfunc(app, version, release, sender, nodename, rml_uri, uid);
+        /* need to reacquire the thread to avoid double-release */
+        OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+        if (NULL != app) {
+            free(app);
+        }
+        if (NULL != version) {
+            free(version);
+        }
+        if (NULL != release) {
+            free(release);
         }
     }
 
@@ -1177,31 +1200,14 @@ recvs:
                                              NULL, 0, &ann))) {
         ORTE_ERROR_LOG(rc);
     }
-    
+    /* need to reacquire the thread to avoid double-release */
+    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
     /* cleanup */
     OBJ_DESTRUCT(&ann);
-    goto CALLBACK;
     
-RELEASE:
+ RELEASE:
     OPAL_RELEASE_THREAD(&lock, &cond, &active);
     
-CALLBACK:
-    /* if this is a new source and they wanted a callback,
-     * now is the time to do it */
-    if (!known && NULL != my_announce_cbfunc) {
-        /* break the stringid into its elements */
-        ORCM_PNP_DECOMPOSE_STRING_ID(string_id, app, version, release);
-        my_announce_cbfunc(app, version, release, sender, nodename, uid);
-        if (NULL != app) {
-            free(app);
-        }
-        if (NULL != version) {
-            free(version);
-        }
-        if (NULL != release) {
-            free(release);
-        }
-    }
     if (NULL != string_id) {
         free(string_id);
     }
