@@ -29,6 +29,7 @@
 #include "opal/util/output.h"
 #include "opal/util/argv.h"
 #include "opal/util/path.h"
+#include "opal/threads/threads.h"
 
 #include "orte/mca/ras/ras.h"
 #include "orte/mca/rmaps/rmaps.h"
@@ -50,6 +51,9 @@
 
 static int tool_init(void);
 static int tool_finalize(void);
+static opal_mutex_t lock;
+static opal_condition_t cond;
+static bool active;
 
 /* The module struct */
 
@@ -70,6 +74,11 @@ static int tool_init(void)
 {
     int ret;
     
+    /* init the globals */
+    OBJ_CONSTRUCT(&lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&cond, opal_condition_t);
+    active = false;
+
     /* register to catch launch requests */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-start", "0.1", "alpha",
                                                          ORCM_PNP_GROUP_OUTPUT_CHANNEL,
@@ -94,6 +103,9 @@ static int tool_init(void)
 
 static int tool_finalize(void)
 {
+    OBJ_DESTRUCT(&lock);
+    OBJ_DESTRUCT(&cond);
+
     /* cannot cancel the recvs as the pnp framework will
      * already have been closed
      */
@@ -101,6 +113,17 @@ static int tool_finalize(void)
 }
 
 /****    LOCAL FUNCTIONS    ****/
+static void cbfunc(int status,
+                   orte_process_name_t *sender,
+                   orcm_pnp_tag_t tag,
+                   struct iovec *msg,
+                   int count,
+                   opal_buffer_t *buffer,
+                   void *cbdata)
+{
+    OBJ_RELEASE(buffer);
+}
+
 static void tool_messages(int status,
                           orte_process_name_t *sender,
                           orcm_pnp_tag_t tag,
@@ -111,7 +134,7 @@ static void tool_messages(int status,
 {
     char *value;
     int32_t rc=ORCM_SUCCESS, n, j;
-    opal_buffer_t response, bfr;
+    opal_buffer_t *response, bfr;
     orte_job_t *jdata, *job, *jlaunch;
     orte_app_context_t *app;
     orte_proc_t *proc;
@@ -125,28 +148,36 @@ static void tool_messages(int status,
     orte_proc_t *proctmp;
     orte_daemon_cmd_flag_t command=ORTE_DAEMON_KILL_LOCAL_PROCS;
 
+    /* wait for any existing action to complete */
+    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    OPAL_OUTPUT_VERBOSE((1, orcm_cfgi_base.output,
+                         "%s cfgi:tool released to process cmd",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+    active = true;
+
+    /* setup the response - we send it regardless so the tool won't hang */
+    response = OBJ_NEW(opal_buffer_t);
+
     /* if this isn't intended for my DVM, ignore it */
     n=1;
     if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &jfam, &n, OPAL_UINT16))) {
         ORTE_ERROR_LOG(rc);
-        return;
+        goto cleanup;
     }
     if (jfam != ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid)) {
         opal_output(0, "%s NOT FOR ME!", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-        return;
+        goto cleanup;
     }
     
     /* unpack the cmd */
     n=1;
     if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &flag, &n, ORCM_TOOL_CMD_T))) {
         ORTE_ERROR_LOG(rc);
-        return;
+        goto cleanup;
     }
     
-    /* setup the response */
-    OBJ_CONSTRUCT(&response, opal_buffer_t);
     /* return the cmd flag */
-    opal_dss.pack(&response, &flag, 1, ORCM_TOOL_CMD_T);
+    opal_dss.pack(response, &flag, 1, ORCM_TOOL_CMD_T);
     
     if (ORCM_TOOL_START_CMD == flag) {
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
@@ -350,11 +381,12 @@ static void tool_messages(int status,
     
  cleanup:
     /* return the result of the cmd */
-    opal_dss.pack(&response, &rc, 1, OPAL_INT);
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL,
-                                              sender, ORCM_PNP_TAG_TOOL,
-                                              NULL, 0, &response))) {
+    opal_dss.pack(response, &rc, 1, OPAL_INT);
+    /* release the thread */
+    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
+                                                 sender, ORCM_PNP_TAG_TOOL,
+                                                 NULL, 0, response, cbfunc, NULL))) {
         ORTE_ERROR_LOG(rc);
     }
-    OBJ_DESTRUCT(&response);
 }

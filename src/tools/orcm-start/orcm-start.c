@@ -126,6 +126,8 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       NULL }
 };
 
+static char *app_launched=NULL;
+
 static void ack_recv(int status,
                      orte_process_name_t *sender,
                      orcm_pnp_tag_t tag,
@@ -366,6 +368,9 @@ int main(int argc, char *argv[])
         goto cleanup;
     }
 
+    /* save the app */
+    app_launched = strdup(inpt[0]);
+
     /* get the absolute path */
     if (NULL == (app->app = opal_find_absolute_path(inpt[0]))) {
         fprintf(stderr, "App %s could not be found - try changing path\n", inpt[0]);
@@ -452,10 +457,11 @@ static void ack_recv(int status,
     ORTE_UPDATE_EXIT_STATUS(rc);
 
     if (0 == rc) {
-        opal_output(orte_clean_output, "Job started");
+        opal_output(orte_clean_output, "Job %s started", app_launched);
     } else {
-        opal_output(orte_clean_output, "Job failed to start with error %s", ORTE_ERROR_NAME(rc));
+        opal_output(orte_clean_output, "Job %s failed to start with error %s", app_launched, ORTE_ERROR_NAME(rc));
     }
+    free(app_launched);
 
     /* the fact we recvd this is enough */
     orte_quit();

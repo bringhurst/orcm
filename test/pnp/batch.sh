@@ -14,8 +14,6 @@ shift 1
 
 orcm  -report-uri "$urifile" "$@" &
 sleep 5
-orcm-start -uri file:"$urifile" -n 1 ./server
-sleep 5
-orcm-start -uri file:"$urifile" -n 1 ./client
-sleep 5
+orcm-start -uri file:"$urifile" -n 1 ./server &
+orcm-start -uri file:"$urifile" -n 1 ./client &
 orcm-start -uri file:"$urifile" -n 1 ./client2
