@@ -33,6 +33,7 @@ orcm_pnp_base_module_t orcm_pnp = {
     NULL,
     NULL,
     NULL,
+    NULL,
     NULL
 };
 

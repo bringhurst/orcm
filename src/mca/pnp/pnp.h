@@ -102,6 +102,9 @@ typedef int (*orcm_pnp_module_output_nb_fn_t)(orcm_pnp_channel_t channel,
 /* dynamically define a new tag */
 typedef orcm_pnp_tag_t (*orcm_pnp_module_define_new_tag_fn_t)(void);
 
+/* retrieve the triplet string id for this app */
+typedef char* (*orcm_pnp_module_get_string_id_fn_t)(void);
+
 /* component struct */
 typedef struct {
     /** Base component description */
@@ -122,6 +125,7 @@ typedef struct {
     orcm_pnp_module_output_fn_t                     output;
     orcm_pnp_module_output_nb_fn_t                  output_nb;
     orcm_pnp_module_define_new_tag_fn_t             define_new_tag;
+    orcm_pnp_module_get_string_id_fn_t              get_string_id;
     orcm_pnp_module_finalize_fn_t                   finalize;
 } orcm_pnp_base_module_t;
 

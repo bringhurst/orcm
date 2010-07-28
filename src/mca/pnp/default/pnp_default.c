@@ -75,6 +75,7 @@ static int default_output_nb(orcm_pnp_channel_t channel,
                              orcm_pnp_callback_fn_t cbfunc,
                              void *cbdata);
 static orcm_pnp_tag_t define_new_tag(void);
+static char* get_string_id(void);
 static int default_finalize(void);
 
 /* The module struct */
@@ -88,6 +89,7 @@ orcm_pnp_base_module_t orcm_pnp_default_module = {
     default_output,
     default_output_nb,
     define_new_tag,
+    get_string_id,
     default_finalize
 };
 
@@ -913,6 +915,15 @@ static int default_output_nb(orcm_pnp_channel_t channel,
 static orcm_pnp_tag_t define_new_tag(void)
 {
     return ORCM_PNP_TAG_INVALID;
+}
+
+static char* get_string_id(void)
+{
+    if (NULL == my_string_id) {
+        return NULL;
+    }
+
+    return strdup(my_string_id);
 }
 
 static int default_finalize(void)
