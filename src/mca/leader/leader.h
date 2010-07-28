@@ -54,7 +54,12 @@ typedef bool (*orcm_leader_module_deliver_msg_fn_t)(orte_process_name_t *src);
  * selected leader is determined to have failed.
  *
  * If ORCM_LEADER_WILDCARD and a cbfunc are provided, then the
- * cbfunc will be called whenever any sibling fails.
+ * cbfunc will be called whenever any member of the specified triplet fails.
+ *
+ * If the caller wants to be notified whenever ANY process fails while
+ * allowing the module to automatically select leaders (except where
+ * specified by other set_leader calls), then specify NULL for each triplet
+ * field and ORCM_LEADER_INVALID for the sibling.
  */
 typedef int (*orcm_leader_module_set_leader_fn_t)(char *app,
                                                   char *version,

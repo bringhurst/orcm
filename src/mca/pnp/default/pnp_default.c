@@ -1719,6 +1719,7 @@ static orcm_pnp_request_t* find_request(opal_list_t *list,
          item != opal_list_get_end(list);
          item = opal_list_get_next(item)) {
         req = (orcm_pnp_request_t*)item;
+
         /* check the tag first */
         if (tag != req->tag && ORCM_PNP_TAG_WILDCARD != req->tag) {
             goto MOVEON;
@@ -1742,7 +1743,7 @@ static orcm_pnp_request_t* find_request(opal_list_t *list,
                 goto MOVEON;
             }
             if (0 != strcasecmp(in_id[i], req_id[i])) {
-               goto MOVEON;
+                goto MOVEON;
             }
         }
         /* string_id's match */
@@ -1751,7 +1752,10 @@ static orcm_pnp_request_t* find_request(opal_list_t *list,
         return req;
 
     MOVEON:
-        opal_argv_free(req_id);
+        if (NULL != req_id) {
+            opal_argv_free(req_id);
+            req_id = NULL;
+        }
     }
 
     opal_argv_free(in_id);
