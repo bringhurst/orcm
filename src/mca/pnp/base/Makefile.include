@@ -17,6 +17,7 @@ headers += \
 sources += \
         base/pnp_base_open.c \
         base/pnp_base_close.c \
-        base/pnp_base_select.c
+        base/pnp_base_select.c \
+        base/pnp_base_print.c
 
 

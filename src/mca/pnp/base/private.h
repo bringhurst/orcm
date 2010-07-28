@@ -87,6 +87,10 @@ ORCM_DECLSPEC extern orcm_pnp_source_t orcm_pnp_wildcard;
 #define ORCM_SOURCE_WILDCARD    (&orcm_pnp_wildcard)
 
 
+/* internal base functions */
+ORCM_DECLSPEC char* orcm_pnp_print_tag(orcm_pnp_tag_t tag);
+ORCM_DECLSPEC char* orcm_pnp_print_channel(orcm_pnp_channel_t chan);
+
 END_C_DECLS
 
 #endif

@@ -63,6 +63,7 @@ int orcm_pnp_base_open(void)
     return ORCM_SUCCESS;
 }
 
+
 /****    INSTANTIATE CLASSES    ****/
 static void channel_constructor(orcm_pnp_channel_obj_t *ptr)
 {

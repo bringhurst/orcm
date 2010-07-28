@@ -331,8 +331,9 @@ static int announce(char *app, char *version, char *release,
     if (NULL != my_input_channel && 0 < opal_list_get_size(&my_input_channel->recvs)) {
         /* open the channel */
         OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:ann setup input recv for channel %d",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), my_input_channel->channel));
+                             "%s pnp:default:ann setup mcast recv for WILDCARD tag on my %s channel",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             orcm_pnp_print_channel(my_input_channel->channel)));
         /* setup the recv */
         if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(my_input_channel->channel,
                                                              ORTE_RMCAST_TAG_WILDCARD,
@@ -345,11 +346,14 @@ static int announce(char *app, char *version, char *release,
     }
 
     /* do we want to listen to output from our peers? */
-    if (NULL != my_output_channel && 0 < opal_list_get_size(&my_output_channel->recvs)) {
+    if (NULL != my_output_channel &&
+        my_output_channel != my_input_channel &&
+        0 < opal_list_get_size(&my_output_channel->recvs)) {
         /* open the channel */
         OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:ann setup output recv for channel %d",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), my_output_channel->channel));
+                             "%s pnp:default:ann setup mcast recv for WILDCARD tag on my %s channel",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             orcm_pnp_print_channel(my_output_channel->channel)));
         /* setup the recv */
         if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(my_output_channel->channel,
                                                              ORTE_RMCAST_TAG_WILDCARD,
@@ -440,11 +444,13 @@ static int register_receive(char *app,
     orcm_pnp_channel_obj_t *chan;
 
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                         "%s pnp:default:register_recv app %s version %s release %s channel %d tag %d",
+                         "%s pnp:default:register_recv app %s version %s release %s channel %s tag %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                          (NULL == app) ? "NULL" : app,
                          (NULL == version) ? "NULL" : version,
-                         (NULL == release) ? "NULL" : release, channel, tag));
+                         (NULL == release) ? "NULL" : release,
+                         orcm_pnp_print_channel(channel),
+                         orcm_pnp_print_tag(tag)));
     
     /* bozo check - can't subscribe to  invalid channel */
     if (ORCM_PNP_INVALID_CHANNEL == channel) {
@@ -570,11 +576,13 @@ static int cancel_receive(char *app,
     int i;
     
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                         "%s pnp:default:cancel_recv app %s version %s release %s channel %d tag %d",
+                         "%s pnp:default:cancel_recv app %s version %s release %s channel %s tag %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                          (NULL == app) ? "NULL" : app,
                          (NULL == version) ? "NULL" : version,
-                         (NULL == release) ? "NULL" : release, channel, tag));
+                         (NULL == release) ? "NULL" : release,
+                         orcm_pnp_print_channel(channel),
+                         orcm_pnp_print_tag(tag)));
     
     /* since we are modifying global lists, lock
      * the thread
@@ -768,10 +776,12 @@ static int default_output(orcm_pnp_channel_t channel,
             chan = channel;
         }
         OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:sending multicast of %d %s to channel %d tag %d",
+                             "%s pnp:default:sending multicast of %d %s to channel %s tag %s",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                              (NULL == msg) ? (int)buffer->bytes_used : count,
-                             (NULL == msg) ? "bytes" : "iovecs", chan, tag));
+                             (NULL == msg) ? "bytes" : "iovecs",
+                             orcm_pnp_print_channel(chan),
+                             orcm_pnp_print_tag(tag)));
         
         /* send the data to the channel */
         if (ORCM_SUCCESS != (ret = orte_rmcast.send_buffer(chan, tag, buf))) {
@@ -795,10 +805,11 @@ static int default_output(orcm_pnp_channel_t channel,
     
     /* intended for a specific recipient, send it over p2p */
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                         "%s pnp:default:sending p2p message of %d %s to tag %d",
+                         "%s pnp:default:sending p2p message of %d %s to tag %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                          (NULL == msg) ? (int)buffer->bytes_used : count,
-                         (NULL == msg) ? "bytes" : "iovecs", count, tag));
+                         (NULL == msg) ? "bytes" : "iovecs",
+                         orcm_pnp_print_tag(tag)));
 
     /* release the thread prior to send */
     OPAL_RELEASE_THREAD(&lock, &cond, &active);
@@ -865,10 +876,12 @@ static int default_output_nb(orcm_pnp_channel_t channel,
             chan = channel;
         }
         OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:sending multicast of %d %s to channel %d tag %d",
+                             "%s pnp:default:sending multicast of %d %s to channel %s tag %s",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                              (NULL == msg) ? (int)buffer->bytes_used : count,
-                             (NULL == msg) ? "bytes" : "iovecs", channel, tag));
+                             (NULL == msg) ? "bytes" : "iovecs",
+                             orcm_pnp_print_channel(channel),
+                             orcm_pnp_print_tag(tag)));
         
         /* release thread prior to send */
         OPAL_RELEASE_THREAD(&lock, &cond, &active);
@@ -893,10 +906,12 @@ static int default_output_nb(orcm_pnp_channel_t channel,
     
     /* intended for a specific recipient, send it over p2p */
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                         "%s pnp:default:sending p2p message of %d %s to channel %d tag %d",
+                         "%s pnp:default:sending p2p message of %d %s to channel %s tag %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                          (NULL == msg) ? (int)buffer->bytes_used : count,
-                         (NULL == msg) ? "bytes" : "iovecs", channel, tag));
+                         (NULL == msg) ? "bytes" : "iovecs",
+                         orcm_pnp_print_channel(channel),
+                         orcm_pnp_print_tag(tag)));
 
     /* release thread prior to send */
     OPAL_RELEASE_THREAD(&lock, &cond, &active);
@@ -1034,9 +1049,9 @@ static void recv_announcements(int status,
     }
 
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                         "%s pnp:default:received announcement from app %s channel %d on node %s uid %u",
+                         "%s pnp:default:received announcement from app %s channel %s on node %s uid %u",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         string_id, output, nodename, uid));
+                         string_id, orcm_pnp_print_channel(output), nodename, uid));
     
     /* since we are accessing global lists, acquire the thread */
     OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
@@ -1249,9 +1264,9 @@ static void recv_input_buffers(int status,
     }
 
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                         "%s pnp:default:received input buffer on channel %d tag %d from sender %s",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), channel, tag,
-                         ORTE_NAME_PRINT(sender)));
+                         "%s pnp:default:received input buffer on channel %s tag %s from sender %s",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), orcm_pnp_print_channel(channel),
+                         orcm_pnp_print_tag(tag), ORTE_NAME_PRINT(sender)));
     
     /* if this message is from myself, ignore it */
     if (sender->jobid == ORTE_PROC_MY_NAME->jobid &&
@@ -1287,8 +1302,9 @@ process_msg:
     if (NULL == (request = find_request(&chan->recvs, string_id, tg))) {
         /* no matching requests */
         OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:recv triplet %s has no matching recvs for tag %d",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), string_id, tg));
+                             "%s pnp:default:recv triplet %s has no matching recvs for tag %s",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             string_id, orcm_pnp_print_tag(tg)));
         free(string_id);
         goto DEPART;
     }
@@ -1540,10 +1556,10 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
     
     /* find the request object for this tag */
     if (NULL == (request = find_request(&my_input_channel->recvs, string_id, tag))) {
-        /* no matching requests */
-        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:received no matching request for tag %d",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), tag));
+        opal_output(0, "%s A direct message was received, but no matching recv"
+                       " has been posted for direct messages sent to tag %s or"
+                       " to the WILDCARD tag",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), orcm_pnp_print_tag(tag));
         goto CLEANUP;
     }
 
@@ -1600,9 +1616,8 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
         goto DEPART;
     } else {
         OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:received no matching cbfunc for specified data type %s",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             (1 == flag) ? "buffer" : "iovec"));
+                             "%s pnp:default:received unknown data type %d",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), flag));
     }
     
     
@@ -1687,8 +1702,10 @@ static void setup_recv_request(orcm_pnp_channel_obj_t *chan,
     if ((NULL == (request = find_request(&chan->recvs, string_id, tag))) ||
         request->tag != tag) {
         OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:setup_recv for %s channel %d tag %d",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), string_id, chan->channel, tag));
+                             "%s pnp:default:setup_recv for %s channel %s tag %s",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), string_id,
+                             orcm_pnp_print_channel(chan->channel),
+                             orcm_pnp_print_tag(tag)));
         request = OBJ_NEW(orcm_pnp_request_t);
         request->string_id = strdup(string_id);
         request->tag = tag;
@@ -1913,16 +1930,17 @@ static void check_pending_recvs(orcm_pnp_triplet_t *trp)
                 req->string_id = strdup(wildcard_id);
                 opal_list_append(&recvr->recvs, item);
                 OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                     "%s pnp:default:check_pending_recvs moving %s:%d to %s input_recvs",
-                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), req->string_id, req->tag, trp->string_id));
+                                     "%s pnp:default:check_pending_recvs moving %s:%s to %s input_recvs",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), req->string_id,
+                                     orcm_pnp_print_tag(req->tag), trp->string_id));
             }
             item = next;
         }
         if (NULL != recvr && 0 < opal_list_get_size(&recvr->recvs)) {
             /* open the channel */
             OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                 "%s pnp:default:check_pending_recvs setup recv for channel %d",
-                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), recvr->channel));
+                                 "%s pnp:default:check_pending_recvs setup recv for channel %s",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), orcm_pnp_print_channel(recvr->channel)));
             if (ORTE_SUCCESS != (rc = orte_rmcast.open_channel(recvr->channel, trp->string_id,
                                                                NULL, -1, NULL, ORTE_RMCAST_RECV))) {
                 ORTE_ERROR_LOG(rc);
@@ -1961,16 +1979,17 @@ static void check_pending_recvs(orcm_pnp_triplet_t *trp)
                 }
                 opal_list_append(&recvr->recvs, item);
                 OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                     "%s pnp:default:check_pending_recvs moving %s:%d to %s output_recvs",
-                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), req->string_id, req->tag, trp->string_id));
+                                     "%s pnp:default:check_pending_recvs moving %s:%s to %s output_recvs",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), req->string_id,
+                                     orcm_pnp_print_tag(req->tag), trp->string_id));
             }
             item = next;
         }
         if (NULL != recvr && 0 < opal_list_get_size(&recvr->recvs)) {
             /* open the channel */
             OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                 "%s pnp:default:check_pending_recvs setup recv for channel %d",
-                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), recvr->channel));
+                                 "%s pnp:default:check_pending_recvs setup recv for channel %s",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), orcm_pnp_print_channel(recvr->channel)));
             if (ORTE_SUCCESS != (rc = orte_rmcast.open_channel(recvr->channel, trp->string_id,
                                                                NULL, -1, NULL, ORTE_RMCAST_RECV))) {
                 ORTE_ERROR_LOG(rc);
