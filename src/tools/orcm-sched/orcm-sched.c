@@ -373,11 +373,6 @@ int main(int argc, char *argv[])
     /* index us to the correct jobid */
     orte_plm_globals.next_jobid = ORTE_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid)+1;
     
-    /* if I am rank=0, then I am the lowest rank */
-    if (ORTE_PROC_MY_NAME->vpid == 0) {
-        orcm_lowest_rank = true;
-    }
-    
     /* listen for DVM commands */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm", "0.1", "alpha",
                                                          ORCM_PNP_SYS_CHANNEL,
@@ -621,10 +616,8 @@ static void ps_request(int status,
     
     /* if the request is for my job family... */
     if (ORTE_JOB_FAMILY(name.jobid) == ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid)) {
-        /* if the vpid is wildcard, then the caller wants this info from everyone.
-         * if the vpid is not wildcard, then only respond if I am the leader
-         */
-        if (ORTE_VPID_WILDCARD == name.vpid || orcm_lowest_rank) {
+        /* if the vpid is wildcard, then the caller wants this info from everyone. */
+        if (ORTE_VPID_WILDCARD == name.vpid) {
             /* pack the response */
             goto pack;
         }

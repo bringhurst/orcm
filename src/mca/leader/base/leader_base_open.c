@@ -48,23 +48,3 @@ int orcm_leader_base_open(void)
     /* All done */
     return ORCM_SUCCESS;
 }
-
-
-/****    INSTANTIATE CLASSES    ****/
-
-static void leader_constructor(orcm_leader_t *ptr)
-{
-    ptr->stringid = NULL;
-    ptr->leader = NULL;
-    ptr->cbfunc = NULL;
-}
-static void leader_destructor(orcm_leader_t *ptr)
-{
-    if (NULL != ptr->stringid) {
-        free(ptr->stringid);
-    }
-}
-OBJ_CLASS_INSTANCE(orcm_leader_t,
-                   opal_list_item_t,
-                   leader_constructor,
-                   leader_destructor);

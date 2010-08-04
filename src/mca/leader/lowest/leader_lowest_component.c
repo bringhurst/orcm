@@ -55,14 +55,7 @@ static int component_close(void)
 static int component_query(mca_base_module_t **module, int *priority)
 {
     *module = (mca_base_module_t*)&orcm_leader_lowest_module;
-
-    /* this is the default module for orcmd */
-    if (ORCM_PROC_IS_DAEMON) {
-        *priority = 100;
-    } else {
-        /* otherwise, it is lower than the default module */
-        *priority = 1;
-    }
+    *priority = 10;
 
     return ORCM_SUCCESS;
 }

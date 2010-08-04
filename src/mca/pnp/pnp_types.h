@@ -28,46 +28,9 @@
 #include "orte/types.h"
 #include "orte/mca/rmcast/rmcast_types.h"
 
+#include "runtime/orcm_globals.h"
+
 BEGIN_C_DECLS
-
-#define ORCM_PNP_CREATE_STRING_ID(sid, a, v, r) \
-    do {                                        \
-        asprintf((sid), "%s:%s:%s",             \
-                 (NULL == (a)) ? "@" : (a),     \
-                 (NULL == (v)) ? "@" : (v),     \
-                 (NULL == (r)) ? "@" : (r));    \
-    } while(0);
-
-#define ORCM_PNP_DECOMPOSE_STRING_ID(sid, a, v, r)  \
-    do {                                            \
-        char *c, *c2, *t;                           \
-        t = strdup((sid));                          \
-        c = strchr(t, ':');                         \
-        *c = '\0';                                  \
-        if (0 == strcmp(t, "@")) {                  \
-            (a) = NULL;                             \
-        } else {                                    \
-            (a) = strdup(t);                        \
-        }                                           \
-        c++;                                        \
-        c2 = strchr(c, ':');                        \
-        *c2 = '\0';                                 \
-        if (0 == strcmp(c, "@")) {                  \
-            (v) = NULL;                             \
-        } else {                                    \
-            (v) = strdup(c);                        \
-        }                                           \
-        c2++;                                       \
-        if (0 == strcmp(c2, "@")) {                 \
-            (r) = NULL;                             \
-        } else {                                    \
-            (r) = strdup(c2);                       \
-        }                                           \
-        free(t);                                    \
-    } while(0);
-
-
-#define ORCM_PNP_MAX_MSGS    4
 
 typedef int32_t orcm_pnp_tag_t;
 #define ORCM_PNP_TAG_T  OPAL_INT32
@@ -92,9 +55,6 @@ enum {
 
 #define ORCM_PNP_TAG_DYNAMIC    100
 
-typedef uint32_t orcm_pnp_channel_t;
-#define ORCM_PNP_CHANNEL_T  OPAL_UINT32
-
 /* inherited channels */
 enum {
     ORCM_PNP_GROUP_INPUT_CHANNEL    = ORTE_RMCAST_GROUP_INPUT_CHANNEL,
@@ -112,9 +72,6 @@ enum {
 typedef void (*orcm_pnp_announce_fn_t)(char *app, char *version, char *release,
                                        orte_process_name_t *name, char *node,
                                        char *rml_uri, uint32_t uid);
-
-typedef void (*orcm_pnp_open_channel_cbfunc_t)(char *app, char *version, char *release,
-                                               orcm_pnp_channel_t channel);
 
 typedef void (*orcm_pnp_callback_fn_t)(int status,
                                        orte_process_name_t *sender,

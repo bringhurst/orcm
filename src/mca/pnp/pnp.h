@@ -17,6 +17,8 @@
 
 #include "orte/types.h"
 
+#include "runtime/orcm_globals.h"
+
 #include "pnp_types.h"
 
 /* module functions */

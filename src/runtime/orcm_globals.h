@@ -1,0 +1,183 @@
+/*
+ * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
+ * $COPYRIGHT$
+ * 
+ * Additional copyrights may follow
+ * 
+ * $HEADER$
+ */
+
+/**
+ * @file
+ *
+ * Interface into the ORCM Library
+ */
+#ifndef ORCM_GLOBALS_H
+#define ORCM_GLOBALS_H
+
+#include "openrcm.h"
+
+#ifdef HAVE_SYS_TYPES_H
+#include <sys/types.h>
+#endif
+#ifdef HAVE_SYS_TIME_H
+#include <sys/time.h>
+#endif
+
+#include "opal/event/event.h"
+#include "opal/class/opal_ring_buffer.h"
+#include "opal/class/opal_pointer_array.h"
+
+#include "orte/util/proc_info.h"
+#include "orte/mca/rmcast/rmcast_types.h"
+
+BEGIN_C_DECLS
+
+#define ORCM_MAX_MSG_RING_SIZE   8
+
+/* define some process types */
+typedef orte_proc_type_t orcm_proc_type_t;
+#define ORCM_MASTER     (ORTE_PROC_HNP | ORTE_PROC_CM)
+#define ORCM_TOOL       (ORTE_PROC_TOOL | ORTE_PROC_CM)
+#define ORCM_APP        (ORTE_PROC_NON_MPI | ORTE_PROC_CM)
+#define ORCM_DAEMON     (ORTE_PROC_DAEMON | ORTE_PROC_CM)
+#define ORCM_IOF_ENDPT  0x1000
+#define ORCM_SCHEDULER  0x2000
+
+#define ORCM_PROC_IS_MASTER     (ORTE_PROC_IS_HNP && ORTE_PROC_IS_CM)
+#define ORCM_PROC_IS_TOOL       (ORTE_PROC_IS_TOOL && ORTE_PROC_IS_CM)
+#define ORCM_PROC_IS_APP        (ORTE_PROC_IS_NON_MPI && ORTE_PROC_IS_CM)
+#define ORCM_PROC_IS_DAEMON     (ORTE_PROC_IS_DAEMON && ORTE_PROC_IS_CM)
+#define ORCM_PROC_IS_IOF_ENDPT  (ORCM_IOF_ENDPT & orte_process_info.proc_type)
+#define ORCM_PROC_IS_SCHEDULER  (ORCM_SCHEDULER & orte_process_info.proc_type)
+
+/* define some tool command flags */
+typedef uint8_t orcm_tool_cmd_t;
+#define ORCM_TOOL_CMD_T OPAL_UINT8
+
+#define ORCM_TOOL_START_CMD          1
+#define ORCM_TOOL_STOP_CMD           2
+
+/* pnp type required in global object - see pnp_types.h for value defines */
+typedef uint32_t orcm_pnp_channel_t;
+#define ORCM_PNP_CHANNEL_T  OPAL_UINT32
+
+/* callback prototypes required at the global level - these
+ * are named according to the framework they are associated with
+ */
+typedef void (*orcm_leader_cbfunc_t)(const char *stringid,
+                                     orte_process_name_t failed,
+                                     orte_process_name_t leader);
+
+typedef void (*orcm_pnp_open_channel_cbfunc_t)(char *app, char *version, char *release,
+                                               orcm_pnp_channel_t channel);
+
+/* global objects - need to be accessed from multiple frameworks */
+typedef struct {
+    opal_object_t super;
+    /* thread protection */
+    opal_mutex_t lock;
+    opal_condition_t cond;
+    bool in_use;
+    /* storage for triplets */
+    opal_pointer_array_t array;
+} orcm_triplets_array_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_triplets_array_t);
+
+typedef struct {
+    opal_object_t super;
+    /* thread protection */
+    opal_mutex_t lock;
+    opal_condition_t cond;
+    bool in_use;
+    /* id and members */
+    char *string_id;
+    orte_vpid_t num_procs;
+    opal_pointer_array_t members;
+    /* pnp support */
+    orcm_pnp_channel_t input;
+    orcm_pnp_channel_t output;
+    orcm_pnp_open_channel_cbfunc_t pnp_cbfunc;
+    /* leader support */
+    orte_process_name_t leader;
+    orcm_leader_cbfunc_t leader_cbfunc;
+} orcm_triplet_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_triplet_t);
+
+typedef struct {
+    opal_object_t super;
+    /* thread protection */
+    opal_mutex_t lock;
+    opal_condition_t cond;
+    bool in_use;
+    /* id */
+    orte_process_name_t name;
+    /* state */
+    bool alive;
+    /* message ring buffer */
+    opal_ring_buffer_t msgs;
+    /* sequence number of last msg sent */
+    orte_rmcast_seq_t last_msg_num;
+} orcm_source_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_source_t);
+
+/** version string of ORCM */
+ORCM_DECLSPEC extern const char openrcm_version_string[];
+
+/**
+ * Whether ORCM is initialized or we are in openrcm_finalize
+ */
+ORCM_DECLSPEC extern bool orcm_initialized;
+ORCM_DECLSPEC extern bool orcm_util_initialized;
+ORCM_DECLSPEC extern bool orcm_finalizing;
+
+/* debugger output control */
+ORCM_DECLSPEC extern int orcm_debug_output;
+ORCM_DECLSPEC extern int orcm_debug_verbosity;
+
+/* storage for values reqd by multiple frameworks */
+ORCM_DECLSPEC extern orcm_triplets_array_t *orcm_triplets;
+ORCM_DECLSPEC extern int orcm_max_msg_ring_size;
+
+#define ORCM_WILDCARD_STRING_ID "@:@:@"
+
+#define ORCM_CREATE_STRING_ID(sid, a, v, r) \
+    do {                                        \
+        asprintf((sid), "%s:%s:%s",             \
+                 (NULL == (a)) ? "@" : (a),     \
+                 (NULL == (v)) ? "@" : (v),     \
+                 (NULL == (r)) ? "@" : (r));    \
+    } while(0);
+
+#define ORCM_DECOMPOSE_STRING_ID(sid, a, v, r)  \
+    do {                                            \
+        char *c, *c2, *t;                           \
+        t = strdup((sid));                          \
+        c = strchr(t, ':');                         \
+        *c = '\0';                                  \
+        if (0 == strcmp(t, "@")) {                  \
+            (a) = NULL;                             \
+        } else {                                    \
+            (a) = strdup(t);                        \
+        }                                           \
+        c++;                                        \
+        c2 = strchr(c, ':');                        \
+        *c2 = '\0';                                 \
+        if (0 == strcmp(c, "@")) {                  \
+            (v) = NULL;                             \
+        } else {                                    \
+            (v) = strdup(c);                        \
+        }                                           \
+        c2++;                                       \
+        if (0 == strcmp(c2, "@")) {                 \
+            (r) = NULL;                             \
+        } else {                                    \
+            (r) = strdup(c2);                       \
+        }                                           \
+        free(t);                                    \
+    } while(0);
+
+
+END_C_DECLS
+
+#endif /* ORCM_GLOBALS_H */

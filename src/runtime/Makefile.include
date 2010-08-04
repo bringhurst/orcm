@@ -10,7 +10,8 @@
 
 dist_pkgdata_DATA += runtime/help-openrcm-runtime.txt
 
-headers += runtime/runtime.h
+headers += runtime/runtime.h \
+           runtime/orcm_globals.h
 
 libopenrcm_la_SOURCES += \
         runtime/orcm_init.c \

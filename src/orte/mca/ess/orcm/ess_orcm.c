@@ -579,11 +579,6 @@ static int local_setup(char **hosts)
     ORTE_PROC_MY_DAEMON->jobid = ORTE_PROC_MY_NAME->jobid;
     ORTE_PROC_MY_DAEMON->vpid = ORTE_PROC_MY_NAME->vpid;
     
-    /* if I am rank=1, then I am the lowest rank */
-    if (ORTE_PROC_MY_NAME->vpid == 1) {
-        orcm_lowest_rank = true;
-    }
-    
     /* setup the pnp framework */
     if (ORCM_SUCCESS != (ret = orcm_pnp_base_open())) {
         error = "pnp_open";
@@ -1247,7 +1242,7 @@ static void ps_request(int status,
         /* if the vpid is wildcard, then the caller wants this info from everyone.
          * if the vpid is not wildcard, then only respond if I am the leader
          */
-        if (ORTE_VPID_WILDCARD == name.vpid || orcm_lowest_rank) {
+        if (ORTE_VPID_WILDCARD == name.vpid) {
             /* pack the response */
             goto pack;
         }

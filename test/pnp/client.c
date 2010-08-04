@@ -187,12 +187,12 @@ static void recv_input(int status,
         
         /* print the first value */
         data = (int32_t*)msg[i].iov_base;
-        opal_output(0, "\tValue in first posn: %d", data[0]);
+        opal_output(0, "\tValue in iovec %d first posn: %d", i, data[0]);
         
         /* now check the values */
         for (n=1; n < 5; n++) {
             if (data[n] != data[0]) {
-                opal_output(0, "\tError: invalid data %d at posn %d", data[n], n);
+                opal_output(0, "\tError: invalid data %d at iovec %d posn %d", data[n], i, n);
                 return;
             }
         }

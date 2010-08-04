@@ -54,7 +54,7 @@ static int component_query(mca_base_module_t **module, int *priority)
 {
     /* this is the default module */
     *module = (mca_base_module_t*)&orcm_leader_null_module;
-    *priority = 10;
+    *priority = 50;
     return ORCM_SUCCESS;
 }
 

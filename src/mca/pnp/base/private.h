@@ -14,7 +14,7 @@
 
 #include "opal/dss/dss_types.h"
 #include "opal/class/opal_list.h"
-#include "opal/class/opal_value_array.h"
+#include "opal/class/opal_ring_buffer.h"
 
 #include "orte/mca/rml/rml_types.h"
 #include "orte/mca/rmcast/rmcast_types.h"
@@ -23,12 +23,15 @@
 
 BEGIN_C_DECLS
 
+#define ORCM_PNP_MAX_MSGS    8
+
 /*
  * globals that might be needed
  */
 typedef struct {
     int output;
     opal_list_t opened;
+    int max_msgs;
 } orcm_pnp_base_t;
 ORCM_DECLSPEC extern orcm_pnp_base_t orcm_pnp_base;
 
@@ -48,16 +51,6 @@ typedef struct {
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_channel_obj_t);
 
 typedef struct {
-    opal_object_t super;
-    char *string_id;
-    orcm_pnp_channel_t input;
-    orcm_pnp_channel_t output;
-    orcm_pnp_open_channel_cbfunc_t cbfunc;
-    opal_pointer_array_t members;
-} orcm_pnp_triplet_t;
-ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_triplet_t);
-
-typedef struct {
     opal_list_item_t super;
     orte_process_name_t target;
     bool pending;
@@ -72,20 +65,6 @@ typedef struct {
     void *cbdata;
 } orcm_pnp_send_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_send_t);
-
-typedef struct {
-    opal_object_t super;
-    orte_process_name_t name;
-    opal_buffer_t *msgs[ORCM_PNP_MAX_MSGS];
-    int start, end;
-    orte_rmcast_seq_t last_msg_num;
-} orcm_pnp_source_t;
-ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_source_t);
-
-/* provide a wildcard version */
-ORCM_DECLSPEC extern orcm_pnp_source_t orcm_pnp_wildcard;
-#define ORCM_SOURCE_WILDCARD    (&orcm_pnp_wildcard)
-
 
 /* internal base functions */
 ORCM_DECLSPEC char* orcm_pnp_print_tag(orcm_pnp_tag_t tag);

@@ -15,6 +15,7 @@
 #include "opal/util/output.h"
 #include "opal/mca/mca.h"
 #include "opal/mca/base/base.h"
+#include "opal/mca/base/mca_base_param.h"
 
 #include "orte/mca/rml/rml_types.h"
 #include "orte/mca/rmcast/rmcast_types.h"
@@ -37,28 +38,22 @@ orcm_pnp_base_module_t orcm_pnp = {
     NULL
 };
 
-/* instantiate the wildcard source */
-orcm_pnp_source_t orcm_pnp_wildcard;
-
 /* instantiate the globals */
 orcm_pnp_base_t orcm_pnp_base;
 
 int orcm_pnp_base_open(void)
 {
-    /* setup the source wildcard */
-    orcm_pnp_wildcard.name.jobid = ORTE_JOBID_WILDCARD;
-    orcm_pnp_wildcard.name.vpid = ORTE_VPID_WILDCARD;
-    
     /* Debugging / verbose output.  Always have stream open, with
-     verbose set by the mca open system... */
+     * verbose set by the mca open system...
+     */
     orcm_pnp_base.output = opal_output_open(NULL);
     
     /* Open up all available components */
     if (ORCM_SUCCESS != 
         mca_base_components_open("orcm_pnp", orcm_pnp_base.output, NULL,
                                  &orcm_pnp_base.opened, true)) {
-            return ORCM_ERROR;
-        }
+        return ORCM_ERROR;
+    }
     /* All done */
     return ORCM_SUCCESS;
 }
@@ -83,50 +78,6 @@ OBJ_CLASS_INSTANCE(orcm_pnp_channel_obj_t,
                    opal_object_t,
                    channel_constructor,
                    channel_destructor);
-
-static void source_constructor(orcm_pnp_source_t *ptr)
-{
-    ptr->name.jobid = ORTE_JOBID_INVALID;
-    ptr->name.vpid = ORTE_VPID_INVALID;
-    memset(ptr->msgs, 0, ORCM_PNP_MAX_MSGS*sizeof(opal_buffer_t*));
-    ptr->start = 0;
-    ptr->end = 0;
-    ptr->last_msg_num = ORTE_RMCAST_SEQ_INVALID;
-}
-static void source_destructor(orcm_pnp_source_t *ptr)
-{
-    int i;
-    
-    for (i=0; i < ORCM_PNP_MAX_MSGS; i++) {
-        if (NULL != ptr->msgs[i]) {
-            OBJ_RELEASE(ptr->msgs[i]);
-        }
-    }
-}
-OBJ_CLASS_INSTANCE(orcm_pnp_source_t,
-                   opal_object_t,
-                   source_constructor,
-                   source_destructor);
-
-static void triplet_constructor(orcm_pnp_triplet_t *ptr)
-{
-    ptr->string_id = NULL;
-    ptr->output = ORTE_RMCAST_INVALID_CHANNEL;
-    ptr->input = ORTE_RMCAST_INVALID_CHANNEL;
-    ptr->cbfunc = NULL;
-    OBJ_CONSTRUCT(&ptr->members, opal_pointer_array_t);
-    opal_pointer_array_init(&ptr->members, 8, INT_MAX, 8);
-}
-static void triplet_destructor(orcm_pnp_triplet_t *ptr)
-{
-    if (NULL != ptr->string_id) {
-        free(ptr->string_id);
-    }
-}
-OBJ_CLASS_INSTANCE(orcm_pnp_triplet_t,
-                   opal_object_t,
-                   triplet_constructor,
-                   triplet_destructor);
 
 static void request_constructor(orcm_pnp_request_t *ptr)
 {

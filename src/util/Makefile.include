@@ -9,4 +9,7 @@
 #
 
 libopenrcm_la_SOURCES += \
-        util/error_strings.c
+        util/error_strings.c \
+        util/triplets.h \
+        util/triplets.c
+

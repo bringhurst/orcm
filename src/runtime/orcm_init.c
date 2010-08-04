@@ -13,6 +13,8 @@
 #include <signal.h>
 
 #include "opal/util/error.h"
+#include "opal/class/opal_pointer_array.h"
+#include "opal/class/opal_ring_buffer.h"
 
 #include "orte/runtime/runtime.h"
 #include "orte/mca/errmgr/errmgr.h"
@@ -29,7 +31,8 @@ bool orcm_util_initialized = false;
 bool orcm_finalizing = false;
 int orcm_debug_output = -1;
 int orcm_debug_verbosity = 0;
-bool orcm_lowest_rank = false;
+orcm_triplets_array_t *orcm_triplets;
+int orcm_max_msg_ring_size;
 
 /* signal trap support */
 /* available signals
@@ -82,6 +85,15 @@ int orcm_init(orcm_proc_type_t flags)
         orcm_init_util();
     }
     
+    /* get the number of max msgs */
+    mca_base_param_reg_int_name("orcm", "max_buffered_msgs",
+                                "Number of recvd messages to hold in storage from each source",
+                                false, false, ORCM_MAX_MSG_RING_SIZE, &orcm_max_msg_ring_size);
+
+    /* setup the globals that require initialization */
+    orcm_triplets = OBJ_NEW(orcm_triplets_array_t);
+
+    /* initialize us */
     if (ORTE_SUCCESS != (ret = orte_init(NULL, NULL, flags))) {
         error = "orte_init";
         goto error;
@@ -265,31 +277,105 @@ static void ignore_trap(int fd, short flags, void *arg)
 }
 
 /**   INSTANTIATE OPENRCM OBJECTS **/
-static void spawn_construct(orcm_spawn_event_t *ptr)
+static void triplets_array_constructor(orcm_triplets_array_t *ptr)
 {
-    ptr->ev = (opal_event_t*)malloc(sizeof(opal_event_t));
-    ptr->cmd = NULL;
-    ptr->np = 0;
-    ptr->hosts = NULL;
-    ptr->constrain = false;
-    ptr->add_procs = false;
-    ptr->debug = false;
-    ptr->continuous = false;
+    OBJ_CONSTRUCT(&ptr->lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&ptr->cond, opal_condition_t);
+    ptr->in_use = false;
+
+    OBJ_CONSTRUCT(&ptr->array, opal_pointer_array_t);
+    opal_pointer_array_init(&ptr->array, 8, INT_MAX, 8);
 }
-static void spawn_destruct(orcm_spawn_event_t *ptr)
+static void triplets_array_destructor(orcm_triplets_array_t *ptr)
 {
-    if (NULL != ptr->ev) { 
-        free(ptr->ev); 
-    } 
-    if (NULL != ptr->cmd) {
-        free(ptr->cmd);
+    int i;
+    orcm_triplet_t *trp;
+
+    OBJ_DESTRUCT(&ptr->lock);
+    OBJ_DESTRUCT(&ptr->cond);
+    for (i=0; i < ptr->array.size; i++) {
+        if (NULL != (trp = (orcm_triplet_t*)opal_pointer_array_get_item(&ptr->array, i))) {
+            OBJ_RELEASE(trp);
+        }
     }
-    if (NULL != ptr->hosts) {
-        free(ptr->hosts);
-    }
+    OBJ_DESTRUCT(&ptr->array);
 }
-OBJ_CLASS_INSTANCE(orcm_spawn_event_t,
+OBJ_CLASS_INSTANCE(orcm_triplets_array_t,
                    opal_object_t,
-                   spawn_construct,
-                   spawn_destruct);
+                   triplets_array_constructor,
+                   triplets_array_destructor);
+
+static void source_constructor(orcm_source_t *ptr)
+{
+    OBJ_CONSTRUCT(&ptr->lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&ptr->cond, opal_condition_t);
+    ptr->in_use = false;
+
+    ptr->name.jobid = ORTE_JOBID_INVALID;
+    ptr->name.vpid = ORTE_VPID_INVALID;
+    ptr->alive = true;
+
+    OBJ_CONSTRUCT(&ptr->msgs, opal_ring_buffer_t);
+    opal_ring_buffer_init(&ptr->msgs, orcm_max_msg_ring_size);
+
+    ptr->last_msg_num = ORTE_RMCAST_SEQ_INVALID;
+}
+static void source_destructor(orcm_source_t *ptr)
+{
+    opal_buffer_t *buf;
+    
+    OBJ_DESTRUCT(&ptr->lock);
+    OBJ_DESTRUCT(&ptr->cond);
+
+    while (NULL != (buf = (opal_buffer_t*)opal_ring_buffer_pop(&ptr->msgs))) {
+        OBJ_RELEASE(buf);
+    }
+    OBJ_DESTRUCT(&ptr->msgs);
+}
+OBJ_CLASS_INSTANCE(orcm_source_t,
+                   opal_object_t,
+                   source_constructor,
+                   source_destructor);
+
+static void triplet_constructor(orcm_triplet_t *ptr)
+{
+    OBJ_CONSTRUCT(&ptr->lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&ptr->cond, opal_condition_t);
+    ptr->in_use = false;
+
+    ptr->string_id = NULL;
+    ptr->num_procs = 0;
+    OBJ_CONSTRUCT(&ptr->members, opal_pointer_array_t);
+    opal_pointer_array_init(&ptr->members, 8, INT_MAX, 8);
+
+    ptr->output = ORTE_RMCAST_INVALID_CHANNEL;
+    ptr->input = ORTE_RMCAST_INVALID_CHANNEL;
+    ptr->pnp_cbfunc = NULL;
+
+    ptr->leader.jobid = ORTE_JOBID_WILDCARD;
+    ptr->leader.vpid = ORTE_VPID_WILDCARD;
+    ptr->leader_cbfunc = NULL;
+}
+static void triplet_destructor(orcm_triplet_t *ptr)
+{
+    int i;
+    orcm_source_t *src;
+
+    OBJ_DESTRUCT(&ptr->lock);
+    OBJ_DESTRUCT(&ptr->cond);
+
+    if (NULL != ptr->string_id) {
+        free(ptr->string_id);
+    }
+    for (i=0; i < ptr->members.size; i++) {
+        if (NULL != (src = (orcm_source_t*)opal_pointer_array_get_item(&ptr->members, i))) {
+            OBJ_RELEASE(src);
+        }
+    }
+    OBJ_DESTRUCT(&ptr->members);
+}
+OBJ_CLASS_INSTANCE(orcm_triplet_t,
+                   opal_object_t,
+                   triplet_constructor,
+                   triplet_destructor);
 

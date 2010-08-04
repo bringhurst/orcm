@@ -39,7 +39,8 @@ typedef void (*orcm_leader_module_finalize_fn_t)(void);
  * up to the individual leader module to use whatever algo
  * it wants to make this determination
  */
-typedef bool (*orcm_leader_module_deliver_msg_fn_t)(orte_process_name_t *src);
+typedef bool (*orcm_leader_module_deliver_msg_fn_t)(const char *stringid,
+                                                    const orte_process_name_t *src);
 
 /* Manually set the leader for a given application triplet. A value
  * of ORCM_LEADER_WILDCARD will cause data from all siblings to be
@@ -55,22 +56,29 @@ typedef bool (*orcm_leader_module_deliver_msg_fn_t)(orte_process_name_t *src);
  *
  * If ORCM_LEADER_WILDCARD and a cbfunc are provided, then the
  * cbfunc will be called whenever any member of the specified triplet fails.
+ * Providing NULL for all triplet fields will result in all messages from
+ * all triplets to be passed thru (except where specified by other set_leader
+ * calls) and callbacks whenever ANY process fails.
  *
  * If the caller wants to be notified whenever ANY process fails while
  * allowing the module to automatically select leaders (except where
  * specified by other set_leader calls), then specify NULL for each triplet
  * field and ORCM_LEADER_INVALID for the sibling.
  */
-typedef int (*orcm_leader_module_set_leader_fn_t)(char *app,
-                                                  char *version,
-                                                  char *release,
-                                                  orte_vpid_t sibling,
+typedef int (*orcm_leader_module_set_leader_fn_t)(const char *app,
+                                                  const char *version,
+                                                  const char *release,
+                                                  const orte_vpid_t sibling,
                                                   orcm_leader_cbfunc_t cbfunc);
 /* Get the current leader of a group */
-typedef int (*orcm_leader_module_get_leader_fn_t)(char *app,
-                                                  char *version,
-                                                  char *release,
+typedef int (*orcm_leader_module_get_leader_fn_t)(const char *app,
+                                                  const char *version,
+                                                  const char *release,
                                                   orte_process_name_t *leader);
+
+/* Notify the leader module of a process failure */
+typedef void (*orcm_leader_module_proc_failed_fn_t)(const char *stringid,
+                                                    const orte_process_name_t failed);
 
 /* component struct */
 typedef struct {
@@ -89,6 +97,7 @@ typedef struct {
     orcm_leader_module_deliver_msg_fn_t         deliver_msg;
     orcm_leader_module_set_leader_fn_t          set_leader;
     orcm_leader_module_get_leader_fn_t          get_leader;
+    orcm_leader_module_proc_failed_fn_t         proc_failed;
 } orcm_leader_base_module_t;
 
 /** Interface for LEADER selection */

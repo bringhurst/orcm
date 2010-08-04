@@ -12,8 +12,7 @@
 
 #include <stdio.h>
 
-const char *
-orcm_err2str(int errnum)
+const char *orcm_err2str(int errnum)
 {
     const char *retval;
     switch (errnum) {

@@ -12,13 +12,14 @@
 
 #include "opal/class/opal_list.h"
 #include "opal/util/output.h"
+#include "opal/threads/threads.h"
 
-#include "orte/mca/rml/rml.h"
 #include "orte/mca/errmgr/errmgr.h"
 #include "orte/runtime/orte_globals.h"
 
-#include "mca/pnp/base/private.h"
-#include "runtime/runtime.h"
+#include "mca/pnp/pnp.h"
+#include "runtime/orcm_globals.h"
+#include "util/triplets.h"
 
 #include "mca/leader/leader.h"
 #include "mca/leader/base/private.h"
@@ -28,16 +29,13 @@
 
 static int null_init(void);
 static void null_finalize(void);
-static bool deliver_msg(orte_process_name_t *src);
-static int set_leader(char *app,
-                      char *version,
-                      char *release,
-                      orte_vpid_t sibling,
+static bool deliver_msg(const char *stringid, const orte_process_name_t *src);
+static int set_leader(const char *app, const char *version,
+                      const char *release, const orte_vpid_t sibling,
                       orcm_leader_cbfunc_t cbfunc);
-static int get_leader(char *app,
-                      char *version,
-                      char *release,
-                      orte_process_name_t *leader);
+static int get_leader(const char *app, const char *version,
+                      const char *release, orte_process_name_t *leader);
+static void proc_failed(const char *stringid, const orte_process_name_t failed);
 
 /* The module struct */
 
@@ -50,111 +48,181 @@ orcm_leader_base_module_t orcm_leader_null_module = {
 };
 
 /* local globals */
-static opal_list_t triplets;
+static opal_mutex_t lock;
+static opal_condition_t cond;
+static bool active;
 
-static void proc_failed(int status, orte_process_name_t* sender,
-                        opal_buffer_t* buffer, orte_rml_tag_t tag,
-                        void* cbdata);
 
 static int null_init(void)
 {
     int ret;
 
-    /* if we are an app, track our known triplets so we can
-     * callback the right function when someone fails
-     */
-    if (ORCM_PROC_IS_APP) {
-        OBJ_CONSTRUCT(&triplets, opal_list_t);
-
-        /* setup a recv by which the orcmd can tell us someone failed */
-        if (ORTE_SUCCESS != (ret = orte_rml.recv_buffer_nb(ORTE_NAME_WILDCARD,
-                                                           ORTE_RML_TAG_LEADER,
-                                                           ORTE_RML_PERSISTENT,
-                                                           proc_failed,
-                                                           NULL))) {
-            if (ORTE_EXISTS != ret) {
-                ORTE_ERROR_LOG(ret);
-                return ret;
-            }
-        }
-    }
+    OBJ_CONSTRUCT(&lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&cond, opal_condition_t);
+    active = false;
 
     return ORCM_SUCCESS;
 }
 
 static void null_finalize(void)
 {
-    opal_list_item_t *item;
+    /* ensure any pending items complete */
+    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    OPAL_THREAD_UNLOCK(&lock);
 
-    if (ORCM_PROC_IS_APP) {
-        while (NULL != (item = opal_list_remove_first(&triplets))) {
-            OBJ_RELEASE(item);
-        }
-        OBJ_DESTRUCT(&triplets);
-        orte_rml.recv_cancel(ORTE_NAME_WILDCARD, ORTE_RML_TAG_LEADER);
-    }
+    OBJ_DESTRUCT(&lock);
+    OBJ_DESTRUCT(&cond);
 }
 
-static int set_leader(char *app,
-                      char *version,
-                      char *release,
-                      orte_vpid_t sibling,
+static int set_leader(const char *app, const char *version,
+                      const char *release, const orte_vpid_t sibling,
                       orcm_leader_cbfunc_t cbfunc)
 {
-    char *stringid;
-    orcm_leader_t *trp;
-    opal_list_item_t *item;
+    orcm_triplet_t *trp;
+    orcm_source_t *src;
 
-    OPAL_OUTPUT_VERBOSE((0, orcm_leader_base.output,
+    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+
+    OPAL_OUTPUT_VERBOSE((2, orcm_leader_base.output,
                          "%s leader:null:set_leader for %s %s %s to %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         app, version, release,
+                         (NULL == app) ? "NULL" : app,
+                         (NULL == version) ? "NULL" : version,
+                         (NULL == release) ? "NULL" : release,
                          ORTE_VPID_PRINT(sibling)));
 
-    /* if a cbfunc was provided, record it */
-    if (NULL != cbfunc) {
-        ORCM_PNP_CREATE_STRING_ID(&stringid, app, version, release);
-        /* see if we already have this triplet */
-        for (item = opal_list_get_first(&triplets);
-             item != opal_list_get_end(&triplets);
-             item = opal_list_get_next(item)) {
-            trp = (orcm_leader_t*)item;
-            if (0 == strcasecmp(stringid, trp->stringid)) {
-                /* update cbfunc */
-                trp->cbfunc = cbfunc;
-                return ORCM_SUCCESS;
-            }
-        }
-        /* get here if not found - create one */
-        trp = OBJ_NEW(orcm_leader_t);
-        trp->stringid = strdup(stringid);
-        trp->cbfunc = cbfunc;
-        opal_list_append_item(&triplets, &trp->super);
+     /* find this triplet - create it if not found */
+    trp = orcm_get_triplet(app, version, release, true);
+
+    /* if the sibling specified here is INVALID, then we 
+     * are being asked to set the leader using our algo. In
+     * our case, this means just leave it alone - if it
+     * was specified before, we don't want to override it
+     */
+    if (ORCM_LEADER_INVALID == sibling) {
+        goto release;
+    }
+            
+    /* do we know this source */
+    if (NULL == (src = orcm_get_source(trp, sibling))) {
+        /* nope - add it */
+        src = OBJ_NEW(orcm_source_t);
+        /* we don't know the jobid until they announce */
+        src->name.vpid = sibling;
+        src->alive = false;
+        opal_pointer_array_set_item(&trp->members, sibling, src);
+    }
+    trp->leader.jobid = src->name.jobid;
+    trp->leader.vpid = src->name.vpid;
+    trp->leader_cbfunc = cbfunc;
+
+    /* release the source */
+    OPAL_RELEASE_THREAD(&src->lock, &src->cond, &src->in_use);
+
+ release:
+    /* release the triplet */
+    OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
+
+    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    return ORCM_SUCCESS;
+}
+
+static bool deliver_msg(const char *stringid, const orte_process_name_t *src)
+{
+    bool ret=false;
+    orcm_triplet_t *trp;
+
+    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+
+     /* find this triplet */
+    if (NULL == (trp = orcm_get_triplet_stringid(stringid))) {
+        OPAL_OUTPUT_VERBOSE((2, orcm_leader_base.output,
+                             "%s leader: stringid %s is unknown - can't deliver msg",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), stringid));
+        /* can't deliver it */
+        return false;
     }
 
-    /* this module has no leader */
+    /* if the triplet leader is wildcard, let it thru */
+    if (ORTE_JOBID_WILDCARD == trp->leader.jobid &&
+        ORTE_VPID_WILDCARD == trp->leader.vpid) {
+        OPAL_OUTPUT_VERBOSE((2, orcm_leader_base.output,
+                             "%s leader: stringid %s is wildcard leader - deliver msg",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), stringid));
+        ret = true;
+        goto cleanup;
+    }
+
+    /* if the leader for this triplet was specified, then
+     * check to see if we match
+     */
+    if ((ORTE_JOBID_WILDCARD == trp->leader.jobid || src->jobid == trp->leader.jobid) &&
+        (ORTE_VPID_WILDCARD == trp->leader.vpid || src->vpid == trp->leader.vpid)) {
+        ret = true;
+    }
+
+ cleanup:
+    OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
+    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    return ret;
+}
+
+static int get_leader(const char *app, const char *version,
+                      const char *release, orte_process_name_t *leader)
+{
+    orcm_triplet_t *trp;
+
+    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+
+      /* find this triplet - create it if not found */
+    trp = orcm_get_triplet(app, version, release, true);
+
+    /* return the leader */
+    leader->jobid = trp->leader.jobid;
+    leader->vpid = trp->leader.vpid;
+
+    /* done with triplet */
+    OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
+
+    OPAL_RELEASE_THREAD(&lock, &cond, &active);
     return ORCM_SUCCESS;
 }
 
-static bool deliver_msg(orte_process_name_t *src)
+static void proc_failed(const char *stringid, const orte_process_name_t failed)
 {
-    return true;
-}
+    orcm_triplet_t *trp;
+    int i;
 
-static int get_leader(char *app,
-                      char *version,
-                      char *release,
-                      orte_process_name_t *leader)
-{
-    leader->jobid = ORTE_NAME_INVALID->jobid;
-    leader->vpid = ORTE_NAME_INVALID->vpid;
-    return ORCM_SUCCESS;
-}
+    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
 
-static void proc_failed(int status, orte_process_name_t* sender,
-                        opal_buffer_t* buffer, orte_rml_tag_t tag,
-                        void* cbdata)
-{
-    opal_output(0, "%s RECVD PROC FAILED NOTIFICATION",
-                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+    /* find this triplet */
+    if (NULL == (trp = orcm_get_triplet_stringid(stringid))) {
+        /* unknown - ignore it */
+        goto cleanup;
+    }
+
+    OPAL_OUTPUT_VERBOSE((2, orcm_leader_base.output,
+                         "%s PROC %s OF TRIPLET %s HAS FAILED",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         ORTE_NAME_PRINT(&failed), stringid));
+
+    if (ORTE_VPID_WILDCARD != trp->leader.vpid &&
+        failed.vpid == trp->leader.vpid) {
+        /* there was a specific leader, and this was it - 
+         * switch to default behavior
+         */
+        trp->leader.vpid = ORTE_VPID_WILDCARD;
+    }
+
+    if (NULL != trp->leader_cbfunc) {
+        OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
+        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        /* pass back the old and new info */
+        trp->leader_cbfunc(stringid, failed, trp->leader);
+        return;
+    }
+
+ cleanup:
+    OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
+    OPAL_RELEASE_THREAD(&lock, &cond, &active);
 }
