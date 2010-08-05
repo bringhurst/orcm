@@ -50,11 +50,22 @@ static void found_channel(char *app, char *version, char *release,
 static int32_t flag=0;
 static int msg_num=0;
 static orcm_pnp_channel_t peer = ORCM_PNP_INVALID_CHANNEL;
+static struct timeval tp;
 
 int main(int argc, char* argv[])
 {
-    struct timespec tp;
     int rc;
+
+    if (1 < argc) {
+        tp.tv_sec = strtol(argv[1], NULL, 10);
+    } else {
+        tp.tv_sec = 2;
+    }
+    if (2 < argc) {
+        tp.tv_usec = strtol(argv[2], NULL, 10);
+    } else {
+        tp.tv_usec = 0;
+    }
 
     /* init the ORCM library - this includes registering
      * a multicast recv so we hear announcements and
@@ -94,7 +105,7 @@ int main(int argc, char* argv[])
     }
     
     /* wake up every x seconds to send something */
-    ORTE_TIMER_EVENT(2, 0, send_data);
+    ORTE_TIMER_EVENT(tp.tv_sec, tp.tv_usec, send_data);
     opal_event_dispatch();
 
 cleanup:
@@ -158,8 +169,8 @@ static void send_data(int fd, short flags, void *arg)
     msg_num++;
     
     /* reset the timer */
-    now.tv_sec = 2;
-    now.tv_usec = 0;
+    now.tv_sec = tp.tv_sec;
+    now.tv_usec = tp.tv_usec;
     opal_evtimer_add(tmp, &now);
     
 }
