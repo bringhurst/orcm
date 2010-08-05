@@ -354,6 +354,7 @@ AC_DEFINE_UNQUOTED(ORCM_PKGLIBDIR, ["$ORCM_LIBDIR/openrcm"],
                    [Where ORCM's components live])
 AC_DEFINE_UNQUOTED(ORCM_PKGHELPDIR, ["$prefix/share/openrcm"],
                    [Where ORCM's help files reside])
+AC_SUBST([testdir], ["$prefix/test"])
 ORCM_PKGLIBDIR_MSG=$ORCM_LIBDIR/openrcm
 ORCM_PKGHELP_MSG=$prefix/share/openrcm
 AC_MSG_RESULT([$ORCM_PKGLIBDIR_MSG...$ORCM_PKGHELP_MSG])
@@ -389,6 +390,9 @@ AC_CONFIG_FILES([Makefile
 		 src/tools/wrappers/Makefile
 		 src/tools/wrappers/orcmcc-wrapper-data.txt
 		 src/tools/wrappers/orcm_wrapper_script
+
+		 test/pnp/Makefile
+		 test/spinners/Makefile
 ])
 
 #

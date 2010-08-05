@@ -4,13 +4,12 @@
 
 ACLOCAL_AMFLAGS = -I config
 
-SUBDIRS = src
+SUBDIRS = src test/pnp test/spinners
 
 EXTRA_DIST = \
         VERSION \
         autogen.pl \
         config/openrcm_get_version.sh \
-        test/Makefile \
         test/pnp/client.c \
         test/pnp/client2.c \
         test/pnp/listener.c \
