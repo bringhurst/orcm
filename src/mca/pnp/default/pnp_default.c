@@ -49,19 +49,24 @@
 /* API functions */
 
 static int default_init(void);
-static int announce(char *app, char *version, char *release,
+static int announce(const char *app,
+                    const char *version,
+                    const char *release,
                     orcm_pnp_announce_fn_t cbfunc);
-static int open_channel(char *app, char *version, char *release,
+static int open_channel(const char *app,
+                        const char *version,
+                        const char *release,
+                        orte_jobid_t jobid,
                         orcm_pnp_open_channel_cbfunc_t cbfunc);
-static int register_receive(char *app,
-                            char *version,
-                            char *release,
+static int register_receive(const char *app,
+                            const char *version,
+                            const char *release,
                             orcm_pnp_channel_t channel,
                             orcm_pnp_tag_t tag,
                             orcm_pnp_callback_fn_t cbfunc);
-static int cancel_receive(char *app,
-                          char *version,
-                          char *release,
+static int cancel_receive(const char *app,
+                          const char *version,
+                          const char *release,
                           orcm_pnp_channel_t channel,
                           orcm_pnp_tag_t tag);
 static int default_output(orcm_pnp_channel_t channel,
@@ -126,12 +131,13 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
                              opal_buffer_t* buffer, orte_rml_tag_t tag,
                              void* cbdata);
 
-static void check_pending_recvs(orcm_triplet_t *trp);
+static void check_pending_recvs(orcm_triplet_t *trp, orcm_triplet_group_t *grp);
+static void update_pending_recvs(orcm_triplet_t *trp);
 
-static void setup_recv_request(orcm_pnp_channel_obj_t *chan,
-                               char *string_id,
-                               orcm_pnp_tag_t tag,
-                               orcm_pnp_callback_fn_t cbfunc);
+static int record_recv(orcm_triplet_t *triplet,
+                       orcm_pnp_channel_t channel,
+                       orcm_pnp_tag_t tag,
+                       orcm_pnp_callback_fn_t cbfunc);
 
 static orcm_pnp_request_t* find_request(opal_list_t *list,
                                         char *string_id,
@@ -149,6 +155,7 @@ static uint32_t my_uid;
 static orcm_pnp_announce_fn_t my_announce_cbfunc = NULL;
 static orcm_pnp_channel_obj_t *my_output_channel=NULL, *my_input_channel=NULL;
 static orcm_triplet_t *my_triplet=NULL;
+static orcm_triplet_group_t *my_group=NULL;
 
 /* local thread support */
 static opal_mutex_t lock;
@@ -159,8 +166,10 @@ static int default_init(void)
 {
     int ret;
     orcm_pnp_channel_obj_t *chan;
-    orcm_pnp_channel_t channel;
+    orte_rmcast_channel_t channel;
     orte_rmcast_channel_t input, output;
+    char *stringid;
+    orcm_pnp_request_t *req;
 
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "pnp default init"));
@@ -171,14 +180,14 @@ static int default_init(void)
         return ORCM_ERR_NOT_SUPPORTED;
     }
     
-    /* init the array of channels */
-    OBJ_CONSTRUCT(&channels, opal_pointer_array_t);
-    opal_pointer_array_init(&channels, 8, INT_MAX, 8);
-    
-   /* setup the threading support */
+    /* setup the threading support */
     OBJ_CONSTRUCT(&lock, opal_mutex_t);
     OBJ_CONSTRUCT(&cond, opal_condition_t);
     active = false;
+
+    /* init the array of channels */
+    OBJ_CONSTRUCT(&channels, opal_pointer_array_t);
+    opal_pointer_array_init(&channels, 8, INT_MAX, 8);
 
     /* record my channels */
     if (ORTE_SUCCESS != (ret = orte_rmcast.query_channel(&output, &input))) {
@@ -204,8 +213,10 @@ static int default_init(void)
     /* open the default channel */
     if (ORCM_PROC_IS_MASTER || ORCM_PROC_IS_DAEMON || ORCM_PROC_IS_TOOL) {
         channel = ORTE_RMCAST_SYS_CHANNEL;
+        stringid = "ORCM:DVM:SYSTEM";
     } else {
         channel = ORTE_RMCAST_APP_PUBLIC_CHANNEL;
+        stringid = "ORCM:APP:PUBLIC";
     }
 
     if (NULL != my_input_channel && my_input_channel->channel == channel) {
@@ -225,8 +236,9 @@ static int default_init(void)
         opal_pointer_array_set_item(&channels, channel, chan);
     }
     
+    /* open the default "system" channel */
     if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(chan->channel,
-                                                        "ORCM-SYSTEM",
+                                                        stringid,
                                                         NULL, -1, NULL,
                                                         ORTE_RMCAST_BIDIR))) {
         if (ORTE_EXISTS != ret) {
@@ -246,7 +258,11 @@ static int default_init(void)
     }
 
     /* post the announcement receive */
-    setup_recv_request(chan, ORCM_WILDCARD_STRING_ID, ORCM_PNP_TAG_ANNOUNCE, recv_announcements);
+    req = OBJ_NEW(orcm_pnp_request_t);
+    req->string_id = strdup(ORCM_WILDCARD_STRING_ID);
+    req->tag = ORCM_PNP_TAG_ANNOUNCE;
+    req->cbfunc = recv_announcements;
+    opal_list_append(&chan->recvs, &req->super);
 
     /* setup an RML recv to catch any direct messages */
     if (ORTE_SUCCESS != (ret = orte_rml.recv_buffer_nb(ORTE_NAME_WILDCARD,
@@ -263,14 +279,14 @@ static int default_init(void)
     return ORCM_SUCCESS;
 }
 
-static int announce(char *app, char *version, char *release,
+static int announce(const char *app,
+                    const char *version,
+                    const char *release,
                     orcm_pnp_announce_fn_t cbfunc)
 {
     int ret;
     opal_buffer_t buf;
     orcm_pnp_channel_t chan;
-    opal_list_item_t *item;
-    orcm_pnp_request_t *req;
 
     /* bozo check */
     if (NULL == app || NULL == version || NULL == release) {
@@ -295,7 +311,9 @@ static int announce(char *app, char *version, char *release,
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                          app, version, release));
     
-    /* retain a local record of my info */
+    /* retain a local record of my info - this enables communication
+     * by setting my_string_id != NULL
+     */
     ORCM_CREATE_STRING_ID(&my_string_id, app, version, release);
     
     /* retain the callback function */
@@ -305,56 +323,20 @@ static int announce(char *app, char *version, char *release,
      * it if one doesn't already exist
      */
     my_triplet = orcm_get_triplet(app, version, release, true);
-    if (NULL != my_input_channel) {
-        my_triplet->input = my_input_channel->channel;
-    }
-    if (NULL != my_output_channel) {
-        my_triplet->output = my_output_channel->channel;
-    }
+    /* get my group object */
+    my_group = orcm_get_triplet_group(my_triplet, ORTE_PROC_MY_NAME->jobid, true);
+    my_group->uid = my_uid;
+    my_group->input = my_input_channel->channel;
+    my_group->output = my_output_channel->channel;
 
-    /* check for pending recvs for these channels */
-    check_pending_recvs(my_triplet);
+    /* check for pending recvs for these channels - this will copy
+     * recvs that were pre-posted on the triplet to the channel
+     * array
+     */
+    check_pending_recvs(my_triplet, my_group);
 
     /* release the triplet as we no longer require it */
     OPAL_RELEASE_THREAD(&my_triplet->lock, &my_triplet->cond, &my_triplet->in_use);
-
-    /* do we want to listen to our input? */
-    if (NULL != my_input_channel && 0 < opal_list_get_size(&my_input_channel->recvs)) {
-        /* open the channel */
-        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:ann setup mcast recv for WILDCARD tag on my %s channel",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             orcm_pnp_print_channel(my_input_channel->channel)));
-        /* setup the recv */
-        if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(my_input_channel->channel,
-                                                              ORTE_RMCAST_TAG_WILDCARD,
-                                                              ORTE_RMCAST_PERSISTENT,
-                                                              recv_input_buffers, NULL))) {
-            ORTE_ERROR_LOG(ret);
-            OPAL_RELEASE_THREAD(&lock, &cond, &active);
-            return ret;
-        }
-    }
-
-    /* do we want to listen to output from our peers? */
-    if (NULL != my_output_channel &&
-        my_output_channel != my_input_channel &&
-        0 < opal_list_get_size(&my_output_channel->recvs)) {
-        /* open the channel */
-        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:ann setup mcast recv for WILDCARD tag on my %s channel",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             orcm_pnp_print_channel(my_output_channel->channel)));
-        /* setup the recv */
-        if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(my_output_channel->channel,
-                                                              ORTE_RMCAST_TAG_WILDCARD,
-                                                              ORTE_RMCAST_PERSISTENT,
-                                                              recv_input_buffers, NULL))) {
-            ORTE_ERROR_LOG(ret);
-            OPAL_RELEASE_THREAD(&lock, &cond, &active);
-            return ret;
-        }
-    }
 
     /* no need to hold the lock any further */
     OPAL_RELEASE_THREAD(&lock, &cond, &active);
@@ -389,13 +371,18 @@ static int announce(char *app, char *version, char *release,
     return ret;
 }
 
-static int open_channel(char *app, char *version, char *release,
+static int open_channel(const char *app,
+                        const char *version,
+                        const char *release,
+                        orte_jobid_t jobid,
                         orcm_pnp_open_channel_cbfunc_t cbfunc)
 {
     orcm_triplet_t *triplet;
+    orcm_triplet_group_t *grp;
     orcm_pnp_request_t *request;
     opal_list_item_t *item;
     int i, rc;
+    bool done;
     
     if (NULL == cbfunc) {
         /* makes no sense */
@@ -410,36 +397,127 @@ static int open_channel(char *app, char *version, char *release,
      * creates it if not
      */
     triplet = orcm_get_triplet(app, version, release, true);
-    triplet->pnp_cbfunc = cbfunc;
-    
-    /* if we already know this triplet's group input channel */
-    if (ORCM_PNP_INVALID_CHANNEL != triplet->input) {
-        /* flag that we already did the callback so we don't do it again */
-        triplet->pnp_cbfunc = NULL;
-        /* release the threads before doing the callback in
-         * case the caller does messaging
-         */
+
+    /* if the jobid is wildcard, we execute the callback for every group */
+    if (ORTE_JOBID_WILDCARD == jobid) {
+        /* record the policy */
+        triplet->pnp_cb_policy = ORCM_NOTIFY_ANY;
+        /* cycle thru this triplet's known groups */
+        for (i=0; i < triplet->groups.size; i++) {
+            if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&triplet->groups, i))) {
+                continue;
+            }
+            grp->pnp_cbfunc = cbfunc;
+            if (ORCM_PNP_INVALID_CHANNEL != grp->input) {
+                /* release the threads before doing the callback in
+                 * case the caller sends messages
+                 */
+                OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+                OPAL_RELEASE_THREAD(&lock, &cond, &active);
+                cbfunc(app, version, release, grp->input);
+                /* reacquire the threads */
+                OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+                OPAL_ACQUIRE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+                /* flag that this group has executed its callback */
+                grp->pnp_cbfunc = NULL;
+            }
+        }
+        /* release the threads */
         OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
         OPAL_RELEASE_THREAD(&lock, &cond, &active);
-        cbfunc(app, version, release, triplet->input);
         return ORCM_SUCCESS;
     }
-    
+
+    if (ORTE_JOBID_INVALID == jobid) {
+        /* record the policy */
+        triplet->pnp_cb_policy = ORCM_NOTIFY_ANY;
+        /* see if we have know about any group with this triplet */
+        done = false;
+        for (i=0; i < triplet->groups.size; i++) {
+            if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&triplet->groups, i))) {
+                continue;
+            }
+            grp->pnp_cbfunc = cbfunc;
+            if (ORCM_PNP_INVALID_CHANNEL != grp->input) {
+                /* flag that we already did the callback so we don't do it again */
+                done = true;
+                OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+                OPAL_RELEASE_THREAD(&lock, &cond, &active);
+                cbfunc(app, version, release, grp->input);
+                /* reacquire the threads */
+                OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+                OPAL_ACQUIRE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+                break;
+            }
+        }
+        /* if we did the callback, remove any remaining cbfunc entries to ensure
+         * that we only do this once for the triplet
+         */
+        if (done) {
+            for (i=0; i < triplet->groups.size; i++) {
+                if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&triplet->groups, i))) {
+                    continue;
+                }
+                grp->pnp_cbfunc = NULL;
+            }
+        }
+        /* release the threads */
+        OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        return ORCM_SUCCESS;
+    }
+
+    /* left with the case of a specific jobid - record the policy */
+    triplet->pnp_cb_policy = ORCM_NOTIFY_GRP;
+    done = false;
+    for (i=0; i < triplet->groups.size; i++) {
+        if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&triplet->groups, i))) {
+            continue;
+        }
+        if (grp->jobid == jobid) {
+            /* found the group */
+            grp->pnp_cbfunc = cbfunc;
+            done = true;  /* flag that we found the group */
+            if (ORCM_PNP_INVALID_CHANNEL != grp->input) {
+                /* release the threads before doing the callback in
+                 * case the caller sends messages
+                 */
+                OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+                OPAL_RELEASE_THREAD(&lock, &cond, &active);
+                cbfunc(app, version, release, grp->input);
+                /* reacquire the threads */
+                OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+                OPAL_ACQUIRE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+                /* flag that this group has executed its callback */
+                grp->pnp_cbfunc = NULL;
+                break;
+            }
+        }
+    }
+    /* if we didn't find the group, then we have to add it */
+    if (!done) {
+        grp = OBJ_NEW(orcm_triplet_group_t);
+        grp->jobid = jobid;
+        grp->pnp_cbfunc = cbfunc;
+    }
+
     OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
     OPAL_RELEASE_THREAD(&lock, &cond, &active);
     return ORCM_SUCCESS;
 }
 
-static int register_receive(char *app,
-                            char *version,
-                            char *release,
+static int register_receive(const char *app,
+                            const char *version,
+                            const char *release,
                             orcm_pnp_channel_t channel,
                             orcm_pnp_tag_t tag,
                             orcm_pnp_callback_fn_t cbfunc)
 {
-    orcm_triplet_t *triplet;
+    orcm_triplet_t *triplet, *trp;
+    int i;
     int ret=ORCM_SUCCESS;
-    orcm_pnp_channel_obj_t *chan;
+    orcm_pnp_channel_obj_t *recvr;
+    orcm_pnp_request_t *req;
 
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:register_recv app %s version %s release %s channel %s tag %s",
@@ -450,7 +528,7 @@ static int register_receive(char *app,
                          orcm_pnp_print_channel(channel),
                          orcm_pnp_print_tag(tag)));
     
-    /* bozo check - can't subscribe to  invalid channel */
+    /* bozo check - can't receive on an invalid channel */
     if (ORCM_PNP_INVALID_CHANNEL == channel) {
         ORTE_ERROR_LOG(ORTE_ERR_BAD_PARAM);
         return ORTE_ERR_BAD_PARAM;
@@ -466,92 +544,114 @@ static int register_receive(char *app,
      */
     triplet = orcm_get_triplet(app, version, release, true);        
     
-    /* record the request - just return if this request
-     * already exists
+    /* if the triplet involves wildcards, we treat it separately. Such
+     * recvs are maintained on a separate list so they can be properly
+     * applied to any subsequent triplets covered by the wildcard
      */
-    if (ORCM_PNP_GROUP_INPUT_CHANNEL == channel) {
-        /* if the specified triplet's group input channel is already
-         * known, store the request there
+    if (NULL != strchr(triplet->string_id, '@')) {
+        /* if we were given an INPUT or OUTPUT channel, then we
+         * have to record the recv so we can apply it to triplets
+         * as they become known since we don't know the channel
          */
-        if (ORCM_PNP_INVALID_CHANNEL != triplet->input) {
-            if (NULL == (chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, triplet->input))) {
-                chan = OBJ_NEW(orcm_pnp_channel_obj_t);
-                chan->channel = triplet->input;
-                opal_pointer_array_set_item(&channels, chan->channel, chan);
-            }
-            /* since anyone can send to a group's input channel, use the wildcard id */
-            setup_recv_request(chan, ORCM_WILDCARD_STRING_ID, tag, cbfunc);
-        } else {
-            /* since we don't know the triplet's group input channel,
-             * store the request on the generic group_input_channel
-             * until we learn it
+        if (ORCM_PNP_GROUP_INPUT_CHANNEL == channel ||
+            ORCM_PNP_GROUP_OUTPUT_CHANNEL == channel) {
+            /* store this recv on this wildcard triplet so we retain a record of it,
+             * ensuring no duplicates
              */
-            if (NULL == (chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, ORCM_PNP_GROUP_INPUT_CHANNEL))) {
-                chan = OBJ_NEW(orcm_pnp_channel_obj_t);
-                chan->channel = ORCM_PNP_GROUP_INPUT_CHANNEL;
-                opal_pointer_array_set_item(&channels, chan->channel, chan);
+            if (ORCM_PNP_GROUP_INPUT_CHANNEL == channel) {
+                if (NULL == find_request(&triplet->input_recvs, triplet->string_id, tag)) {
+                    /* create it */
+                    req = OBJ_NEW(orcm_pnp_request_t);
+                    req->string_id = strdup(triplet->string_id);
+                    req->tag = tag;
+                    req->cbfunc = cbfunc;
+                    opal_list_append(&triplet->input_recvs, &req->super);
+                }
+            } else {
+                if (NULL == find_request(&triplet->output_recvs, triplet->string_id, tag)) {
+                    /* create it */
+                    req = OBJ_NEW(orcm_pnp_request_t);
+                    req->string_id = strdup(triplet->string_id);
+                    req->tag = tag;
+                    req->cbfunc = cbfunc;
+                    opal_list_append(&triplet->output_recvs, &req->super);
+                }
             }
-            /* use this triplet's string_id so we can identify it later */
-            setup_recv_request(chan, triplet->string_id, tag, cbfunc);
-            goto cleanup;
-        }
-    } else if (ORCM_PNP_GROUP_OUTPUT_CHANNEL == channel) {
-        if (ORCM_PNP_INVALID_CHANNEL != triplet->output) {
-            if (NULL == (chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, triplet->output))) {
-                chan = OBJ_NEW(orcm_pnp_channel_obj_t);
-                chan->channel = triplet->output;
-                opal_pointer_array_set_item(&channels, chan->channel, chan);
+
+            /* lock the global triplet arrays for our use */
+            OPAL_ACQUIRE_THREAD(&orcm_triplets->lock,
+                                &orcm_triplets->cond,
+                                &orcm_triplets->in_use);
+
+            /* check all known triplets to find those that match */
+            for (i=0; i < orcm_triplets->array.size; i++) {
+                if (NULL == (trp = (orcm_triplet_t*)opal_pointer_array_get_item(&orcm_triplets->array, i))) {
+                    continue;
+                }
+                /* lock the triplet thread */
+                OPAL_ACQUIRE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
+                if (orcm_triplet_cmp(trp->string_id, triplet->string_id)) {
+                    /* triplet matches - transfer the recv */
+                    if (ORCM_SUCCESS != (ret = record_recv(trp, channel, tag, cbfunc))) {
+                        ORTE_ERROR_LOG(ret);
+                    }
+                }
+                /* release this triplet */
+                OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
             }
-            setup_recv_request(chan, triplet->string_id, tag, cbfunc);
+
+            /* release the global arrays */
+            OPAL_RELEASE_THREAD(&orcm_triplets->lock,
+                                &orcm_triplets->cond,
+                                &orcm_triplets->in_use);
         } else {
-            /* since we don't know the triplet's group output channel,
-             * store the request on the generic group_output_channel
-             * until we learn it
+            /* if we were given a specific channel, then we can add this
+             * recv to it
              */
-            if (NULL == (chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, ORCM_PNP_GROUP_OUTPUT_CHANNEL))) {
-                chan = OBJ_NEW(orcm_pnp_channel_obj_t);
-                chan->channel = ORCM_PNP_GROUP_OUTPUT_CHANNEL;
-                opal_pointer_array_set_item(&channels, chan->channel, chan);
+            if (NULL == (recvr = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, channel))) {
+                recvr = OBJ_NEW(orcm_pnp_channel_obj_t);
+                recvr->channel = channel;
+                opal_pointer_array_set_item(&channels, recvr->channel, recvr);
             }
-            setup_recv_request(chan, triplet->string_id, tag, cbfunc);
-            goto cleanup;
+            if (NULL == (req = find_request(&recvr->recvs, triplet->string_id, tag))) {
+                /* not already present - create it */
+                req = OBJ_NEW(orcm_pnp_request_t);
+                req->string_id = strdup(req->string_id);
+                req->tag = req->tag;
+                opal_list_append(&recvr->recvs, &req->super);
+            }
+            if (channel < ORCM_PNP_SYS_CHANNEL) {
+                /* can't register rmcast recvs on group_input, group_output, and wildcard channels */
+                goto cleanup;
+            }
+            /* open this channel - will just return if already open */
+            if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(channel, triplet->string_id,
+                                                                NULL, -1, NULL,
+                                                                ORTE_RMCAST_RECV))) {
+                if (ORTE_EXISTS != ret) {
+                    ORTE_ERROR_LOG(ret);
+                    goto cleanup;
+                }
+            }
+            /* setup to listen to it - will just return if we already are */
+            if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(channel, ORTE_RMCAST_TAG_WILDCARD,
+                                                                  ORTE_RMCAST_PERSISTENT,
+                                                                  recv_input_buffers, NULL))) {
+                if (ORTE_EXISTS == ret) {
+                    ret = ORTE_SUCCESS;
+                    goto cleanup;
+                }
+                ORTE_ERROR_LOG(ret);
+            }
         }
+
     } else {
-        /* store this request on the specified channel */
-        if (NULL == (chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, channel))) {
-            chan = OBJ_NEW(orcm_pnp_channel_obj_t);
-            chan->channel = channel;
-            opal_pointer_array_set_item(&channels, chan->channel, chan);
-        }
-        setup_recv_request(chan, triplet->string_id, tag, cbfunc);
-    }
-
-    if (chan->channel < ORCM_PNP_SYS_CHANNEL) {
-        /* can't register rmcast recvs on group_input, group_output, and wildcard channels */
-        goto cleanup;
-    }
-
-    /* open this channel - will just return if already open */
-    if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(chan->channel, triplet->string_id,
-                                                        NULL, -1, NULL,
-                                                        ORTE_RMCAST_RECV))) {
-        if (ORTE_EXISTS != ret) {
+        /* we are dealing with a non-wildcard triplet - record the request */
+        if (ORCM_SUCCESS != (ret = record_recv(triplet, channel, tag, cbfunc))) {
             ORTE_ERROR_LOG(ret);
-            goto cleanup;
         }
     }
-    /* setup to listen to it - will just return if we already are */
-    if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(chan->channel, ORTE_RMCAST_TAG_WILDCARD,
-                                                          ORTE_RMCAST_PERSISTENT,
-                                                          recv_input_buffers, NULL))) {
-        if (ORTE_EXISTS == ret) {
-            ret = ORTE_SUCCESS;
-            goto cleanup;
-        }
-        ORTE_ERROR_LOG(ret);
-    }
-    
-    
+
  cleanup:
     /* clear the threads */
     OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
@@ -560,15 +660,16 @@ static int register_receive(char *app,
     return ret;
 }
 
-static int cancel_receive(char *app,
-                          char *version,
-                          char *release,
+static int cancel_receive(const char *app,
+                          const char *version,
+                          const char *release,
                           orcm_pnp_channel_t channel,
                           orcm_pnp_tag_t tag)
 {
     orcm_pnp_channel_obj_t *chan;
     orcm_pnp_request_t *req;
     orcm_triplet_t *triplet;
+    orcm_triplet_group_t *grp;
     opal_list_item_t *item, *next;
     char *string_id;
     int ret=ORCM_SUCCESS;
@@ -616,113 +717,90 @@ static int cancel_receive(char *app,
     /* are we looking at the group input channel? */
     if (ORCM_PNP_GROUP_INPUT_CHANNEL == channel) {
         triplet = orcm_get_triplet(app, version, release, false);
-        if (NULL == triplet || ORCM_PNP_INVALID_CHANNEL == triplet->input) {
-            /* just look thru the default group input channel */
-            chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, ORCM_PNP_GROUP_INPUT_CHANNEL);
-            if (NULL == chan) {
-                /* nothing to do */
-                if (NULL != triplet) {
-                    OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-                }
-                goto cleanup;
-            }
-            if (NULL == triplet) {
-                ORCM_CREATE_STRING_ID(&string_id, app, version, release);
-            } else {
-                string_id = strdup(triplet->string_id);
-                /* release the triplet thread as we don't need it any more */
-                OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-            }
-            item = opal_list_get_first(&chan->recvs);
-            while (item != opal_list_get_end(&chan->recvs)) {
-                next = opal_list_get_next(item);
-                req = (orcm_pnp_request_t*)item;
-                if (0 == strcasecmp(string_id, req->string_id)) {
-                    if (ORCM_PNP_TAG_WILDCARD == tag || tag == req->tag) {
-                        opal_list_remove_item(&chan->recvs, item);
-                        OBJ_RELEASE(item);
-                    }
-                }
-                item = next;
-            }
-            free(string_id);
-            OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-            goto cleanup;
-        } else {
-            chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, triplet->input);
-            if (NULL == chan) {
-                /* nothing to do */
-                OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-                goto cleanup;
-            }
-            item = opal_list_get_first(&chan->recvs);
-            while (item != opal_list_get_end(&chan->recvs)) {
+        if (NULL != triplet) {
+            /* remove the triplet-stored recvs */
+            item = opal_list_get_first(&triplet->input_recvs);
+            while (item != opal_list_get_end(&triplet->input_recvs)) {
                 next = opal_list_get_next(item);
                 req = (orcm_pnp_request_t*)item;
                 if (ORCM_PNP_TAG_WILDCARD == tag || tag == req->tag) {
-                    opal_list_remove_item(&chan->recvs, item);
+                    opal_list_remove_item(&triplet->input_recvs, item);
                     OBJ_RELEASE(item);
                 }
+                item = next;
             }
-            item = next;
+            for (i=0; i < triplet->groups.size; i++) {
+                if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&triplet->groups, i))) {
+                    continue;
+                }
+                if (ORCM_PNP_INVALID_CHANNEL != grp->input) {
+                    /* just look thru the default group input channel */
+                    chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, grp->input);
+                    if (NULL == chan) {
+                        /* nothing to do */
+                        OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+                        goto cleanup;
+                    }
+                    item = opal_list_get_first(&chan->recvs);
+                    while (item != opal_list_get_end(&chan->recvs)) {
+                        next = opal_list_get_next(item);
+                        req = (orcm_pnp_request_t*)item;
+                        if (ORCM_PNP_TAG_WILDCARD == tag || tag == req->tag) {
+                            opal_list_remove_item(&chan->recvs, item);
+                            OBJ_RELEASE(item);
+                        }
+                        item = next;
+                    }
+                }
+            }
+            /* release the triplet */
+            OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
         }
-        /* release the triplet */
-        OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
         goto cleanup;
     }
 
     /* are we looking at the group output channel? */
     if (ORCM_PNP_GROUP_OUTPUT_CHANNEL == channel) {
         triplet = orcm_get_triplet(app, version, release, false);
-        if (NULL == triplet || ORCM_PNP_INVALID_CHANNEL == triplet->output) {
-            /* just look thru the default group output channel */
-            chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, ORCM_PNP_GROUP_OUTPUT_CHANNEL);
-            if (NULL == chan) {
-                /* nothing to do */
-                if (NULL != triplet) {
-                    OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-                }
-                goto cleanup;
-            }
-            if (NULL == triplet) {
-                ORCM_CREATE_STRING_ID(&string_id, app, version, release);
-            } else {
-                string_id = strdup(triplet->string_id);
-                OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-            }
-            item = opal_list_get_first(&chan->recvs);
-            while (item != opal_list_get_end(&chan->recvs)) {
-                next = opal_list_get_next(item);
-                req = (orcm_pnp_request_t*)item;
-                if (0 == strcasecmp(string_id, req->string_id)) {
-                    if (ORCM_PNP_TAG_WILDCARD == tag || tag == req->tag) {
-                        opal_list_remove_item(&chan->recvs, item);
-                        OBJ_RELEASE(item);
-                    }
-                }
-                item = next;
-            }
-            OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-            goto cleanup;
-        } else {
-            chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, triplet->input);
-            if (NULL == chan) {
-                /* nothing to do */
-                OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-                goto cleanup;
-            }
-            item = opal_list_get_first(&chan->recvs);
-            while (item != opal_list_get_end(&chan->recvs)) {
+        if (NULL != triplet) {
+            /* remove the triplet-stored recvs */
+            item = opal_list_get_first(&triplet->output_recvs);
+            while (item != opal_list_get_end(&triplet->output_recvs)) {
                 next = opal_list_get_next(item);
                 req = (orcm_pnp_request_t*)item;
                 if (ORCM_PNP_TAG_WILDCARD == tag || tag == req->tag) {
-                    opal_list_remove_item(&chan->recvs, item);
+                    opal_list_remove_item(&triplet->output_recvs, item);
                     OBJ_RELEASE(item);
                 }
+                item = next;
             }
-            item = next;
+            for (i=0; i < triplet->groups.size; i++) {
+                if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&triplet->groups, i))) {
+                    continue;
+                }
+                if (ORCM_PNP_INVALID_CHANNEL != grp->output) {
+                    /* just look thru the default group output channel */
+                    chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, grp->output);
+                    if (NULL == chan) {
+                        /* nothing to do */
+                        OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+                        goto cleanup;
+                    }
+                    item = opal_list_get_first(&chan->recvs);
+                    while (item != opal_list_get_end(&chan->recvs)) {
+                        next = opal_list_get_next(item);
+                        req = (orcm_pnp_request_t*)item;
+                        if (ORCM_PNP_TAG_WILDCARD == tag || tag == req->tag) {
+                            opal_list_remove_item(&chan->recvs, item);
+                            OBJ_RELEASE(item);
+                        }
+                        item = next;
+                    }
+                }
+            }
+            /* release the triplet */
+            OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
         }
-        OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
         goto cleanup;
     }
 
@@ -998,6 +1076,7 @@ static void recv_announcements(int status,
 {
     opal_list_item_t *itm2;
     orcm_triplet_t *triplet;
+    orcm_triplet_group_t *grp;
     orcm_source_t *source;
     char *app=NULL, *version=NULL, *release=NULL, *string_id=NULL, *nodename=NULL;
     orte_process_name_t originator;
@@ -1069,13 +1148,16 @@ static void recv_announcements(int status,
     /* find this triplet - create if not found */
     triplet = orcm_get_triplet(app, version, release, true);
 
+    /* get the sender's group - create if not found */
+    grp = orcm_get_triplet_group(triplet, sender->jobid, true);
+
     /* record the multicast channels it is on */
-    triplet->input = input;
-    triplet->output = output;
+    grp->input = input;
+    grp->output = output;
     /* check for any pending recvs */
-    check_pending_recvs(triplet);
+    check_pending_recvs(triplet, grp);
     /* notify the user, if requested */
-    if (NULL != triplet->pnp_cbfunc) {
+    if (NULL != grp->pnp_cbfunc) {
         /* if the user requested a callback, they probably intend to send
          * something to this triplet - so ensure the channel to its input is open
          */
@@ -1084,8 +1166,8 @@ static void recv_announcements(int status,
             OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
             goto RELEASE;
         }
-        triplet->pnp_cbfunc(app, version, release, input);
-        triplet->pnp_cbfunc = NULL;
+        grp->pnp_cbfunc(app, version, release, input);
+        grp->pnp_cbfunc = NULL;
     }
 
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
@@ -1093,8 +1175,8 @@ static void recv_announcements(int status,
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                          ORTE_NAME_PRINT(sender)));
     
-    /* do we already know this source? */
-    source = orcm_get_source(triplet, sender->vpid);
+    /* get the source object - do not create if not found */
+    source = orcm_get_source_in_group(grp, sender->vpid, false);
     if (NULL == source) {
         OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                              "%s pnp:default:received adding source %s",
@@ -1104,8 +1186,9 @@ static void recv_announcements(int status,
         source = OBJ_NEW(orcm_source_t);
         source->name.jobid = sender->jobid;
         source->name.vpid = sender->vpid;
-        /* constructor sets alive to true */
-        opal_pointer_array_set_item(&triplet->members, sender->vpid, source);
+        /* constructor sets alive to false */
+        source->alive = true;
+        opal_pointer_array_set_item(&grp->members, sender->vpid, source);
         known = false;
     } else {
         /* update its name in case it isn't known yet */
@@ -1118,16 +1201,6 @@ static void recv_announcements(int status,
     }
     /* release the triplet thread */
     OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-
-    /* let the leader framework have a chance to determine leadership
-     * for this triplet
-     */
-    if (ORCM_SUCCESS != (rc = orcm_leader.set_leader(app, version, release,
-                                                     ORCM_LEADER_INVALID,
-                                                     NULL))) {
-        ORTE_ERROR_LOG(rc);
-        goto RELEASE;
-    }
 
     /* set the contact info - this has to be done even if the source is known
      * as it could be a repeat invocation of the same application
@@ -1257,6 +1330,7 @@ static void recv_input_buffers(int status,
     opal_buffer_t *saved;
     orcm_triplet_t *trip;
     orcm_source_t *src;
+    orte_jobid_t jobid;
 
     /* if we have not announced, ignore this message */
     if (NULL == my_string_id) {
@@ -1307,7 +1381,7 @@ static void recv_input_buffers(int status,
             /* don't know this triplet, could be an announce, so send it to be processed */
             goto process;
         }
-        if (NULL == (src = orcm_get_source(trip, sender->vpid))) {
+        if (NULL == (src = orcm_get_source(trip, sender, false))) {
             /* don't know this source, could be an announce, so process it
              * after we release the triplet thread
              */
@@ -1333,7 +1407,7 @@ static void recv_input_buffers(int status,
          * message is from the leader for this triplet
          */
         if (!orcm_leader.deliver_msg(string_id, sender)) {
-            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+            OPAL_OUTPUT_VERBOSE((0, orcm_pnp_base.output,
                                  "%s Message from %s of triplet %s ignored - not leader",
                                  ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                                  ORTE_NAME_PRINT(sender), string_id));
@@ -1351,9 +1425,9 @@ static void recv_input_buffers(int status,
     if (NULL == (request = find_request(&chan->recvs, string_id, tg))) {
         /* no matching requests */
         OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                             "%s pnp:default:recv triplet %s has no matching recvs for tag %s",
+                             "%s pnp:default:recv triplet %s has no matching recvs for channel %s tag %s",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             string_id, orcm_pnp_print_tag(tg)));
+                             string_id, orcm_pnp_print_channel(channel), orcm_pnp_print_tag(tg)));
         goto DEPART;
     }
 
@@ -1610,9 +1684,9 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
     /* find the request object for this tag */
     if (NULL == (request = find_request(&my_input_channel->recvs, string_id, tag))) {
         opal_output(0, "%s A direct message was received, but no matching recv"
-                       " has been posted for direct messages sent to tag %s or"
-                       " to the WILDCARD tag",
-                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), orcm_pnp_print_tag(tag));
+                       " has been posted for direct messages sent from trip %s"
+                       " tag %s or to the WILDCARD tag",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), string_id, orcm_pnp_print_tag(tag));
         goto CLEANUP;
     }
 
@@ -1690,63 +1764,6 @@ DEPART:
     
 }
 
-static void setup_recv_request(orcm_pnp_channel_obj_t *chan,
-                               char *string_id,
-                               orcm_pnp_tag_t tag,
-                               orcm_pnp_callback_fn_t cbfunc)
-{
-    orcm_pnp_request_t *req;
-    opal_list_item_t *item;
-    
-    OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                         "%s pnp:default:setup_recv for %s channel %s tag %s",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), string_id,
-                         orcm_pnp_print_channel(chan->channel),
-                         orcm_pnp_print_tag(tag)));
-
-    /* for this operation, we require a literal match on the tag to 
-     * ensure that recvs for a specific tag take precedence over
-     * any wildcard recvs. ditto for the string_id
-     */
-
-    for (item = opal_list_get_first(&chan->recvs);
-         item != opal_list_get_end(&chan->recvs);
-         item = opal_list_get_next(item)) {
-        req = (orcm_pnp_request_t*)item;
-
-        /* check the tag first */
-        if (tag != req->tag) {
-            continue;
-        }
-        /* tags match - check the string_id's */
-        if (0 != strcasecmp(string_id, req->string_id)) {
-            continue;
-        }
-        /* we have an exact match - update the cbfunc */
-        opal_output(0, "%s FOUND EXISTING MATCHING RECV", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-        req->cbfunc = cbfunc;
-        return;
-    }
-
-    /* if we get here, then no exact match was found, so create a new entry */
-    req = OBJ_NEW(orcm_pnp_request_t);
-    req->string_id = strdup(string_id);
-    req->tag = tag;
-    /* ensure that any wildcard tag or any string id containing a
-     * wildcard is at the end of the list
-     */
-    if (ORCM_PNP_TAG_WILDCARD == tag || NULL != strchr(string_id, '@')) {
-        opal_list_append(&chan->recvs, &req->super);
-    } else {
-        opal_list_prepend(&chan->recvs, &req->super);
-    }
-
-    /* setup the callback function */
-    if (NULL != cbfunc) {
-        req->cbfunc = cbfunc;
-    }
-}
-
 static orcm_pnp_request_t* find_request(opal_list_t *list,
                                         char *string_id,
                                         orcm_pnp_tag_t tag)
@@ -1765,7 +1782,7 @@ static orcm_pnp_request_t* find_request(opal_list_t *list,
         }
         /* tags match - check the string_id's */
         if (orcm_triplet_cmp(string_id, req->string_id)) {
-            OPAL_OUTPUT_VERBOSE((5, orcm_pnp_base.output,
+            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                                  "%s MATCHED RECV %s TO %s TAG %s:%s",
                                  ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), string_id,
                                  req->string_id, orcm_pnp_print_tag(tag),
@@ -1859,131 +1876,73 @@ static int construct_msg(opal_buffer_t **buf, opal_buffer_t *buffer,
     return ret;
 }
 
-static void check_pending_recvs(orcm_triplet_t *trp)
+/* given a triplet_group, check logged recvs to see if any need to be moved
+ * to the channel array for the group's channels. This includes looking at
+ * recvs placed against the specified triplet, AND recvs placed against
+ * triplets that include wildcards spanning the provided grp
+ */
+static void check_trip_recvs(char *stringid,
+                             opal_list_t *recvs,
+                             orcm_pnp_channel_t channel)
 {
-    opal_list_item_t *item, *next;
+    opal_list_item_t *item;
     orcm_pnp_request_t *req, *reqcp;
-    orcm_pnp_channel_obj_t *chan, *recvr=NULL;
+    orcm_pnp_channel_obj_t *recvr=NULL;
     int rc;
 
-    /* check the group_input channel first */
-    if (ORCM_PNP_INVALID_CHANNEL != trp->input &&
-        NULL != (chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, ORCM_PNP_GROUP_INPUT_CHANNEL))) {
-        item = opal_list_get_first(&chan->recvs);
-        while (item != opal_list_get_end(&chan->recvs)) {
-            next = opal_list_get_next(item);
+    if (0 < opal_list_get_size(recvs) && ORCM_PNP_INVALID_CHANNEL != channel) {
+        /* create a copy of any recvs on the appropriate
+         * channel in the channel array, avoiding duplication
+         * since this function could be called multiple times
+         */
+        for (item = opal_list_get_first(recvs);
+             item != opal_list_get_end(recvs);
+             item = opal_list_get_next(item)) {
             req = (orcm_pnp_request_t*)item;
-            if (orcm_triplet_cmp(req->string_id, trp->string_id)) {
-                /* we have a match */
-                OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                     "%s pnp:default:check_pending_recvs input match found",
-                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-                /* if the pending recv involves wildcards, then we have to copy
-                 * it over to the recving triplet as other matches may also
-                 * apply to later triplets
-                 */
-                if (NULL != strchr(req->string_id, '@')) {
-                    /* do a copy */
-                    reqcp = OBJ_NEW(orcm_pnp_request_t);
-                    reqcp->tag = req->tag;
-                    reqcp->cbfunc = req->cbfunc;
-                } else {
-                    /* transfer to the trp input channel */
-                    opal_list_remove_item(&chan->recvs, &req->super);
-                    reqcp = req;
-                }
-                if (NULL == recvr) {
-                    if (NULL == (recvr = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, trp->input))) {
-                        recvr = OBJ_NEW(orcm_pnp_channel_obj_t);
-                        recvr->channel = trp->input;
-                        opal_pointer_array_set_item(&channels, recvr->channel, recvr);
-                    }
-                }
-                if (NULL != my_string_id && 0 == strcasecmp(my_string_id, trp->string_id)) {
-                    /* anyone can send to my group input channel if I post a recv against it
-                     * using my own stringid
-                     */
-                    if (NULL != reqcp->string_id) {
-                        free(reqcp->string_id);
-                    }
-                    reqcp->string_id = strdup(ORCM_WILDCARD_STRING_ID);
-                }
-                opal_list_append(&recvr->recvs, &reqcp->super);
-                OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                     "%s pnp:default:check_pending_recvs moving %s:%s to %s input_recvs",
-                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), reqcp->string_id,
-                                     orcm_pnp_print_tag(req->tag), trp->string_id));
-            }
-            item = next;
-        }
-        if (NULL != recvr && 0 < opal_list_get_size(&recvr->recvs)) {
-            /* open the channel */
-            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                 "%s pnp:default:check_pending_recvs setup recv for channel %s",
-                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), orcm_pnp_print_channel(recvr->channel)));
-            if (ORTE_SUCCESS != (rc = orte_rmcast.open_channel(recvr->channel, trp->string_id,
-                                                               NULL, -1, NULL, ORTE_RMCAST_RECV))) {
-                ORTE_ERROR_LOG(rc);
-            }
-            /* setup the recv */
-            if (ORTE_SUCCESS != (rc = orte_rmcast.recv_buffer_nb(recvr->channel,
-                                                                 ORTE_RMCAST_TAG_WILDCARD,
-                                                                 ORTE_RMCAST_PERSISTENT,
-                                                                 recv_input_buffers, NULL))) {
-                ORTE_ERROR_LOG(rc);
-            }
-        }
-    }
 
-    /* now check the group_output channel */
-    recvr = NULL;
-    if (ORCM_PNP_INVALID_CHANNEL != trp->output &&
-        NULL != (chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, ORCM_PNP_GROUP_OUTPUT_CHANNEL))) {
-        item = opal_list_get_first(&chan->recvs);
-        while (item != opal_list_get_end(&chan->recvs)) {
-            next = opal_list_get_next(item);
-            req = (orcm_pnp_request_t*)item;
-            if (orcm_triplet_cmp(req->string_id, trp->string_id)) {
-                /* we have a match */
-                OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                     "%s pnp:default:check_pending_recvs output match found",
-                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-                /* if the pending recv involves wildcards, then we have to copy
-                 * it over to the recving triplet as other matches may also
-                 * apply to later triplets
-                 */
-                if (NULL != strchr(req->string_id, '@')) {
-                    /* do a copy */
-                    reqcp = OBJ_NEW(orcm_pnp_request_t);
-                    reqcp->string_id = strdup(req->string_id);
-                    reqcp->tag = req->tag;
-                    reqcp->cbfunc = req->cbfunc;
-                } else {
-                    /* transfer to the trp input channel */
-                    opal_list_remove_item(&chan->recvs, &req->super);
-                    reqcp = req;
+            /* get the associated channel object */
+            if (NULL == recvr) {
+                if (NULL == (recvr = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, channel))) {
+                    recvr = OBJ_NEW(orcm_pnp_channel_obj_t);
+                    recvr->channel = channel;
+                    opal_pointer_array_set_item(&channels, recvr->channel, recvr);
                 }
-                if (NULL == recvr) {
-                    if (NULL == (recvr = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, trp->output))) {
-                        recvr = OBJ_NEW(orcm_pnp_channel_obj_t);
-                        recvr->channel = trp->output;
-                        opal_pointer_array_set_item(&channels, recvr->channel, recvr);
-                    }
-                }
-                opal_list_append(&recvr->recvs, &reqcp->super);
-                OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                     "%s pnp:default:check_pending_recvs moving %s:%s to %s output_recvs",
-                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), req->string_id,
-                                     orcm_pnp_print_tag(req->tag), trp->string_id));
             }
-            item = next;
+            /* see if this recv is already present */
+            if (NULL == (reqcp = find_request(&recvr->recvs, req->string_id, req->tag))) {
+                /* not already present - create it */
+                reqcp = OBJ_NEW(orcm_pnp_request_t);
+                reqcp->string_id = strdup(req->string_id);
+                reqcp->tag = req->tag;
+                opal_list_append(&recvr->recvs, &reqcp->super);
+            }
+            /* SPECIAL CASE: if the string_id matches my own and the
+             * recvr channel matches my input channel, then this recv
+             * is for messages sent to me. Since anyone can do so, set
+             * the string_id in this case to WILDCARD
+             */
+            if (NULL != my_string_id &&
+                recvr == my_input_channel &&
+                0 == strcasecmp(my_string_id, req->string_id)) {
+                free(reqcp->string_id);
+                reqcp->string_id = strdup(ORCM_WILDCARD_STRING_ID);
+            }
+            /* update the cbfunc */
+            reqcp->cbfunc = req->cbfunc;
+            
+            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                                 "%s pnp:default:check_trip_recvs putting recv for %s:%s on channel %s",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), reqcp->string_id,
+                                 orcm_pnp_print_tag(reqcp->tag),
+                                 orcm_pnp_print_channel(recvr->channel)));
         }
+        /* if we have any recvs now, ensure the channel is open */
         if (NULL != recvr && 0 < opal_list_get_size(&recvr->recvs)) {
             /* open the channel */
             OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                                  "%s pnp:default:check_pending_recvs setup recv for channel %s",
                                  ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), orcm_pnp_print_channel(recvr->channel)));
-            if (ORTE_SUCCESS != (rc = orte_rmcast.open_channel(recvr->channel, trp->string_id,
+            if (ORTE_SUCCESS != (rc = orte_rmcast.open_channel(recvr->channel, stringid,
                                                                NULL, -1, NULL, ORTE_RMCAST_RECV))) {
                 ORTE_ERROR_LOG(rc);
             }
@@ -1998,4 +1957,183 @@ static void check_pending_recvs(orcm_triplet_t *trp)
     }
 }
 
+static void check_pending_recvs(orcm_triplet_t *trp,
+                                orcm_triplet_group_t *grp)
+{
+    int i;
+    orcm_triplet_t *triplet;
 
+    /* check the wildcard triplets and see if any match */
+    /* lock the global triplet arrays for our use */
+    OPAL_ACQUIRE_THREAD(&orcm_triplets->lock,
+                        &orcm_triplets->cond,
+                        &orcm_triplets->in_use);
+    for (i=0; i < orcm_triplets->wildcards.size; i++) {
+        if (NULL == (triplet = (orcm_triplet_t*)opal_pointer_array_get_item(&orcm_triplets->wildcards, i))) {
+            continue;
+        }
+        if (orcm_triplet_cmp(trp->string_id, triplet->string_id)) {
+            /* match found - copy the recvs to the appropriate list */
+            if (ORCM_PNP_INVALID_CHANNEL != grp->input) {
+                check_trip_recvs(triplet->string_id, &triplet->input_recvs, grp->input);
+            }
+            if (ORCM_PNP_INVALID_CHANNEL != grp->output) {
+                check_trip_recvs(triplet->string_id, &triplet->output_recvs, grp->output);
+            }
+        }
+    }
+    /* release the global arrays */
+    OPAL_RELEASE_THREAD(&orcm_triplets->lock,
+                        &orcm_triplets->cond,
+                        &orcm_triplets->in_use);
+           
+
+    /* check the triplet input_recv list */
+    if (ORCM_PNP_INVALID_CHANNEL != grp->input) {
+        check_trip_recvs(trp->string_id, &trp->input_recvs, grp->input);
+    }
+
+    /* check the triplet output_recv list */
+    if (ORCM_PNP_INVALID_CHANNEL != grp->output) {
+        check_trip_recvs(trp->string_id, &trp->output_recvs, grp->output);
+    }
+}
+
+/* cycle through all the groups in a triplet and update the channel
+ * array if triplet recvs apply
+ */
+static void update_pending_recvs(orcm_triplet_t *trp)
+{
+    orcm_triplet_group_t *grp;
+    int i;
+
+    for (i=0; i < trp->groups.size; i++) {
+        if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&trp->groups, i))) {
+            continue;
+        }
+        check_trip_recvs(trp->string_id, &trp->input_recvs, grp->input);
+        if (grp->input != grp->output) {
+            check_trip_recvs(trp->string_id, &trp->output_recvs, grp->output);
+        }
+    }
+}
+
+static int record_recv(orcm_triplet_t *triplet,
+                       orcm_pnp_channel_t channel,
+                       orcm_pnp_tag_t tag,
+                       orcm_pnp_callback_fn_t cbfunc)
+{
+    orcm_pnp_request_t *req;
+    orcm_pnp_channel_obj_t *chan;
+    opal_list_item_t *item;
+    int ret = ORCM_SUCCESS;
+
+    if (ORCM_PNP_GROUP_INPUT_CHANNEL == channel) {
+        /* SPECIAL CASE: if this is my triplet, then I am asking for all input
+         * sent to me. Since anyone can send to me, substitute the
+         * wildcard string id
+         */
+        if (triplet == my_triplet) {
+            if (NULL != find_request(&triplet->input_recvs, ORCM_WILDCARD_STRING_ID, tag)) {
+                /* already exists - nothing to do */
+                goto cleanup;
+            }
+            /* create it */
+            req = OBJ_NEW(orcm_pnp_request_t);
+            req->string_id = strdup(ORCM_WILDCARD_STRING_ID);
+            req->tag = tag;
+            req->cbfunc = cbfunc;
+            opal_list_append(&triplet->input_recvs, &req->super);
+        } else {
+            /* want the input from another triplet */
+            if (NULL != find_request(&triplet->input_recvs, triplet->string_id, tag)) {
+                /* already exists - nothing to do */
+                goto cleanup;
+            }
+            /* create it */
+            req = OBJ_NEW(orcm_pnp_request_t);
+            req->string_id = strdup(triplet->string_id);
+            req->tag = tag;
+            req->cbfunc = cbfunc;
+            opal_list_append(&triplet->input_recvs, &req->super);
+        }
+        /* update channel recv info for all triplet-groups already known */
+        update_pending_recvs(triplet);
+        goto cleanup;
+    } else if (ORCM_PNP_GROUP_OUTPUT_CHANNEL == channel) {
+        /* see if the request already exists on the triplet's output queue */
+        if (NULL != find_request(&triplet->output_recvs, triplet->string_id, tag)) {
+            /* already exists - nothing to do */
+            goto cleanup;
+        }
+        /* create it */
+        req = OBJ_NEW(orcm_pnp_request_t);
+        req->string_id = strdup(triplet->string_id);
+        req->tag = tag;
+        req->cbfunc = cbfunc;
+        opal_list_append(&triplet->output_recvs, &req->super);
+        /* update channel recv info for all triplet-groups already known */
+        update_pending_recvs(triplet);
+        goto cleanup;
+    } else {
+        /* get the specified channel */
+        if (NULL == (chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, channel))) {
+            chan = OBJ_NEW(orcm_pnp_channel_obj_t);
+            chan->channel = channel;
+            opal_pointer_array_set_item(&channels, chan->channel, chan);
+        }
+        /* see if this req already exists */
+        for (item = opal_list_get_first(&chan->recvs);
+             item != opal_list_get_end(&chan->recvs);
+             item = opal_list_get_next(item)) {
+            req = (orcm_pnp_request_t*)item;
+
+            /* check the tag first */
+            if (tag != req->tag) {
+                continue;
+            }
+            /* tags match - check the string_id's */
+            if (0 != strcasecmp(triplet->string_id, req->string_id)) {
+                continue;
+            }
+            /* we have an exact match - update the cbfunc */
+            req->cbfunc = cbfunc;
+            goto proceed;
+        }
+        /* if we get here, then no exact match was found, so create a new entry */
+        req = OBJ_NEW(orcm_pnp_request_t);
+        req->string_id = strdup(triplet->string_id);
+        req->tag = tag;
+        req->cbfunc = cbfunc;
+        opal_list_append(&chan->recvs, &req->super);
+    }
+
+ proceed:
+    if (chan->channel < ORCM_PNP_SYS_CHANNEL) {
+        /* can't register rmcast recvs on group_input, group_output, and wildcard channels */
+        goto cleanup;
+    }
+
+    /* open this channel - will just return if already open */
+    if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(chan->channel, triplet->string_id,
+                                                        NULL, -1, NULL,
+                                                        ORTE_RMCAST_RECV))) {
+        if (ORTE_EXISTS != ret) {
+            ORTE_ERROR_LOG(ret);
+            goto cleanup;
+        }
+    }
+    /* setup to listen to it - will just return if we already are */
+    if (ORTE_SUCCESS != (ret = orte_rmcast.recv_buffer_nb(chan->channel, ORTE_RMCAST_TAG_WILDCARD,
+                                                          ORTE_RMCAST_PERSISTENT,
+                                                          recv_input_buffers, NULL))) {
+        if (ORTE_EXISTS == ret) {
+            ret = ORTE_SUCCESS;
+            goto cleanup;
+        }
+        ORTE_ERROR_LOG(ret);
+    }
+
+ cleanup:
+    return ret;
+}

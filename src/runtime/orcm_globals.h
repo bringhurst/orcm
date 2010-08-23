@@ -58,6 +58,13 @@ typedef uint8_t orcm_tool_cmd_t;
 #define ORCM_TOOL_START_CMD          1
 #define ORCM_TOOL_STOP_CMD           2
 
+/* define some notify flags */
+typedef uint8_t orcm_notify_t;
+#define ORCM_NOTIFY_NONE    0x00
+#define ORCM_NOTIFY_LDR     0x01
+#define ORCM_NOTIFY_GRP     0x02
+#define ORCM_NOTIFY_ANY     0x04
+
 /* pnp type required in global object - see pnp_types.h for value defines */
 typedef uint32_t orcm_pnp_channel_t;
 #define ORCM_PNP_CHANNEL_T  OPAL_UINT32
@@ -66,10 +73,12 @@ typedef uint32_t orcm_pnp_channel_t;
  * are named according to the framework they are associated with
  */
 typedef void (*orcm_leader_cbfunc_t)(const char *stringid,
-                                     orte_process_name_t failed,
-                                     orte_process_name_t leader);
+                                     const orte_process_name_t *failed,
+                                     const orte_process_name_t *leader);
 
-typedef void (*orcm_pnp_open_channel_cbfunc_t)(char *app, char *version, char *release,
+typedef void (*orcm_pnp_open_channel_cbfunc_t)(const char *app,
+                                               const char *version,
+                                               const char *release,
                                                orcm_pnp_channel_t channel);
 
 /* global objects - need to be accessed from multiple frameworks */
@@ -79,6 +88,11 @@ typedef struct {
     opal_mutex_t lock;
     opal_condition_t cond;
     bool in_use;
+    /* storage for wildcard triplets - this is where
+     * we "hold" recvs registered against triplets
+     * containing one or more wildcard fields
+     */
+    opal_pointer_array_t wildcards;
     /* storage for triplets */
     opal_pointer_array_t array;
 } orcm_triplets_array_t;
@@ -90,19 +104,39 @@ typedef struct {
     opal_mutex_t lock;
     opal_condition_t cond;
     bool in_use;
-    /* id and members */
+    /* id and groups */
     char *string_id;
     orte_vpid_t num_procs;
-    opal_pointer_array_t members;
+    opal_pointer_array_t groups;
+    /* pnp support */
+    opal_list_t input_recvs;
+    opal_list_t output_recvs;
+    orcm_notify_t pnp_cb_policy;
+    /* leader support */
+    orte_process_name_t leader_policy;
+    orte_process_name_t leader;
+    orcm_notify_t notify;
+    orcm_leader_cbfunc_t leader_cbfunc;
+} orcm_triplet_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_triplet_t);
+
+typedef struct {
+    opal_object_t super;
+    /* identification */
+    orcm_triplet_t *triplet;
+    uint32_t uid;
+    orte_jobid_t jobid;
+    orte_vpid_t num_procs;
     /* pnp support */
     orcm_pnp_channel_t input;
     orcm_pnp_channel_t output;
     orcm_pnp_open_channel_cbfunc_t pnp_cbfunc;
     /* leader support */
-    orte_process_name_t leader;
-    orcm_leader_cbfunc_t leader_cbfunc;
-} orcm_triplet_t;
-ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_triplet_t);
+    orte_vpid_t leader;
+    /* members */
+    opal_pointer_array_t members;
+} orcm_triplet_group_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_triplet_group_t);
 
 typedef struct {
     opal_object_t super;

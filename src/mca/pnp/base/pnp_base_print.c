@@ -169,6 +169,9 @@ char *orcm_pnp_print_channel(orcm_pnp_channel_t chan)
     case ORCM_PNP_DATA_SERVER_CHANNEL:
         ret = "DATA";
         break;
+    case ORCM_PNP_ERROR_CHANNEL:
+        ret = "ERROR";
+        break;
     default:
         /* not a system-defined channel - so print the value out */
         ptr = get_print_buffer();

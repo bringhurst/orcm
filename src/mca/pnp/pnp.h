@@ -33,7 +33,9 @@ typedef int (*orcm_pnp_module_finalize_fn_t)(void);
  * app/version/release triplet of the new group, along with its
  * GROUP_OUTPUT channel id.
  */
-typedef int (*orcm_pnp_module_announce_fn_t)(char *app, char *version, char *release,
+typedef int (*orcm_pnp_module_announce_fn_t)(const char *app,
+                                             const char *version,
+                                             const char *release,
                                              orcm_pnp_announce_fn_t cbfunc);
 
 /*
@@ -42,8 +44,21 @@ typedef int (*orcm_pnp_module_announce_fn_t)(char *app, char *version, char *rel
  * triplet (NULL => WILDCARD for that field, will recv callback for each unique
  * triplet that fits), with the GROUP_INPUT channel for that triplet provided
  * in the call to the cbfunc
+ *
+ * Because triplets can occur multiple times in a system, we need to distinguish
+ * which instance of a triplet the caller wants a channel for:
+ *
+ * (a) ORTE_JOBID_WILDCARD => whenever the first process from every jobid
+ *     instance of the triplet is detected.
+ * (b) ORTE_JOBID_INVALID => whenever the first process of the triplet
+ *     is detected, regardless of jobid
+ * (c) specific jobid => first process of the triplet from the specified jobid
+ *     is detected
  */
-typedef int (*orcm_pnp_module_open_channel_fn_t)(char *app, char *version, char *release,
+typedef int (*orcm_pnp_module_open_channel_fn_t)(const char *app,
+                                                 const char *version,
+                                                 const char *release,
+                                                 const orte_jobid_t jobid,
                                                  orcm_pnp_open_channel_cbfunc_t cbfunc);
 
 /*
@@ -58,9 +73,9 @@ typedef int (*orcm_pnp_module_open_channel_fn_t)(char *app, char *version, char 
  * result in the caller receiving messages sent by the specified triplet on
  * that channel.
  */
-typedef int (*orcm_pnp_module_register_receive_fn_t)(char *app,
-                                                     char *version,
-                                                     char *release,
+typedef int (*orcm_pnp_module_register_receive_fn_t)(const char *app,
+                                                     const char *version,
+                                                     const char *release,
                                                      orcm_pnp_channel_t channel,
                                                      orcm_pnp_tag_t tag,
                                                      orcm_pnp_callback_fn_t cbfunc);
@@ -70,9 +85,9 @@ typedef int (*orcm_pnp_module_register_receive_fn_t)(char *app,
  * given channel. Likewise, a wildcard value for channel will cancel both output and
  * input receives
  */
-typedef int (*orcm_pnp_module_cancel_recv_fn_t)(char *app,
-                                                char *version,
-                                                char *release,
+typedef int (*orcm_pnp_module_cancel_recv_fn_t)(const char *app,
+                                                const char *version,
+                                                const char *release,
                                                 orcm_pnp_channel_t channel,
                                                 orcm_pnp_tag_t tag);
 

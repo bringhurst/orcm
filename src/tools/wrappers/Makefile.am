@@ -35,6 +35,8 @@ install-exec-hook:
 	test -z "$(bindir)" || $(mkdir_p) "$(DESTDIR)$(bindir)"
 	(cd $(DESTDIR)$(bindir); rm -f orcmcc$(EXEEXT); cp -f @ORTE_INSTALL_PREFIX@/bin/opal_wrapper orcmcc)
 	(cd $(DESTDIR)$(bindir); rm -f orcmcc++$(EXEEXT); cp -f @ORTE_INSTALL_PREFIX@/bin/opal_wrapper orcmcc++)
+
+install-data-hook:
 	(rm -f @ORTE_WRAPPER_DATA_DIR@/orcmcc-wrapper-data.txt; \
 	    cp -f $(DESTDIR)@OPENRCM_DATADIR@/openrcm/orcmcc-wrapper-data.txt @ORTE_WRAPPER_DATA_DIR@/orcmcc-wrapper-data.txt)
 

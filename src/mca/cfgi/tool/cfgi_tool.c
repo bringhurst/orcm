@@ -146,7 +146,8 @@ static void tool_messages(int status,
     char *cmd;
     opal_pointer_array_t killapps;
     orte_proc_t *proctmp;
-    orte_daemon_cmd_flag_t command=ORTE_DAEMON_KILL_LOCAL_PROCS;
+    orte_daemon_cmd_flag_t command;
+    orte_rml_tag_t rmltag=ORTE_RML_TAG_INVALID;
 
     /* wait for any existing action to complete */
     OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
@@ -269,6 +270,32 @@ static void tool_messages(int status,
          * if any
          */
         OBJ_CONSTRUCT(&bfr, opal_buffer_t);
+        /* insert the process cmd */
+        command = ORTE_DAEMON_PROCESS_CMD;
+        if (ORTE_SUCCESS != (rc = opal_dss.pack(&bfr, &command, 1, ORTE_DAEMON_CMD))) {
+            ORTE_ERROR_LOG(rc);
+            OBJ_DESTRUCT(&bfr);
+            goto cleanup;
+        }
+        /* add the jobid and an arbitrary tag to maintain ordering */
+        if (ORTE_SUCCESS != (rc = opal_dss.pack(&bfr, &jlaunch->jobid, 1, ORTE_JOBID))) {
+            ORTE_ERROR_LOG(rc);
+            OBJ_DESTRUCT(&bfr);
+            goto cleanup;
+        }
+        if (ORTE_SUCCESS != (rc = opal_dss.pack(&bfr, &rmltag, 1, ORTE_RML_TAG))) {
+            ORTE_ERROR_LOG(rc);
+            OBJ_DESTRUCT(&bfr);
+            goto cleanup;
+        }
+        /* insert the add_procs cmd */
+        command = ORTE_DAEMON_ADD_LOCAL_PROCS;
+        if (ORTE_SUCCESS != (rc = opal_dss.pack(&bfr, &command, 1, ORTE_DAEMON_CMD))) {
+            ORTE_ERROR_LOG(rc);
+            OBJ_DESTRUCT(&bfr);
+            goto cleanup;
+        }
+        /* get the launch data */
         if (ORTE_SUCCESS != (rc = orte_odls.get_add_procs_data(&bfr, jlaunch->jobid))) {
             ORTE_ERROR_LOG(rc);
             OBJ_DESTRUCT(&bfr);
@@ -287,6 +314,7 @@ static void tool_messages(int status,
     } else if (ORCM_TOOL_STOP_CMD == flag) {
         /* construct the cmd buffer */
         OBJ_CONSTRUCT(&bfr, opal_buffer_t);
+        command = ORTE_DAEMON_KILL_LOCAL_PROCS;
         opal_dss.pack(&bfr, &command, 1, ORTE_DAEMON_CMD);
         /* construct the array of apps to kill */
         OBJ_CONSTRUCT(&killapps, opal_pointer_array_t);

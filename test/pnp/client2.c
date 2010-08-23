@@ -38,7 +38,7 @@ static void recv_input(int status,
                        struct iovec *msg, int count,
                        opal_buffer_t *buffer,
                        void *cbdata);
-static void found_channel(char *app, char *version, char *release,
+static void found_channel(const char *app, const char *version, const char *release,
                           orcm_pnp_channel_t channel);
 
 static int32_t flag=0;
@@ -68,7 +68,7 @@ int main(int argc, char* argv[])
     }
     
     /* open a channel to any client 1.0 peers */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.open_channel("client", "1.0", NULL, found_channel))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.open_channel("client", "1.0", NULL, ORTE_JOBID_WILDCARD, found_channel))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -166,7 +166,7 @@ static void recv_input(int status,
                 ORTE_NAME_PRINT(sender), (int)tag);
 }
 
-static void found_channel(char *app, char *version, char *release,
+static void found_channel(const char *app, const char *version, const char *release,
                           orcm_pnp_channel_t channel)
 {
     opal_output(0, "%s recvd channel %d for triplet %s:%s:%s",

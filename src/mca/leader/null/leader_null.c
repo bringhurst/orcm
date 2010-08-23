@@ -30,12 +30,15 @@
 static int null_init(void);
 static void null_finalize(void);
 static bool deliver_msg(const char *stringid, const orte_process_name_t *src);
-static int set_leader(const char *app, const char *version,
-                      const char *release, const orte_vpid_t sibling,
+static int set_leader(const char *app,
+                      const char *version,
+                      const char *release,
+                      const orte_process_name_t *leader,
+                      orcm_notify_t notify,
                       orcm_leader_cbfunc_t cbfunc);
 static int get_leader(const char *app, const char *version,
                       const char *release, orte_process_name_t *leader);
-static void proc_failed(const char *stringid, const orte_process_name_t failed);
+static void proc_failed(const char *stringid, const orte_process_name_t *failed);
 
 /* The module struct */
 
@@ -75,10 +78,13 @@ static void null_finalize(void)
 }
 
 static int set_leader(const char *app, const char *version,
-                      const char *release, const orte_vpid_t sibling,
+                      const char *release,
+                      const orte_process_name_t *leader,
+                      orcm_notify_t notify,
                       orcm_leader_cbfunc_t cbfunc)
 {
     orcm_triplet_t *trp;
+    orcm_triplet_group_t *grp;
     orcm_source_t *src;
 
     OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
@@ -89,37 +95,58 @@ static int set_leader(const char *app, const char *version,
                          (NULL == app) ? "NULL" : app,
                          (NULL == version) ? "NULL" : version,
                          (NULL == release) ? "NULL" : release,
-                         ORTE_VPID_PRINT(sibling)));
+                         ORTE_NAME_PRINT(leader)));
 
-     /* find this triplet - create it if not found */
+    /* find this triplet - create it if not found */
     trp = orcm_get_triplet(app, version, release, true);
 
-    /* if the sibling specified here is INVALID, then we 
-     * are being asked to set the leader using our algo. In
-     * our case, this means just leave it alone - if it
-     * was specified before, we don't want to override it
+    /* if the leader is NULL, then this is being called for the purpose
+     * of defining callback policy => cbfunc must be provided
      */
-    if (ORCM_LEADER_INVALID == sibling) {
-        goto release;
+    if (NULL == leader) {
+        if (NULL == cbfunc) {
+            opal_output(0, "%s SET LEADER CALLED WITHOUT CBFUNC",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            return ORTE_ERR_BAD_PARAM;
+        }
+        /* set the cbfunc and policy */
+        trp->notify = notify;
+        trp->leader_cbfunc = cbfunc;
+        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        return ORCM_SUCCESS;
     }
-            
-    /* do we know this source */
-    if (NULL == (src = orcm_get_source(trp, sibling))) {
-        /* nope - add it */
-        src = OBJ_NEW(orcm_source_t);
-        /* we don't know the jobid until they announce */
-        src->name.vpid = sibling;
-        src->alive = false;
-        opal_pointer_array_set_item(&trp->members, sibling, src);
+
+    /* record the leadership policy */
+    trp->leader_policy.jobid = leader->jobid;
+    trp->leader_policy.vpid = leader->vpid;
+
+    /* if the jobid is wildcard, then we allow messages
+     * from any group to pass thru
+     */
+    if (ORTE_JOBID_WILDCARD == leader->jobid) {
+        trp->leader.jobid = ORTE_JOBID_WILDCARD;
+    } else if (ORTE_JOBID_INVALID == leader->jobid) {
+        /* if invalid, then we only let messages from our
+         * own group pass thru
+         */
+        trp->leader.jobid = ORTE_PROC_MY_NAME->jobid;
+    } else {
+        /* if the jobid is a specific value, then we only pass thru
+         * messages from that group
+         */
+        trp->leader.jobid = leader->jobid;
     }
-    trp->leader.jobid = src->name.jobid;
-    trp->leader.vpid = src->name.vpid;
-    trp->leader_cbfunc = cbfunc;
 
-    /* release the source */
-    OPAL_RELEASE_THREAD(&src->lock, &src->cond, &src->in_use);
+    /* if a specific vpid was given, then we use it - otherwise,
+     * we let all vpids pass thru
+     */
+    if (ORTE_VPID_WILDCARD == leader->vpid ||
+        ORTE_VPID_INVALID == leader->vpid) {
+        trp->leader.vpid = ORTE_VPID_WILDCARD;
+    } else {
+        trp->leader.vpid = leader->vpid;
+    }
 
- release:
     /* release the triplet */
     OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
 
@@ -188,7 +215,7 @@ static int get_leader(const char *app, const char *version,
     return ORCM_SUCCESS;
 }
 
-static void proc_failed(const char *stringid, const orte_process_name_t failed)
+static void proc_failed(const char *stringid, const orte_process_name_t *failed)
 {
     orcm_triplet_t *trp;
     int i;
@@ -204,10 +231,10 @@ static void proc_failed(const char *stringid, const orte_process_name_t failed)
     OPAL_OUTPUT_VERBOSE((2, orcm_leader_base.output,
                          "%s PROC %s OF TRIPLET %s HAS FAILED",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         ORTE_NAME_PRINT(&failed), stringid));
+                         ORTE_NAME_PRINT(failed), stringid));
 
     if (ORTE_VPID_WILDCARD != trp->leader.vpid &&
-        failed.vpid == trp->leader.vpid) {
+        failed->vpid == trp->leader.vpid) {
         /* there was a specific leader, and this was it - 
          * switch to default behavior
          */
@@ -218,7 +245,7 @@ static void proc_failed(const char *stringid, const orte_process_name_t failed)
         OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
         OPAL_RELEASE_THREAD(&lock, &cond, &active);
         /* pass back the old and new info */
-        trp->leader_cbfunc(stringid, failed, trp->leader);
+        trp->leader_cbfunc(stringid, failed, &trp->leader);
         return;
     }
 

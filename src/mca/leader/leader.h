@@ -13,13 +13,11 @@
 #include "openrcm.h"
 
 #include "opal/mca/mca.h"
-#include "opal/class/opal_list.h"
 #include "opal/dss/dss_types.h"
 
 #include "orte/types.h"
 
-#include "mca/pnp/pnp_types.h"
-#include "mca/leader/leader_types.h"
+#include "runtime/orcm_globals.h"
 
 /* module functions */
 
@@ -42,35 +40,97 @@ typedef void (*orcm_leader_module_finalize_fn_t)(void);
 typedef bool (*orcm_leader_module_deliver_msg_fn_t)(const char *stringid,
                                                     const orte_process_name_t *src);
 
-/* Manually set the leader for a given application triplet. A value
- * of ORCM_LEADER_WILDCARD will cause data from all siblings to be
- * passed through as if they all are leaders. A value of ORCM_LEADER_INVALID
- * will cause the function to automatically select a "leader" based
- * on its own internal algorithm
+/* Manually set the leader for a given application triplet. Understanding
+ * how this API works requires a brief review of how applications can be
+ * started. There are two ways:
+ *
+ * (a) individual apps can be started with separate launch commands. This
+ *     results in each app having its own orte_jobid, and no defined logical
+ *     connection between apps exists.
+ *
+ * (b) groups of apps can be started with a single launch command. For example,
+ *     a user may choose to launch a standard configuration of a group "foo"
+ *     consisting of n copies of app1, m copies of app2, etc. In this case,
+ *     the app group is given a single common orte_jobid so it can be
+ *     treated collectively. This allows, for example, a system admin to define
+ *     a typical app group for a given functionality, relieving users from
+ *     having to define it themselves every time they want to run it.
+ *
+ * It also must be noted that any number of app groups can contain an executable
+ * that declares itself with the same triplet. Defining a "leader" for an app
+ * therefore requires that we distinguish between the two cases above - we need
+ * to support cross-jobid leaders for case (a), but also allow an app to indicate
+ * that it only wants leaders selected from within its own app group.
+ *
+ * Accordingly, the API works by:
+ *
+ * (a) if the jobid in the specified leader is ORTE_JOBID_WILDCARD, then
+ *     the module will consider sources from ALL announced triplets as
+ *     potential leaders [DEFAULT]
+ * (b) if the jobid in the specified leader is ORTE_JOBID_INVALID, then
+ *     the module will apply its internal algorithms but ONLY consider
+ *     sources from the caller's SAME jobid as potential leaders. This
+ *     allows you to specify that you want a leader selected from within
+ *     your own app group
+ * (c) if the jobid in the specified leader is neither of the above values,
+ *     then the module will apply its internal algorithms but consider only
+ *     sources from that jobid.
+ *
+ * (d) if the vpid in the specified leader is ORTE_VPID_WILDCARD, then the
+ *     module will pass thru messages from ALL sources from within the above
+ *     jobid restriction [DEFAULT]
+ * (e) if the vpid in the specified leader is ORTE_VPID_INVALID, then the module
+ *     will use its internal algorithms to select a leader from within the above
+ *     jobid restriction.
+ * (f) if the vpid in the specified leader is neither of the above values, then
+ *     the module will only pass thru messages from that specific process.
+ *
+ * A few examples may help illustrate this API:
+ *
+ * (a) providing ORTE_NAME_WILDCARD as the leader. In this case, both the
+ *     jobid and vpid are WILDCARD. Thus, messages from ALL sources will
+ *     pass thru.
+ *
+ * NOTE: as this is the default condition, never calling set_leader will
+ * result in messages from ALL sources being passed thru.
+ *
+ * (b) providing a name where the jobid is ORTE_JOBID_WILDCARD, but the vpid
+ *     is ORTE_VPID_INVALID. Consider ALL members of this triplet, regardless
+ *     of how they were launched, and use your internal algo to select one to
+ *     pass thru.
+ * (c) providing ORTE_NAME_INVALID as the leader. Since both jobid and vpid
+ *     are INVALID, the module will use its internal algo to select a single
+ *     sibling in the triplet from within the current jobid to pass thru. This
+ *     allows you to request that a leader be internally selected, but restrict
+ *     candidates to siblings of this triplet that were co-launched with you.
+ *
+ * NOTE: passing NULL for the leader indicates that this call is only for the
+ * purpose of setting callback directives - i.e., no leadership info is being
+ * passed, nor should the module make any changes to its current leadership policy.
  *
  * NOTE: A value beyond the range of available siblings will result
  * in no data being passed through at all!
  *
- * NOTE: If provided, the cbfunc will be called when the
- * selected leader is determined to have failed.
+ * If a cbfunc is provided, then the cbfunc will be called whenever the
+ * notify flag condition is met. Thus:
  *
- * If ORCM_LEADER_WILDCARD and a cbfunc are provided, then the
- * cbfunc will be called whenever any member of the specified triplet fails.
- * Providing NULL for all triplet fields will result in all messages from
- * all triplets to be passed thru (except where specified by other set_leader
- * calls) and callbacks whenever ANY process fails.
- *
- * If the caller wants to be notified whenever ANY process fails while
- * allowing the module to automatically select leaders (except where
- * specified by other set_leader calls), then specify NULL for each triplet
- * field and ORCM_LEADER_INVALID for the sibling.
+ * (a) ORCM_NOTIFY_NONE => don't notify on any failures. This is
+ *     the equivalent of providing NULL for the cbfunc.
+ * (b) ORCM_NOTIFY_LDR => execute the cbfunc whenever the current
+ *     leader fails
+ * (c) ORCM_NOTIFY_GRP => execute the cbfunc whenever any member
+ *     within the group of sources eligible to become leader fails
+ * (d) ORCM_NOTIFY_ANY => execute the cbfunc whenever any member of
+ *     the specified triplet fails, regardless of whether or not that
+ *     process was eligible for leadership
  */
 typedef int (*orcm_leader_module_set_leader_fn_t)(const char *app,
                                                   const char *version,
                                                   const char *release,
-                                                  const orte_vpid_t sibling,
+                                                  const orte_process_name_t *leader,
+                                                  orcm_notify_t notify,
                                                   orcm_leader_cbfunc_t cbfunc);
-/* Get the current leader of a group */
+/* Get the current leader of a triplet */
 typedef int (*orcm_leader_module_get_leader_fn_t)(const char *app,
                                                   const char *version,
                                                   const char *release,
@@ -78,7 +138,7 @@ typedef int (*orcm_leader_module_get_leader_fn_t)(const char *app,
 
 /* Notify the leader module of a process failure */
 typedef void (*orcm_leader_module_proc_failed_fn_t)(const char *stringid,
-                                                    const orte_process_name_t failed);
+                                                    const orte_process_name_t *failed);
 
 /* component struct */
 typedef struct {

@@ -23,6 +23,7 @@
 #include "orte/mca/grpcomm/grpcomm.h"
 #include "orte/runtime/orte_locks.h"
 
+#include "runtime/orcm_globals.h"
 #include "runtime/runtime.h"
 
 const char openrcm_version_string[] = "OPENRCM 0.1";
@@ -283,6 +284,9 @@ static void triplets_array_constructor(orcm_triplets_array_t *ptr)
     OBJ_CONSTRUCT(&ptr->cond, opal_condition_t);
     ptr->in_use = false;
 
+    OBJ_CONSTRUCT(&ptr->wildcards, opal_pointer_array_t);
+    opal_pointer_array_init(&ptr->wildcards, 8, INT_MAX, 8);
+
     OBJ_CONSTRUCT(&ptr->array, opal_pointer_array_t);
     opal_pointer_array_init(&ptr->array, 8, INT_MAX, 8);
 }
@@ -345,21 +349,25 @@ static void triplet_constructor(orcm_triplet_t *ptr)
 
     ptr->string_id = NULL;
     ptr->num_procs = 0;
-    OBJ_CONSTRUCT(&ptr->members, opal_pointer_array_t);
-    opal_pointer_array_init(&ptr->members, 8, INT_MAX, 8);
+    OBJ_CONSTRUCT(&ptr->groups, opal_pointer_array_t);
+    opal_pointer_array_init(&ptr->groups, 1, INT_MAX, 8);
 
-    ptr->output = ORTE_RMCAST_INVALID_CHANNEL;
-    ptr->input = ORTE_RMCAST_INVALID_CHANNEL;
-    ptr->pnp_cbfunc = NULL;
+    OBJ_CONSTRUCT(&ptr->input_recvs, opal_list_t);
+    OBJ_CONSTRUCT(&ptr->output_recvs, opal_list_t);
+    ptr->pnp_cb_policy = ORCM_NOTIFY_NONE;
 
+    ptr->leader_policy.jobid = ORTE_JOBID_WILDCARD;
+    ptr->leader_policy.vpid = ORTE_VPID_WILDCARD;
     ptr->leader.jobid = ORTE_JOBID_WILDCARD;
     ptr->leader.vpid = ORTE_VPID_WILDCARD;
+    ptr->notify = ORCM_NOTIFY_NONE;
     ptr->leader_cbfunc = NULL;
 }
 static void triplet_destructor(orcm_triplet_t *ptr)
 {
     int i;
-    orcm_source_t *src;
+    orcm_triplet_group_t *grp;
+    opal_list_item_t *item;
 
     OBJ_DESTRUCT(&ptr->lock);
     OBJ_DESTRUCT(&ptr->cond);
@@ -367,6 +375,46 @@ static void triplet_destructor(orcm_triplet_t *ptr)
     if (NULL != ptr->string_id) {
         free(ptr->string_id);
     }
+    for (i=0; i < ptr->groups.size; i++) {
+        if (NULL != (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&ptr->groups, i))) {
+            OBJ_RELEASE(grp);
+        }
+    }
+    OBJ_DESTRUCT(&ptr->groups);
+
+    while (NULL != (item = opal_list_remove_first(&ptr->input_recvs))) {
+        OBJ_RELEASE(item);
+    }
+    OBJ_DESTRUCT(&ptr->input_recvs);
+
+    while (NULL != (item = opal_list_remove_first(&ptr->output_recvs))) {
+        OBJ_RELEASE(item);
+    }
+    OBJ_DESTRUCT(&ptr->output_recvs);
+}
+OBJ_CLASS_INSTANCE(orcm_triplet_t,
+                   opal_object_t,
+                   triplet_constructor,
+                   triplet_destructor);
+
+static void group_constructor(orcm_triplet_group_t *ptr)
+{
+    ptr->triplet = NULL;
+    ptr->uid = 0;
+    ptr->jobid = ORTE_JOBID_INVALID;
+    ptr->num_procs = 0;
+    ptr->output = ORTE_RMCAST_INVALID_CHANNEL;
+    ptr->input = ORTE_RMCAST_INVALID_CHANNEL;
+    ptr->pnp_cbfunc = NULL;
+    OBJ_CONSTRUCT(&ptr->members, opal_pointer_array_t);
+    opal_pointer_array_init(&ptr->members, 8, INT_MAX, 8);
+}
+
+static void group_destructor(orcm_triplet_group_t *ptr)
+{
+    int i;
+    orcm_source_t *src;
+
     for (i=0; i < ptr->members.size; i++) {
         if (NULL != (src = (orcm_source_t*)opal_pointer_array_get_item(&ptr->members, i))) {
             OBJ_RELEASE(src);
@@ -374,8 +422,7 @@ static void triplet_destructor(orcm_triplet_t *ptr)
     }
     OBJ_DESTRUCT(&ptr->members);
 }
-OBJ_CLASS_INSTANCE(orcm_triplet_t,
+OBJ_CLASS_INSTANCE(orcm_triplet_group_t,
                    opal_object_t,
-                   triplet_constructor,
-                   triplet_destructor);
-
+                   group_constructor,
+                   group_destructor);

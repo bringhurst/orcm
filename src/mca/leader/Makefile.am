@@ -10,7 +10,7 @@
 
 # Main library
 noinst_LTLIBRARIES = libmca_leader.la
-headers = leader.h leader_types.h
+headers = leader.h
 sources =
 
 include base/Makefile.include

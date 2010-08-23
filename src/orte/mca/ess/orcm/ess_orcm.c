@@ -602,18 +602,6 @@ static int local_setup(char **hosts)
     /* set the communication function */
     orte_comm = orte_global_comm;
     
-    /* open/select the errmgr */
-    if (ORTE_SUCCESS != (ret = orte_errmgr_base_open())) {
-        ORTE_ERROR_LOG(ret);
-        error = "orte_errmgr_base_open";
-        goto error;
-    }
-    if (ORTE_SUCCESS != (ret = orte_errmgr_base_select())) {
-        ORTE_ERROR_LOG(ret);
-        error = "orte_errmgr_base_select";
-        goto error;
-    }
-
     /* Setup the remaining resource management frameworks */
     if (ORTE_SUCCESS != (ret = orte_ras_base_open())) {
         ORTE_ERROR_LOG(ret);
@@ -804,6 +792,21 @@ static int local_setup(char **hosts)
     daemons->num_procs = 1;
     daemons->state = ORTE_JOB_STATE_RUNNING;
     
+    /* open/select the errmgr - do this after the daemon job
+     * has been defined so that the errmgr can get that
+     * job object
+     */
+    if (ORTE_SUCCESS != (ret = orte_errmgr_base_open())) {
+        ORTE_ERROR_LOG(ret);
+        error = "orte_errmgr_base_open";
+        goto error;
+    }
+    if (ORTE_SUCCESS != (ret = orte_errmgr_base_select())) {
+        ORTE_ERROR_LOG(ret);
+        error = "orte_errmgr_base_select";
+        goto error;
+    }
+
     /* We actually do *not* want an orcm to voluntarily yield() the
        processor more than necessary. orcm already blocks when
        it is doing nothing, so it doesn't use any more CPU cycles than

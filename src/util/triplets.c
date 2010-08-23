@@ -18,10 +18,11 @@
 #include "runtime/orcm_globals.h"
 #include "util/triplets.h"
 
-orcm_triplet_t* orcm_get_triplet_stringid(const char *stringid)
+orcm_triplet_t* orcm_get_triplet_jobid(const orte_jobid_t jobid)
 {
-    int i;
+    int i, j;
     orcm_triplet_t *triplet;
+    orcm_triplet_group_t *grp;
 
     /* lock the global array for our use */
     OPAL_ACQUIRE_THREAD(&orcm_triplets->lock,
@@ -32,6 +33,60 @@ orcm_triplet_t* orcm_get_triplet_stringid(const char *stringid)
         if (NULL == (triplet = (orcm_triplet_t*)opal_pointer_array_get_item(&orcm_triplets->array, i))) {
             continue;
         }
+        for (j=0; j < triplet->groups.size; j++) {
+            if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&triplet->groups, j))) {
+                continue;
+            }
+            if (grp->jobid == jobid) {
+                OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
+                                     "%s pnp:default:get_triplet_jobid match found",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+                /* lock the triplet for use - the caller is responsible for
+                 * unlocking it!
+                 */
+                OPAL_ACQUIRE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+ 
+                /* release the global array */
+                OPAL_RELEASE_THREAD(&orcm_triplets->lock,
+                                    &orcm_triplets->cond,
+                                    &orcm_triplets->in_use);
+                return triplet;
+            }
+        }
+    }
+
+    /* release the global array */
+    OPAL_RELEASE_THREAD(&orcm_triplets->lock,
+                        &orcm_triplets->cond,
+                        &orcm_triplets->in_use);
+    return NULL;
+}
+
+orcm_triplet_t* orcm_get_triplet_stringid(const char *stringid)
+{
+    int i;
+    orcm_triplet_t *triplet;
+    opal_pointer_array_t *array;
+
+    /* lock the global array for our use */
+    OPAL_ACQUIRE_THREAD(&orcm_triplets->lock,
+                        &orcm_triplets->cond,
+                        &orcm_triplets->in_use);
+
+    /* if the string_id contains a wildcard, then we have to look
+     * in the wildcard array
+     */
+    if (NULL != strchr(stringid, '@')) {
+        array = &orcm_triplets->wildcards;
+    } else {
+        array = &orcm_triplets->array;
+    }
+
+    for (i=0; i < array->size; i++) {
+        if (NULL == (triplet = (orcm_triplet_t*)opal_pointer_array_get_item(array, i))) {
+            continue;
+        }
+        /* require an exact match */
         if (0 == strcasecmp(stringid, triplet->string_id)) {
             /* we have a match */
             OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
@@ -65,7 +120,8 @@ orcm_triplet_t* orcm_get_triplet(const char *app,
     int i;
     orcm_triplet_t *triplet;
     char *string_id;
-    
+    opal_pointer_array_t *array;
+
     OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
                          "%s pnp:default:get_triplet app %s version %s release %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
@@ -80,10 +136,20 @@ orcm_triplet_t* orcm_get_triplet(const char *app,
                         &orcm_triplets->cond,
                         &orcm_triplets->in_use);
 
-    for (i=0; i < orcm_triplets->array.size; i++) {
-        if (NULL == (triplet = (orcm_triplet_t*)opal_pointer_array_get_item(&orcm_triplets->array, i))) {
+    /* if the string_id contains a wildcard, then we have to look
+     * in the wildcard array
+     */
+    if (NULL != strchr(string_id, '@')) {
+        array = &orcm_triplets->wildcards;
+    } else {
+        array = &orcm_triplets->array;
+    }
+
+    for (i=0; i < array->size; i++) {
+        if (NULL == (triplet = (orcm_triplet_t*)opal_pointer_array_get_item(array, i))) {
             continue;
         }
+        /* require an exact match */
         if (0 == strcasecmp(string_id, triplet->string_id)) {
             /* we have a match */
             OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
@@ -97,8 +163,8 @@ orcm_triplet_t* orcm_get_triplet(const char *app,
     if (create) {
         triplet = OBJ_NEW(orcm_triplet_t);
         triplet->string_id = strdup(string_id);
-        /* add it to the array */
-        opal_pointer_array_add(&orcm_triplets->array, triplet);
+        /* add it to the appropriate array */
+        opal_pointer_array_add(array, triplet);
     }
     
  process:
@@ -124,21 +190,69 @@ orcm_triplet_t* orcm_get_triplet(const char *app,
     return triplet;
 }
 
-orcm_source_t* orcm_get_source(orcm_triplet_t *triplet, orte_vpid_t vpid)
+orcm_triplet_group_t* orcm_get_triplet_group(orcm_triplet_t *trp,
+                                             orte_jobid_t jobid,
+                                             bool create)
 {
-    orcm_source_t *src;
+    int j;
+    orcm_triplet_group_t *grp;
 
     /* we assume that the triplet is already locked */
 
-    /* if this vpid > num_procs, then reset num_procs as there must be
-     * at least that many procs in the triplet job
-     */
-    if (triplet->num_procs < vpid+1) {
-        triplet->num_procs = vpid + 1;
+    /* find the group */
+    for (j=0; j < trp->groups.size; j++) {
+        if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&trp->groups, j))) {
+            continue;
+        }
+        if (grp->jobid != jobid) {
+            continue;
+        }
+        /* found it - just return */
+        return grp;
     }
 
-    if (NULL == (src = (orcm_source_t*)opal_pointer_array_get_item(&triplet->members, vpid))) {
+    /* if we didn't find it, do we want it created? */
+    if (!create) {
+        /* nope */
         return NULL;
+    }
+
+    /* create the group */
+    grp = OBJ_NEW(orcm_triplet_group_t);
+    grp->triplet = trp;
+    grp->jobid = jobid;
+    opal_pointer_array_add(&trp->groups, grp);
+
+    /* the group is locked as part of the triplet */
+    return grp;
+}
+
+orcm_source_t* orcm_get_source_in_group(orcm_triplet_group_t *grp,
+                                        const orte_vpid_t vpid,
+                                        bool create)
+{
+    orcm_source_t *src;
+
+    if (NULL == (src = (orcm_source_t*)opal_pointer_array_get_item(&grp->members, vpid))) {
+        if (!create) {
+            /* just return NULL to indicate not found */
+            return NULL;
+        }
+        /* create it */
+        src = OBJ_NEW(orcm_source_t);
+        src->name.jobid = grp->jobid;
+        src->name.vpid = vpid;
+        src->alive = false;
+        opal_pointer_array_set_item(&grp->members, vpid, src);
+        /* if this vpid > num_procs, then reset num_procs as there must be
+         * at least that many procs in the job
+         */
+        if (grp->num_procs < vpid+1) {
+            /* recompute the triplet num_procs as well */
+            grp->triplet->num_procs -= grp->num_procs;
+            grp->num_procs = vpid + 1;
+            grp->triplet->num_procs += grp->num_procs;
+        }
     }
 
     /* lock the source - the caller is reponsible
@@ -148,7 +262,80 @@ orcm_source_t* orcm_get_source(orcm_triplet_t *triplet, orte_vpid_t vpid)
     return src;
 }
 
-bool orcm_triplet_cmp(char *str1, char *str2)
+orcm_source_t* orcm_get_source(orcm_triplet_t *triplet,
+                               const orte_process_name_t *proc,
+                               bool create)
+{
+    int j;
+    orcm_source_t *src;
+    orcm_triplet_group_t *grp;
+
+    /* we assume that the triplet is already locked */
+
+    /* find the group */
+    for (j=0; j < triplet->groups.size; j++) {
+        if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&triplet->groups, j))) {
+            continue;
+        }
+        if (grp->jobid != proc->jobid) {
+            continue;
+        }
+        /* if this vpid > num_procs, then reset num_procs as there must be
+         * at least that many procs in the job
+         */
+        if (grp->num_procs < proc->vpid+1) {
+            /* recompute the triplet num_procs as well */
+            triplet->num_procs -= grp->num_procs;
+            grp->num_procs = proc->vpid + 1;
+            triplet->num_procs += grp->num_procs;
+        }
+
+        if (NULL == (src = (orcm_source_t*)opal_pointer_array_get_item(&grp->members, proc->vpid))) {
+            if (!create) {
+                /* just return NULL to indicate not found */
+                return NULL;
+            }
+            /* create it */
+            src = OBJ_NEW(orcm_source_t);
+            src->name.jobid = proc->jobid;
+            src->name.vpid = proc->vpid;
+            src->alive = false;
+            opal_pointer_array_set_item(&grp->members, proc->vpid, src);
+        }
+
+        /* lock the source - the caller is reponsible
+         * for unlocking it!
+         */
+        OPAL_ACQUIRE_THREAD(&src->lock, &src->cond, &src->in_use);
+        return src;
+    }
+
+    /* if we get here, then we didn't find the group - create it if directed */
+    if (!create) {
+        return NULL;
+    }
+
+    /* create the group */
+    grp = OBJ_NEW(orcm_triplet_group_t);
+    grp->jobid = proc->jobid;
+    grp->num_procs = proc->vpid+1;
+    triplet->num_procs += grp->num_procs;
+    opal_pointer_array_add(&triplet->groups, grp);
+    /* create the source */
+    src = OBJ_NEW(orcm_source_t);
+    src->name.jobid = proc->jobid;
+    src->name.vpid = proc->vpid;
+    src->alive = false;
+    opal_pointer_array_set_item(&grp->members, proc->vpid, src);
+    /* lock the source - the caller is reponsible
+     * for unlocking it!
+     */
+    OPAL_ACQUIRE_THREAD(&src->lock, &src->cond, &src->in_use);
+
+    return src;
+}
+
+bool orcm_triplet_cmp(const char *str1, const char *str2)
 {
     char *a1, *v1, *r1;
     char *a2, *v2, *r2;
@@ -164,7 +351,7 @@ bool orcm_triplet_cmp(char *str1, char *str2)
         return false;
     }
     
-check_version:
+ check_version:
     if (NULL == v1 || NULL == v2) {
         /* we automatically match on this field */
         goto check_release;
@@ -173,7 +360,7 @@ check_version:
         return false;
     }
     
-check_release:
+ check_release:
     if (NULL == r1 || NULL == r2) {
         /* we automatically match on this field */
         return true;
