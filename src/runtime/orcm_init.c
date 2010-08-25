@@ -34,6 +34,7 @@ int orcm_debug_output = -1;
 int orcm_debug_verbosity = 0;
 orcm_triplets_array_t *orcm_triplets;
 int orcm_max_msg_ring_size;
+orte_process_name_t orcm_default_leader_policy;
 
 /* signal trap support */
 /* available signals
@@ -86,6 +87,10 @@ int orcm_init(orcm_proc_type_t flags)
         orcm_init_util();
     }
     
+    /* set the default leader policy */
+    orcm_default_leader_policy.jobid = ORTE_JOBID_WILDCARD;
+    orcm_default_leader_policy.vpid = ORTE_VPID_WILDCARD;
+
     /* get the number of max msgs */
     mca_base_param_reg_int_name("orcm", "max_buffered_msgs",
                                 "Number of recvd messages to hold in storage from each source",
@@ -356,8 +361,9 @@ static void triplet_constructor(orcm_triplet_t *ptr)
     OBJ_CONSTRUCT(&ptr->output_recvs, opal_list_t);
     ptr->pnp_cb_policy = ORCM_NOTIFY_NONE;
 
-    ptr->leader_policy.jobid = ORTE_JOBID_WILDCARD;
-    ptr->leader_policy.vpid = ORTE_VPID_WILDCARD;
+    ptr->leader_set = false;
+    ptr->leader_policy.jobid = orcm_default_leader_policy.jobid;
+    ptr->leader_policy.vpid = orcm_default_leader_policy.vpid;
     ptr->leader.jobid = ORTE_JOBID_WILDCARD;
     ptr->leader.vpid = ORTE_VPID_WILDCARD;
     ptr->notify = ORCM_NOTIFY_NONE;

@@ -40,7 +40,7 @@ typedef void (*orcm_leader_module_finalize_fn_t)(void);
 typedef bool (*orcm_leader_module_deliver_msg_fn_t)(const char *stringid,
                                                     const orte_process_name_t *src);
 
-/* Manually set the leader for a given application triplet. Understanding
+/* Define the leader policy for a given application triplet. Understanding
  * how this API works requires a brief review of how applications can be
  * started. There are two ways:
  *
@@ -64,34 +64,35 @@ typedef bool (*orcm_leader_module_deliver_msg_fn_t)(const char *stringid,
  *
  * Accordingly, the API works by:
  *
- * (a) if the jobid in the specified leader is ORTE_JOBID_WILDCARD, then
+ * (a) if the jobid in the specified policy is ORTE_JOBID_WILDCARD, then
  *     the module will consider sources from ALL announced triplets as
  *     potential leaders [DEFAULT]
- * (b) if the jobid in the specified leader is ORTE_JOBID_INVALID, then
+ * (b) if the jobid in the specified policy is ORTE_JOBID_INVALID, then
  *     the module will apply its internal algorithms but ONLY consider
  *     sources from the caller's SAME jobid as potential leaders. This
  *     allows you to specify that you want a leader selected from within
- *     your own app group
- * (c) if the jobid in the specified leader is neither of the above values,
+ *     your own app group, and is equivalent to just passing your own
+ *     jobid as the value
+ * (c) if the jobid in the specified policy is neither of the above values,
  *     then the module will apply its internal algorithms but consider only
  *     sources from that jobid.
  *
- * (d) if the vpid in the specified leader is ORTE_VPID_WILDCARD, then the
+ * (d) if the vpid in the specified policy is ORTE_VPID_WILDCARD, then the
  *     module will pass thru messages from ALL sources from within the above
  *     jobid restriction [DEFAULT]
- * (e) if the vpid in the specified leader is ORTE_VPID_INVALID, then the module
+ * (e) if the vpid in the specified policy is ORTE_VPID_INVALID, then the module
  *     will use its internal algorithms to select a leader from within the above
  *     jobid restriction.
- * (f) if the vpid in the specified leader is neither of the above values, then
+ * (f) if the vpid in the specified policy is neither of the above values, then
  *     the module will only pass thru messages from that specific process.
  *
  * A few examples may help illustrate this API:
  *
- * (a) providing ORTE_NAME_WILDCARD as the leader. In this case, both the
+ * (a) providing ORTE_NAME_WILDCARD as the policy. In this case, both the
  *     jobid and vpid are WILDCARD. Thus, messages from ALL sources will
  *     pass thru.
  *
- * NOTE: as this is the default condition, never calling set_leader will
+ * NOTE: as this is the default condition, never calling set_policy will
  * result in messages from ALL sources being passed thru.
  *
  * (b) providing a name where the jobid is ORTE_JOBID_WILDCARD, but the vpid
@@ -103,10 +104,6 @@ typedef bool (*orcm_leader_module_deliver_msg_fn_t)(const char *stringid,
  *     sibling in the triplet from within the current jobid to pass thru. This
  *     allows you to request that a leader be internally selected, but restrict
  *     candidates to siblings of this triplet that were co-launched with you.
- *
- * NOTE: passing NULL for the leader indicates that this call is only for the
- * purpose of setting callback directives - i.e., no leadership info is being
- * passed, nor should the module make any changes to its current leadership policy.
  *
  * NOTE: A value beyond the range of available siblings will result
  * in no data being passed through at all!
@@ -124,12 +121,21 @@ typedef bool (*orcm_leader_module_deliver_msg_fn_t)(const char *stringid,
  *     the specified triplet fails, regardless of whether or not that
  *     process was eligible for leadership
  */
+typedef int (*orcm_leader_module_set_policy_fn_t)(const char *app,
+                                                         const char *version,
+                                                         const char *release,
+                                                         const orte_process_name_t *policy,
+                                                         orcm_notify_t notify,
+                                                         orcm_leader_cbfunc_t cbfunc);
+
+/* Manually set the leader for a given application triplet. Overrides
+ * any defined policy to set a specific leader.
+ */
 typedef int (*orcm_leader_module_set_leader_fn_t)(const char *app,
                                                   const char *version,
                                                   const char *release,
-                                                  const orte_process_name_t *leader,
-                                                  orcm_notify_t notify,
-                                                  orcm_leader_cbfunc_t cbfunc);
+                                                  const orte_process_name_t *leader);
+
 /* Get the current leader of a triplet */
 typedef int (*orcm_leader_module_get_leader_fn_t)(const char *app,
                                                   const char *version,
@@ -154,6 +160,7 @@ typedef orcm_leader_base_component_2_0_0_t orcm_leader_base_component_t;
 typedef struct {
     orcm_leader_module_init_fn_t                init;
     orcm_leader_module_finalize_fn_t            finalize;
+    orcm_leader_module_set_policy_fn_t          set_policy;
     orcm_leader_module_deliver_msg_fn_t         deliver_msg;
     orcm_leader_module_set_leader_fn_t          set_leader;
     orcm_leader_module_get_leader_fn_t          get_leader;

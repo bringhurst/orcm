@@ -113,6 +113,7 @@ typedef struct {
     opal_list_t output_recvs;
     orcm_notify_t pnp_cb_policy;
     /* leader support */
+    bool leader_set;
     orte_process_name_t leader_policy;
     orte_process_name_t leader;
     orcm_notify_t notify;
@@ -172,6 +173,7 @@ ORCM_DECLSPEC extern int orcm_debug_verbosity;
 /* storage for values reqd by multiple frameworks */
 ORCM_DECLSPEC extern orcm_triplets_array_t *orcm_triplets;
 ORCM_DECLSPEC extern int orcm_max_msg_ring_size;
+ORCM_DECLSPEC extern orte_process_name_t orcm_default_leader_policy;
 
 #define ORCM_WILDCARD_STRING_ID "@:@:@"
 

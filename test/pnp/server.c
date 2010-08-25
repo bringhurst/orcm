@@ -22,6 +22,7 @@
 #include "orte/mca/rml/rml.h"
 
 #include "mca/pnp/pnp.h"
+#include "mca/leader/leader.h"
 #include "runtime/runtime.h"
 
 #define ORCM_TEST_CLIENT_SERVER_TAG     110
@@ -35,6 +36,10 @@ static void recv_input(int status,
                        void *cbdata);
 
 static void send_data(int fd, short flags, void *arg);
+
+static void proc_failed(const char *stringid,
+                        const orte_process_name_t *failed,
+                        const orte_process_name_t *leader);
 
 static int msg_num=0;
 
@@ -61,6 +66,14 @@ int main(int argc, char* argv[])
         goto cleanup;
     }
     
+    /* we will take input from anyone, and want notification whenever anyone fails */
+    if (ORCM_SUCCESS != (rc = orcm_leader.set_policy("CLIENT", NULL, NULL,
+                                                     ORTE_NAME_WILDCARD,
+                                                     ORCM_NOTIFY_ANY, proc_failed))) {
+        ORTE_ERROR_LOG(rc);
+        goto cleanup;
+    }
+
     /* announce our existence */
     if (ORCM_SUCCESS != (rc = orcm_pnp.announce("SERVER", "1.0", "alpha", NULL))) {
         ORTE_ERROR_LOG(rc);
@@ -212,3 +225,13 @@ static void send_data(int fd, short flags, void *arg)
     opal_evtimer_add(tmp, &now);
     
 }
+
+static void proc_failed(const char *stringid,
+                        const orte_process_name_t *failed,
+                        const orte_process_name_t *leader)
+{
+    opal_output(0, "%s Notified of proc %s failure",
+                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                ORTE_NAME_PRINT(failed));
+}
+

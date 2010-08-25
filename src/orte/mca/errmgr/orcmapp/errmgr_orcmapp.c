@@ -50,18 +50,15 @@ static int update_state(orte_jobid_t job,
                         orte_process_name_t *proc_name,
                         orte_proc_state_t state,
 			pid_t pid,
-                        orte_exit_code_t exit_code,
-                        orte_errmgr_stack_state_t *stack_state);
+                        orte_exit_code_t exit_code);
 
 static int predicted_fault(opal_list_t *proc_list,
                            opal_list_t *node_list,
-                           opal_list_t *suggested_nodes,
-                           orte_errmgr_stack_state_t *stack_state);
+                           opal_list_t *suggested_nodes);
 
 static int suggest_map_targets(orte_proc_t *proc,
                                orte_node_t *oldnode,
-                               opal_list_t *node_list,
-                               orte_errmgr_stack_state_t *stack_state);
+                               opal_list_t *node_list);
 
 static int ft_event(int state);
 
@@ -73,6 +70,8 @@ static int ft_event(int state);
 orte_errmgr_base_module_t orte_errmgr_orcmapp_module = {
     init,
     finalize,
+    orte_errmgr_base_log,
+    orte_errmgr_base_abort,
     update_state,
     predicted_fault,
     suggest_map_targets,
@@ -134,8 +133,7 @@ static int update_state(orte_jobid_t job,
                         orte_process_name_t *proc,
                         orte_proc_state_t state,
 			pid_t pid,
-                        orte_exit_code_t exit_code,
-                        orte_errmgr_stack_state_t *stack_state)
+                        orte_exit_code_t exit_code)
 {
     /* nothing to do */
     return ORTE_SUCCESS;
@@ -143,16 +141,14 @@ static int update_state(orte_jobid_t job,
 
 static int predicted_fault(opal_list_t *proc_list,
                            opal_list_t *node_list,
-                           opal_list_t *suggested_nodes,
-                           orte_errmgr_stack_state_t *stack_state)
+                           opal_list_t *suggested_nodes)
 {
     return ORTE_ERR_NOT_IMPLEMENTED;
 }
 
 static int suggest_map_targets(orte_proc_t *proc,
                                orte_node_t *oldnode,
-                               opal_list_t *node_list,
-                               orte_errmgr_stack_state_t *stack_state)
+                               opal_list_t *node_list)
 {
     return ORTE_ERR_NOT_IMPLEMENTED;
 }
@@ -189,8 +185,10 @@ static void notify_failure(int status,
         return;
     }
 
-    opal_output(0, "%s GOT NOTIFY FAILURE FOR %s",
-                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_NAME_PRINT(&failed));
+    OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
+                         "%s GOT FAILURE NOTIFICATION FOR %s",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         ORTE_NAME_PRINT(&failed)));
 
     /* get the triplet */
     if (NULL == (trp = orcm_get_triplet_jobid(failed.jobid))) {

@@ -29,6 +29,7 @@
 #include "opal/mca/crs/crs.h"
 #include "opal/mca/crs/base/base.h"
 
+#include "orte/util/error_strings.h"
 #include "orte/util/name_fns.h"
 #include "orte/util/proc_info.h"
 #include "orte/runtime/orte_globals.h"
@@ -66,18 +67,15 @@ static int update_state(orte_jobid_t job,
                         orte_process_name_t *proc_name,
                         orte_proc_state_t state,
 			pid_t pid,
-                        orte_exit_code_t exit_code,
-                        orte_errmgr_stack_state_t *stack_state);
+                        orte_exit_code_t exit_code);
 
 static int predicted_fault(opal_list_t *proc_list,
                            opal_list_t *node_list,
-                           opal_list_t *suggested_nodes,
-                           orte_errmgr_stack_state_t *stack_state);
+                           opal_list_t *suggested_nodes);
 
 static int suggest_map_targets(orte_proc_t *proc,
                                orte_node_t *oldnode,
-                               opal_list_t *node_list,
-                               orte_errmgr_stack_state_t *stack_state);
+                               opal_list_t *node_list);
 
 static int ft_event(int state);
 
@@ -89,6 +87,8 @@ static int ft_event(int state);
 orte_errmgr_base_module_t orte_errmgr_orcm_module = {
     init,
     finalize,
+    orte_errmgr_base_log,
+    orte_errmgr_base_abort,
     update_state,
     predicted_fault,
     suggest_map_targets,
@@ -113,8 +113,7 @@ static int update_state(orte_jobid_t job,
                         orte_process_name_t *proc,
                         orte_proc_state_t state,
 			pid_t pid,
-                        orte_exit_code_t exit_code,
-                        orte_errmgr_stack_state_t *stack_state)
+                        orte_exit_code_t exit_code)
 {
     orte_job_t *jdata;
     orte_job_t *jnew;
@@ -127,8 +126,6 @@ static int update_state(orte_jobid_t job,
     int i;
     size_t j;
 
-    *stack_state ^= ORTE_ERRMGR_STACK_STATE_JOB_ABORT;
-
     /* get the job object */
     if (NULL == (jdata = orte_get_job_data_object(job))) {
         ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
@@ -137,10 +134,10 @@ static int update_state(orte_jobid_t job,
 
     OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
                          "errmgr:orcm:process_fault() "
-                         "------- %s fault reported! proc %s (0x%x)",
+                         "------- %s fault reported! proc %s %s",
                          (proc->jobid == ORTE_PROC_MY_NAME->jobid ? "Daemon" : "App. Process"),
                          ORTE_NAME_PRINT(proc),
-                         state ));
+                         orte_proc_state_to_str(state)));
     /* get the app - just for output purposes in case of error */
     app = opal_pointer_array_get_item(jdata->apps, 0);
 
@@ -298,16 +295,14 @@ static int update_state(orte_jobid_t job,
 
 static int predicted_fault(opal_list_t *proc_list,
                            opal_list_t *node_list,
-                           opal_list_t *suggested_nodes,
-                           orte_errmgr_stack_state_t *stack_state)
+                           opal_list_t *suggested_nodes)
 {
     return ORTE_ERR_NOT_IMPLEMENTED;
 }
 
 static int suggest_map_targets(orte_proc_t *proc,
                                orte_node_t *oldnode,
-                               opal_list_t *node_list,
-                               orte_errmgr_stack_state_t *stack_state)
+                               opal_list_t *node_list)
 {
     return ORTE_ERR_NOT_IMPLEMENTED;
 }

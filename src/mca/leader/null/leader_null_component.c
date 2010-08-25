@@ -52,9 +52,18 @@ static int component_close(void)
 
 static int component_query(mca_base_module_t **module, int *priority)
 {
-    /* this is the default module */
+    /* this is the required module for orcm masters and daemons */
+    if (ORCM_PROC_IS_MASTER || ORCM_PROC_IS_DAEMON) {
+        *priority = 1000;
+    } else {
+        /* apps are allowed to use it by default, unless someone
+         * else wants to be picked
+         */
+        *priority = 50;
+    }
+
     *module = (mca_base_module_t*)&orcm_leader_null_module;
-    *priority = 50;
+
     return ORCM_SUCCESS;
 }
 

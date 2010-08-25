@@ -1407,7 +1407,7 @@ static void recv_input_buffers(int status,
          * message is from the leader for this triplet
          */
         if (!orcm_leader.deliver_msg(string_id, sender)) {
-            OPAL_OUTPUT_VERBOSE((0, orcm_pnp_base.output,
+            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                                  "%s Message from %s of triplet %s ignored - not leader",
                                  ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                                  ORTE_NAME_PRINT(sender), string_id));
@@ -1979,6 +1979,11 @@ static void check_pending_recvs(orcm_triplet_t *trp,
             }
             if (ORCM_PNP_INVALID_CHANNEL != grp->output) {
                 check_trip_recvs(triplet->string_id, &triplet->output_recvs, grp->output);
+            }
+            /* copy notification policies, if not already set */
+            if (ORCM_NOTIFY_NONE == trp->notify) {
+                trp->notify = triplet->notify;
+                trp->leader_cbfunc = triplet->leader_cbfunc;
             }
         }
     }

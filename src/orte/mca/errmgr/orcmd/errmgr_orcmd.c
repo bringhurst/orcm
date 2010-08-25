@@ -112,21 +112,18 @@ static int finalize(void);
 
 static int predicted_fault(opal_list_t *proc_list,
                            opal_list_t *node_list,
-                           opal_list_t *suggested_nodes,
-                           orte_errmgr_stack_state_t *stack_state);
+                           opal_list_t *suggested_nodes);
 
 static int update_state(orte_jobid_t job,
                         orte_job_state_t jobstate,
                         orte_process_name_t *proc,
                         orte_proc_state_t state,
                         pid_t pid,
-                        orte_exit_code_t exit_code,
-                        orte_errmgr_stack_state_t *stack_state);
+                        orte_exit_code_t exit_code);
 
 static int suggest_map_targets(orte_proc_t *proc,
                                orte_node_t *oldnode,
-                               opal_list_t *node_list,
-                               orte_errmgr_stack_state_t *stack_state);
+                               opal_list_t *node_list);
 
 static int ft_event(int state);
 
@@ -138,6 +135,8 @@ static int ft_event(int state);
 orte_errmgr_base_module_t orte_errmgr_orcmd_module = {
     init,
     finalize,
+    orte_errmgr_base_log,
+    orte_errmgr_base_abort,
     update_state,
     predicted_fault,
     suggest_map_targets,
@@ -196,8 +195,7 @@ static int update_state(orte_jobid_t job,
                         orte_process_name_t *proc,
                         orte_proc_state_t state,
                         pid_t pid,
-                        orte_exit_code_t exit_code,
-                        orte_errmgr_stack_state_t *stack_state)
+                        orte_exit_code_t exit_code)
 {
     opal_list_item_t *item, *next;
     orte_odls_job_t *jobdat;
@@ -215,9 +213,6 @@ static int update_state(orte_jobid_t job,
     /* protect against threads */
     OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
 
-    /* indicate that this is the end of the line */
-    *stack_state |= ORTE_ERRMGR_STACK_STATE_COMPLETE;
-    
     /*
      * if orte is trying to shutdown, just let it
      */
@@ -310,13 +305,13 @@ static int update_state(orte_jobid_t job,
     /* if this was a failed comm or heartbeat */
     if (ORTE_PROC_STATE_COMM_FAILED == state ||
         ORTE_PROC_STATE_HEARTBEAT_FAILED == state) {
-        /* if this isn't a daemon proc, ignore it - should never
-         * happen, but this is a bozo check
-         */
+        /* if this isn't a daemon proc, ignore it */
         if (ORTE_PROC_MY_NAME->jobid != proc->jobid) {
-            opal_output(0, "%s Received %s for proc %s - not a daemon",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                        orte_proc_state_to_str(state), ORTE_NAME_PRINT(proc));
+            OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
+                                 "%s Received %s for proc %s - not a daemon",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                 orte_proc_state_to_str(state),
+                                 ORTE_NAME_PRINT(proc)));
             OPAL_RELEASE_THREAD(&lock, &cond, &active);
             return ORTE_SUCCESS;
         }
@@ -514,16 +509,14 @@ static int update_state(orte_jobid_t job,
 
 static int predicted_fault(opal_list_t *proc_list,
                            opal_list_t *node_list,
-                           opal_list_t *suggested_nodes,
-                           orte_errmgr_stack_state_t *stack_state)
+                           opal_list_t *suggested_nodes)
 {
     return ORTE_ERR_NOT_IMPLEMENTED;
 }
 
 static int suggest_map_targets(orte_proc_t *proc,
                                orte_node_t *oldnode,
-                               opal_list_t *node_list,
-                               orte_errmgr_stack_state_t *stack_state)
+                               opal_list_t *node_list)
 {
     return ORTE_ERR_NOT_IMPLEMENTED;
 }
@@ -812,7 +805,6 @@ static void remote_update(int status,
     int rc=ORTE_SUCCESS, ret;
     orte_process_name_t name;
     pid_t pid;
-    orte_errmgr_stack_state_t stack_state;
 
     OPAL_OUTPUT_VERBOSE((5, orte_errmgr_base.output,
                          "%s errmgr:orcmd:receive update proc state command from %s",
@@ -865,7 +857,7 @@ static void remote_update(int status,
                         
             /* update the state */
             update_state(job, ORTE_JOB_STATE_UNDEF,
-                         &name, state, pid, exit_code, &stack_state);
+                         &name, state, pid, exit_code);
         }
         count = 1;
     }
@@ -966,7 +958,10 @@ static void notify_failure(orte_odls_job_t *jobdat, orte_odls_child_t *child, bo
         return;
     }
     /* send it */
-    opal_output(0, "NOTIFYING ALL OF %s FAILURE", ORTE_NAME_PRINT(child->name));
+    OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
+                         "%s NOTIFYING ALL OF %s FAILURE",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         ORTE_NAME_PRINT(child->name)));
     if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_ERROR_CHANNEL, NULL,
                                                  ORCM_PNP_TAG_ERRMGR, NULL, 0,
                                                  alert, callback, NULL))) {
