@@ -10,7 +10,6 @@
 #man_pages = orcmcc.1
 
 bin_SCRIPTS = orcm_wrapper_script
-CLEANFILES = $(bin_SCRIPTS)
 
 dist_pkgdata_DATA = \
 	orcmcc-wrapper-data.txt \

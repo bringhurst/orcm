@@ -29,6 +29,8 @@
 #include "opal/threads/mutex.h"
 #include "opal/threads/condition.h"
 
+#include "orte/mca/debugger/base/base.h"
+#include "orte/mca/debugger/debugger.h"
 #include "orte/mca/rmcast/base/base.h"
 #include "orte/mca/errmgr/errmgr.h"
 #include "orte/mca/odls/odls_types.h"
@@ -153,7 +155,21 @@ static int rte_init(void)
         error = "orte_ess_tool_init";
         goto error;
     }
-        
+    
+    /* if we are a debugger host, setup that support */
+    if (ORCM_PROC_IS_DEBUGGER_HOST) {
+        if (ORTE_SUCCESS != (ret = orte_debugger_base_open())) {
+            ORTE_ERROR_LOG(ret);
+            error = "orte_debugger_open";
+            goto error;
+        }
+        if (ORTE_SUCCESS != (ret = orte_debugger_base_select())) {
+            ORTE_ERROR_LOG(ret);
+            error = "orte_debugger_select";
+            goto error;
+        }
+    }
+
     return ORTE_SUCCESS;
     
  error:
@@ -396,7 +412,6 @@ static int local_init(void)
         error = "leader_select";
         goto error;
     }
-
 
     /* enable communication via the rml */
     if (ORTE_SUCCESS != (ret = orte_rml.enable_comm())) {

@@ -97,6 +97,15 @@ static int tool_init(void)
         return ret;
     }
     
+    /* register to catch launch_job requests */
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcmrun", "0.1", "alpha",
+                                                         ORCM_PNP_GROUP_OUTPUT_CHANNEL,
+                                                         ORCM_PNP_TAG_TOOL,
+                                                         tool_messages))) {
+        ORTE_ERROR_LOG(ret);
+        return ret;
+    }
+    
     return ORCM_SUCCESS;
 }
 
@@ -139,7 +148,7 @@ static void tool_messages(int status,
     orte_app_context_t *app;
     orte_proc_t *proc;
     orte_vpid_t vpid;
-    orcm_tool_cmd_t flag;
+    orcm_tool_cmd_t flag=ORCM_TOOL_ILLEGAL_CMD;
     char *replicas;
     int32_t ljob;
     uint16_t jfam;
@@ -159,26 +168,30 @@ static void tool_messages(int status,
     /* setup the response - we send it regardless so the tool won't hang */
     response = OBJ_NEW(opal_buffer_t);
 
-    /* if this isn't intended for my DVM, ignore it */
     n=1;
     if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &jfam, &n, OPAL_UINT16))) {
         ORTE_ERROR_LOG(rc);
+        opal_dss.pack(response, &flag, 1, ORCM_TOOL_CMD_T);
         goto cleanup;
     }
-    if (jfam != ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid)) {
-        opal_output(0, "%s NOT FOR ME!", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-        goto cleanup;
-    }
-    
+
     /* unpack the cmd */
     n=1;
     if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &flag, &n, ORCM_TOOL_CMD_T))) {
         ORTE_ERROR_LOG(rc);
+        opal_dss.pack(response, &flag, 1, ORCM_TOOL_CMD_T);
         goto cleanup;
     }
     
     /* return the cmd flag */
     opal_dss.pack(response, &flag, 1, ORCM_TOOL_CMD_T);
+    
+    /* if this isn't intended for my DVM, ignore it */
+    if (jfam != ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid)) {
+        opal_output(0, "%s NOT FOR ME!", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+        rc = ORTE_ERROR;
+        goto cleanup;
+    }
     
     if (ORCM_TOOL_START_CMD == flag) {
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,

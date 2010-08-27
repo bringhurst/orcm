@@ -15,5 +15,6 @@ SUBDIRS = \
 	orcm-stop \
 	orcm-ps \
         orcmd \
+        orcmrun \
 	wrappers
 

@@ -16,7 +16,7 @@ AC_CONFIG_MACRO_DIR([config])
 
 AC_CANONICAL_SYSTEM
 
-AM_INIT_AUTOMAKE([foreign dist-bzip2 subdir-objects no-define 1.11.1 tar-ustar -Wall -Werror])
+AM_INIT_AUTOMAKE([foreign dist-bzip2 subdir-objects no-define 1.11.1 tar-ustar])
 
 m4_pattern_allow([m4_ifval])
 
@@ -387,6 +387,7 @@ AC_CONFIG_FILES([Makefile
 		 src/tools/orcm-stop/Makefile
 		 src/tools/orcm-ps/Makefile
                  src/tools/orcmd/Makefile
+                 src/tools/orcmrun/Makefile
 		 src/tools/wrappers/Makefile
 		 src/tools/wrappers/orcmcc-wrapper-data.txt
 		 src/tools/wrappers/orcm_wrapper_script

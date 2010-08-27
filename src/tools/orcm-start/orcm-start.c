@@ -431,7 +431,7 @@ static void ack_recv(int status,
     /* unpack the cmd and verify it is us */
     n=1;
     opal_dss.unpack(buf, &flag, &n, ORCM_TOOL_CMD_T);
-    if (ORCM_TOOL_START_CMD != flag) {
+    if (ORCM_TOOL_START_CMD != flag && ORCM_TOOL_ILLEGAL_CMD != flag) {
         /* wrong cmd */
         opal_output(0, "GOT WRONG CMD");
         return;
