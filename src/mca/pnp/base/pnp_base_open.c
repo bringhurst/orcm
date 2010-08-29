@@ -120,3 +120,20 @@ OBJ_CLASS_INSTANCE(orcm_pnp_send_t,
                    opal_list_item_t,
                    send_constructor,
                    send_destructor);
+
+static void msg_constructor(orcm_pnp_msg_t *ptr)
+{
+    ptr->sender.jobid = ORTE_JOBID_INVALID;
+    ptr->sender.vpid = ORTE_VPID_INVALID;
+    ptr->tag = ORCM_PNP_TAG_INVALID;
+    OBJ_CONSTRUCT(&ptr->buf, opal_buffer_t);
+    ptr->cbfunc = NULL;
+}
+static void msg_destructor(orcm_pnp_msg_t *ptr)
+{
+    OBJ_DESTRUCT(&ptr->buf);
+}
+OBJ_CLASS_INSTANCE(orcm_pnp_msg_t,
+                   opal_list_item_t,
+                   msg_constructor,
+                   msg_destructor);

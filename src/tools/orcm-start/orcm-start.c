@@ -450,7 +450,7 @@ static void ack_recv(int status,
     free(app_launched);
 
     /* the fact we recvd this is enough */
-    orte_quit();
+    exit(0);
 }
 
 static void parse_apps(orte_job_t *jdata, int argc, char *argv[])

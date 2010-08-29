@@ -323,23 +323,11 @@ static void source_constructor(orcm_source_t *ptr)
     ptr->name.jobid = ORTE_JOBID_INVALID;
     ptr->name.vpid = ORTE_VPID_INVALID;
     ptr->alive = true;
-
-    OBJ_CONSTRUCT(&ptr->msgs, opal_ring_buffer_t);
-    opal_ring_buffer_init(&ptr->msgs, orcm_max_msg_ring_size);
-
-    ptr->last_msg_num = ORTE_RMCAST_SEQ_INVALID;
 }
 static void source_destructor(orcm_source_t *ptr)
 {
-    opal_buffer_t *buf;
-    
     OBJ_DESTRUCT(&ptr->lock);
     OBJ_DESTRUCT(&ptr->cond);
-
-    while (NULL != (buf = (opal_buffer_t*)opal_ring_buffer_pop(&ptr->msgs))) {
-        OBJ_RELEASE(buf);
-    }
-    OBJ_DESTRUCT(&ptr->msgs);
 }
 OBJ_CLASS_INSTANCE(orcm_source_t,
                    opal_object_t,

@@ -14,7 +14,6 @@
 
 #include "opal/dss/dss_types.h"
 #include "opal/class/opal_list.h"
-#include "opal/class/opal_ring_buffer.h"
 
 #include "orte/mca/rml/rml_types.h"
 #include "orte/mca/rmcast/rmcast_types.h"
@@ -65,6 +64,15 @@ typedef struct {
     void *cbdata;
 } orcm_pnp_send_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_send_t);
+
+typedef struct {
+    opal_list_item_t super;
+    orte_process_name_t sender;
+    orcm_pnp_tag_t tag;
+    opal_buffer_t buf;
+    orcm_pnp_callback_fn_t cbfunc;
+} orcm_pnp_msg_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_msg_t);
 
 /* internal base functions */
 ORCM_DECLSPEC char* orcm_pnp_print_tag(orcm_pnp_tag_t tag);

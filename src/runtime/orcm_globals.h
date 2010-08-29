@@ -152,10 +152,6 @@ typedef struct {
     orte_process_name_t name;
     /* state */
     bool alive;
-    /* message ring buffer */
-    opal_ring_buffer_t msgs;
-    /* sequence number of last msg sent */
-    orte_rmcast_seq_t last_msg_num;
 } orcm_source_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_source_t);
 

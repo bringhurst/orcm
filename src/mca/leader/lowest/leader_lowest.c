@@ -320,7 +320,7 @@ static int set_leader(const char *app,
 
 static bool deliver_msg(const char *stringid, const orte_process_name_t *src)
 {
-    bool ret;
+    bool ret=false;
     orcm_triplet_t *trp;
     int i;
 
@@ -349,6 +349,11 @@ static bool deliver_msg(const char *stringid, const orte_process_name_t *src)
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                              ORTE_NAME_PRINT(src), stringid));
         ret = true;
+    } else {
+        OPAL_OUTPUT_VERBOSE((2, orcm_leader_base.output,
+                             "%s leader:lowest: %s is not a leader for triplet %s - ignore msg",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             ORTE_NAME_PRINT(src), stringid));
     }
 
     OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
