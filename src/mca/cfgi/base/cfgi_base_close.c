@@ -19,15 +19,24 @@
 
 int orcm_cfgi_base_close(void)
 {
-    if (NULL != orcm_cfgi.finalize) {
-        orcm_cfgi.finalize();
+    opal_list_item_t *item;
+    orcm_cfgi_base_selected_module_t *nmodule;
+
+    for (item = opal_list_remove_first(&orcm_cfgi_selected_modules);
+         NULL != item;
+         item = opal_list_remove_first(&orcm_cfgi_selected_modules)) {
+        nmodule = (orcm_cfgi_base_selected_module_t*) item;
+        if (NULL != nmodule->module->finalize) {
+            nmodule->module->finalize();
+        }
+        OBJ_RELEASE(nmodule);
     }
-    
-    /* Close all remaining available components (may be one if this is a
-     Open RTE program, or [possibly] multiple if this is ompi_info) */
+    OBJ_DESTRUCT(&orcm_cfgi_selected_modules);    
+
+    /* Close all remaining available components */
     
     mca_base_components_close(orcm_cfgi_base.output, 
-                              &orcm_cfgi_base.opened, NULL);
+                              &orcm_cfgi_components_available, NULL);
     
     return ORCM_SUCCESS;
 }

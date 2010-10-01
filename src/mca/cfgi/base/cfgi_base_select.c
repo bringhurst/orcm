@@ -25,9 +25,13 @@ static bool selected = false;
  */
 int orcm_cfgi_base_select(void)
 {
-    mca_base_component_t *best_component = NULL;
-    orcm_cfgi_base_module_t *best_module = NULL;
-    int rc;
+    opal_list_item_t *item;
+    mca_base_component_list_item_t *cli = NULL;
+    mca_base_component_t *component = NULL;
+    mca_base_module_t *module = NULL;
+    orcm_cfgi_base_module_t *nmodule;
+    orcm_cfgi_base_selected_module_t *newmodule;
+    int rc, priority;
 
     if (selected) {
         /* ensure we don't do this twice */
@@ -35,24 +39,49 @@ int orcm_cfgi_base_select(void)
     }
     selected = true;
     
-    /*
-     * Select the best component
-     */
-    if( ORCM_SUCCESS != mca_base_select("cfgi", orcm_cfgi_base.output,
-                                        &orcm_cfgi_base.opened,
-                                        (mca_base_module_t **) &best_module,
-                                        (mca_base_component_t **) &best_component) ) {
-        /* This will only happen if no component was selected - that is okay here */
-        return ORCM_SUCCESS;
-    }
+    /* Query all available components and ask if they have a module */
+    for (item = opal_list_get_first(&orcm_cfgi_components_available);
+         opal_list_get_end(&orcm_cfgi_components_available) != item;
+         item = opal_list_get_next(item)) {
+        cli = (mca_base_component_list_item_t *) item;
+        component = (mca_base_component_t *) cli->cli_component;
 
-    orcm_cfgi = *best_module;
-    
-    /* init the selected module */
-    if (NULL != orcm_cfgi.init) {
-        if (ORCM_SUCCESS != (rc = orcm_cfgi.init())) {
-            ORTE_ERROR_LOG(rc);
-            return rc;
+        /* If there's no query function, skip it */
+        if (NULL == component->mca_query_component) {
+            opal_output_verbose(5, orcm_cfgi_base.output,
+                                "mca:cfgi:select: Skipping component [%s]. It does not implement a query function",
+                                component->mca_component_name );
+            continue;
+        }
+
+        /* Query the component */
+        opal_output_verbose(5, orcm_cfgi_base.output,
+                            "mca:cfgi:select: Querying component [%s]",
+                            component->mca_component_name);
+        rc = component->mca_query_component(&module, &priority);
+
+        /* If no module was returned, then skip component */
+        if (ORCM_SUCCESS != rc || NULL == module) {
+            opal_output_verbose(5, orcm_cfgi_base.output,
+                                "mca:cfgi:select: Skipping component [%s]. Query failed to return a module",
+                                component->mca_component_name );
+            continue;
+        }
+
+        /* If we got a module, initialize it */
+        nmodule = (orcm_cfgi_base_module_t*) module;
+        if (NULL != nmodule->init) {
+            if (ORCM_SUCCESS == nmodule->init()) {
+                /* add to the list of selected modules */
+                newmodule = OBJ_NEW(orcm_cfgi_base_selected_module_t);
+                newmodule->module = nmodule;
+                opal_list_append(&orcm_cfgi_selected_modules, &newmodule->super);
+            } else {
+                /* If the module doesn't want to be used, skip it */
+                if (NULL != nmodule->finalize) {
+                    nmodule->finalize();
+                }
+            }
         }
     }
 

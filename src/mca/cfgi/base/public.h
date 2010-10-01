@@ -23,7 +23,6 @@
  */
 typedef struct {
     int output;
-    opal_list_t opened;
     int num_active_apps;
     orte_job_t *daemons;
 } orcm_cfgi_base_t;
@@ -35,5 +34,7 @@ int orcm_cfgi_base_select(void);
 int orcm_cfgi_base_close(void);
 
 extern const mca_base_component_t *orcm_cfgi_base_components[];
+ORCM_DECLSPEC extern opal_list_t orcm_cfgi_components_available;
+ORCM_DECLSPEC extern opal_list_t orcm_cfgi_selected_modules;
 
 #endif

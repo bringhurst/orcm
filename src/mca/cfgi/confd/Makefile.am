@@ -17,6 +17,11 @@ sources = \
         cfgi_confd.c \
         cfgi_confd_component.c
 
+if WANT_LOCAL_CONFD
+sources += q_confd.h \
+           q_confd.c
+endif
+
 # Extra rules to build the orcm-confd.h file
 
 BUILT_SOURCES = orcm-confd.h
@@ -47,12 +52,16 @@ mcacomponentdir = $(pkglibdir)
 mcacomponent_LTLIBRARIES = $(component)
 mca_orcm_cfgi_confd_la_SOURCES = $(component_sources)
 nodist_mca_orcm_cfgi_confd_la_SOURCES = orcm-confd.h
-mca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version
+mca_orcm_cfgi_confd_la_CPPFLAGS = $(orcm_cfgi_confd_CPPFLAGS)
+mca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
+mca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS)
 
 noinst_LTLIBRARIES = $(lib)
 libmca_orcm_cfgi_confd_la_SOURCES = $(lib_sources)
 nodist_libmca_orcm_cfgi_confd_la_SOURCES = orcm-confd.h
-libmca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version
+libmca_orcm_cfgi_confd_la_CPPFLAGS = $(orcm_cfgi_confd_CPPFLAGS)
+libmca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
+libmca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS)
 
 # Clean out the generated files
 

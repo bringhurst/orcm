@@ -347,7 +347,8 @@ static void triplet_constructor(orcm_triplet_t *ptr)
 
     OBJ_CONSTRUCT(&ptr->input_recvs, opal_list_t);
     OBJ_CONSTRUCT(&ptr->output_recvs, opal_list_t);
-    ptr->pnp_cb_policy = ORCM_NOTIFY_NONE;
+    ptr->pnp_cb_policy = ORTE_JOBID_WILDCARD;
+    ptr->pnp_cbfunc = NULL;
 
     ptr->leader_set = false;
     ptr->leader_policy.jobid = orcm_default_leader_policy.jobid;
@@ -399,6 +400,7 @@ static void group_constructor(orcm_triplet_group_t *ptr)
     ptr->num_procs = 0;
     ptr->output = ORTE_RMCAST_INVALID_CHANNEL;
     ptr->input = ORTE_RMCAST_INVALID_CHANNEL;
+    ptr->pnp_cb_done = false;
     ptr->pnp_cbfunc = NULL;
     OBJ_CONSTRUCT(&ptr->members, opal_pointer_array_t);
     opal_pointer_array_init(&ptr->members, 8, INT_MAX, 8);

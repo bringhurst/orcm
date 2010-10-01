@@ -67,6 +67,7 @@ typedef uint8_t orcm_notify_t;
 #define ORCM_NOTIFY_LDR     0x01
 #define ORCM_NOTIFY_GRP     0x02
 #define ORCM_NOTIFY_ANY     0x04
+#define ORCM_NOTIFY_ALL     0x08
 
 /* pnp type required in global object - see pnp_types.h for value defines */
 typedef uint32_t orcm_pnp_channel_t;
@@ -114,7 +115,8 @@ typedef struct {
     /* pnp support */
     opal_list_t input_recvs;
     opal_list_t output_recvs;
-    orcm_notify_t pnp_cb_policy;
+    orte_jobid_t pnp_cb_policy;
+    orcm_pnp_open_channel_cbfunc_t pnp_cbfunc;
     /* leader support */
     bool leader_set;
     orte_process_name_t leader_policy;
@@ -134,6 +136,7 @@ typedef struct {
     /* pnp support */
     orcm_pnp_channel_t input;
     orcm_pnp_channel_t output;
+    bool pnp_cb_done;
     orcm_pnp_open_channel_cbfunc_t pnp_cbfunc;
     /* leader support */
     orte_vpid_t leader;

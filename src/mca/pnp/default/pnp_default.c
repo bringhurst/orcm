@@ -411,11 +411,12 @@ static int open_channel(const char *app,
      * creates it if not
      */
     triplet = orcm_get_triplet(app, version, release, true);
+    /* record the policy */
+    triplet->pnp_cb_policy = jobid;
+    triplet->pnp_cbfunc = cbfunc;
 
     /* if the jobid is wildcard, we execute the callback for every group */
     if (ORTE_JOBID_WILDCARD == jobid) {
-        /* record the policy */
-        triplet->pnp_cb_policy = ORCM_NOTIFY_ANY;
         /* cycle thru this triplet's known groups */
         for (i=0; i < triplet->groups.size; i++) {
             if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&triplet->groups, i))) {
@@ -443,8 +444,6 @@ static int open_channel(const char *app,
     }
 
     if (ORTE_JOBID_INVALID == jobid) {
-        /* record the policy */
-        triplet->pnp_cb_policy = ORCM_NOTIFY_ANY;
         /* see if we have know about any group with this triplet */
         done = false;
         for (i=0; i < triplet->groups.size; i++) {
@@ -482,7 +481,6 @@ static int open_channel(const char *app,
     }
 
     /* left with the case of a specific jobid - record the policy */
-    triplet->pnp_cb_policy = ORCM_NOTIFY_GRP;
     done = false;
     for (i=0; i < triplet->groups.size; i++) {
         if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&triplet->groups, i))) {
@@ -1159,6 +1157,13 @@ static void recv_announcements(orte_process_name_t *sender,
         return;
     }
 
+    /* who are they responding to? */
+    n=1;
+    if (ORCM_SUCCESS != (rc = opal_dss.unpack(buf, &originator, &n, ORTE_NAME))) {
+        ORTE_ERROR_LOG(rc);
+        return;
+    }
+    
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:received announcement from app %s channel %s on node %s uid %u",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
@@ -1189,6 +1194,8 @@ static void recv_announcements(orte_process_name_t *sender,
             goto RELEASE;
         }
         grp->pnp_cbfunc(app, version, release, input);
+        /* flag that the callback for this jobid/grp has been done */
+        grp->pnp_cb_done = true;
         grp->pnp_cbfunc = NULL;
     }
 
@@ -1255,13 +1262,6 @@ static void recv_announcements(orte_process_name_t *sender,
         OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
     }
 
-    /* who are they responding to? */
-    n=1;
-    if (ORCM_SUCCESS != (rc = opal_dss.unpack(buf, &originator, &n, ORTE_NAME))) {
-        ORTE_ERROR_LOG(rc);
-        goto RELEASE;
-    }
-    
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                          "%s pnp:default:received announcement from originator %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
@@ -1898,6 +1898,19 @@ static void check_pending_recvs(orcm_triplet_t *trp,
     /* check the triplet output_recv list */
     if (ORCM_PNP_INVALID_CHANNEL != grp->output) {
         check_trip_recvs(trp->string_id, &trp->output_recvs, grp->output);
+    }
+
+    /* if we haven't already done a callback on this group, check the callback policy */
+    if (!grp->pnp_cb_done) {
+        if (ORTE_JOBID_WILDCARD == trp->pnp_cb_policy) {
+            /* get a callback from every jobid */
+            grp->pnp_cbfunc = trp->pnp_cbfunc;
+        } else if (ORTE_JOBID_INVALID == trp->pnp_cb_policy ||
+                   grp->jobid == trp->pnp_cb_policy) {
+            grp->pnp_cbfunc = trp->pnp_cbfunc;
+            /* only one jobid generates a callback */
+            trp->pnp_cb_policy = ORTE_JOBID_MAX;
+        }
     }
 }
 

@@ -33,6 +33,8 @@ orcm_cfgi_base_module_t orcm_cfgi = {
 
 /* instantiate the globals */
 orcm_cfgi_base_t orcm_cfgi_base;
+opal_list_t orcm_cfgi_components_available;
+opal_list_t orcm_cfgi_selected_modules;
 
 int orcm_cfgi_base_open(void)
 {
@@ -43,11 +45,13 @@ int orcm_cfgi_base_open(void)
     /* init globals */
     orcm_cfgi_base.num_active_apps = 0;
     orcm_cfgi_base.daemons = NULL;
-    
+    OBJ_CONSTRUCT(&orcm_cfgi_components_available, opal_list_t);
+    OBJ_CONSTRUCT(&orcm_cfgi_selected_modules, opal_list_t);
+
     /* Open up all available components */
     if (ORCM_SUCCESS != 
         mca_base_components_open("orcm_cfgi", orcm_cfgi_base.output, NULL,
-                                 &orcm_cfgi_base.opened, true)) {
+                                 &orcm_cfgi_components_available, true)) {
             return ORCM_ERROR;
         }
     
@@ -64,3 +68,8 @@ static int orcm_stub_finalize(void)
 {
     return ORCM_SUCCESS;
 }
+
+
+OBJ_CLASS_INSTANCE(orcm_cfgi_base_selected_module_t,
+                   opal_list_item_t,
+                   NULL, NULL);

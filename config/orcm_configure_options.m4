@@ -53,7 +53,7 @@ AC_MSG_RESULT([$ORTE_LDFLAGS])
 AC_MSG_CHECKING([for ORTE wrapper data files])
 AC_ARG_WITH([orte-wrapper-dir],
     [AC_HELP_STRING([--with-orte-wrapper-dir],
-                    [Directory where ORTE's wrapper data files are located])])
+                    [Directory where ORTE wrapper data files are located])])
 happy=0
 ORTE_WRAPPER_DATA_DIR="not found"
 AS_IF([test "$with_orte_wrapper_dir" != ""],
@@ -79,7 +79,7 @@ AS_IF([test "$happy" = 0],
 AC_MSG_CHECKING([for ORTE plugins])
 AC_ARG_WITH([orte-plugin-dir],
     [AC_HELP_STRING([--with-orte-plugin-dir],
-                    [Directory where ORTE's plugin files are located])])
+                    [Directory where ORTE plugin files are located])])
 happy=0
 ORTE_PLUGIN_DIR="not found"
 AS_IF([test "$with_orte_plugin_dir" != ""],
@@ -106,86 +106,6 @@ AS_IF([test "$happy" = 0],
        AC_MSG_WARN([Please use the --with-orte-plugin-dir option to specify])
        AC_MSG_WARN([their location.])
        AC_MSG_ERROR([Cannot continue.])])
-
-#
-# Check for confd support
-#
-# ORCM_CHECK_CONFD(prefix, [action-if-found], [action-if-not-found])
-# --------------------------------------------------------
-#AC_DEFUN([ORCM_CHECK_CONFD],[
-#    AC_ARG_WITH([confd],
-#        [AC_HELP_STRING([--with-confd(=DIR)],
-#             [Build CONFD support])])
-#    OMPI_CHECK_WITHDIR([confd], [$with_confd], [include/confd.h])
-#    AC_ARG_WITH([confd-libdir],
-#       [AC_HELP_STRING([--with-confd-libdir=DIR],
-#             [Search for CONFD libraries in DIR])])
-#    OMPI_CHECK_WITHDIR([confd-libdir], [$with_confd_libdir], [libconfd.*])
-#
-#    # Defaults
-#    orcm_check_confd_dir_msg="compiler default"
-#    orcm_check_confd_libdir_msg="linker default"
-#
-#    # Save directory names if supplied
-#    AS_IF([test ! -z "$with_confd" -a "$with_confd" != "yes"],
-#          [orcm_check_confd_dir="$with_confd"
-#           orcm_check_confd_dir_msg="$orcm_check_confd_dir (from --with-confd)"])
-#    AS_IF([test ! -z "$with_confd_libdir" -a "$with_confd_libdir" != "yes"],
-#          [orcm_check_confd_libdir="$with_confd_libdir"
-#           orcm_check_confd_libdir_msg="$orcm_check_confd_libdir (from --with-confd-libdir)"])
-#
-#    # If no directories were specified, look for CONFD_LIBDIR,
-#    # CONFD_INCLUDEDIR, and/or CONFD_ENVDIR.
-#    AS_IF([test -z "$orcm_check_confd_dir" -a -z "$orcm_check_confd_libdir"],
-#          [AS_IF([test ! -z "$CONFD_ENVDIR" -a -z "$CONFD_LIBDIR" -a -f "$CONFD_ENVDIR/confd.conf"],
-#                 [CONFD_LIBDIR=`egrep ^CONFD_LIBDIR= $CONFD_ENVDIR/confd.conf | cut -d= -f2-`])
-#           AS_IF([test ! -z "$CONFD_ENVDIR" -a -z "$CONFD_INCLUDEDIR" -a -f "$CONFD_ENVDIR/confd.conf"],
-#                 [CONFD_INCLUDEDIR=`egrep ^CONFD_INCLUDEDIR= $CONFD_ENVDIR/confd.conf | cut -d= -f2-`])
-#           AS_IF([test ! -z "$CONFD_LIBDIR"],
-#                 [orcm_check_confd_libdir=$CONFD_LIBDIR
-#                  orcm_check_confd_libdir_msg="$CONFD_LIBDIR (from \$CONFD_LIBDIR)"])
-#           AS_IF([test ! -z "$CONFD_INCLUDEDIR"],
-#                 [orcm_check_confd_dir=`dirname $CONFD_INCLUDEDIR`
-#                  orcm_check_confd_dir_msg="$orcm_check_confd_dir (from \$CONFD_INCLUDEDIR)"])])
-#
-#    AS_IF([test "$with_confd" = "no"],
-#          [orcm_check_confd_happy="no"],
-#          [orcm_check_confd_happy="yes"])
-#
-#    orcm_check_confd_$1_save_CPPFLAGS="$CPPFLAGS"
-#    orcm_check_confd_$1_save_LDFLAGS="$LDFLAGS"
-#    orcm_check_confd_$1_save_LIBS="$LIBS"
-#
-#    AS_IF([test "$orcm_check_confd_happy" = "yes"], 
-#          [AC_MSG_CHECKING([for CONFD dir])
-#           AC_MSG_RESULT([$orcm_check_confd_dir_msg])
-#           AC_MSG_CHECKING([for CONFD library dir])
-#           AC_MSG_RESULT([$orcm_check_confd_libdir_msg])
-#           OMPI_CHECK_PACKAGE([$1],
-#                              [confd.h],
-#                              [confd],
-#                              [confd_init],
-#                              [-lconfd],
-#                              [$orcm_check_confd_dir],
-#                              [$orcm_check_confd_libdir],
-#                              [orcm_check_confd_happy="yes"],
-#                              [orcm_check_confd_happy="no"])])
-#
-#    CPPFLAGS="$orcm_check_confd_$1_save_CPPFLAGS"
-#    LDFLAGS="$orcm_check_confd_$1_save_LDFLAGS"
-#    LIBS="$orcm_check_confd_$1_save_LIBS"
-#
-#    # Reset for the next time we're called
-#    orcm_check_confd_dir=
-#    orcm_check_confd_libdir=
-#
-#    AS_IF([test "$orcm_check_confd_happy" = "yes"],
-#          [$2],
-#          [AS_IF([test ! -z "$with_confd" -a "$with_confd" != "no"],
-#                 [AC_MSG_WARN([CONFD support requested (via --with-confd) but not found.])
-#                  AC_MSG_ERROR([Aborting.])])
-#           $3])
-#])
 
 #
 # Do we want to use script wrapper compilers
@@ -235,4 +155,6 @@ if test "$WANT_DEBUG" = "0"; then
     CFLAGS="-DNDEBUG -g $CFLAGS"
     CXXFLAGS="-DNDEBUG -g $CXXFLAGS"
 fi
+
+
 ])dnl

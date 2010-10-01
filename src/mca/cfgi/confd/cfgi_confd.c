@@ -30,6 +30,7 @@ typedef unsigned int boolean;
 #include "orte/util/context_fns.h"
 
 #include "mca/cfgi/cfgi.h"
+#include "mca/cfgi/base/public.h"
 
 static opal_pointer_array_t installed_apps;
 static orte_job_t *jdata;
@@ -83,6 +84,12 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
  * set up initial communication w/confd and register for callbacks
  * returns having requested from confd the startup config for all
  * subscription points
+ *
+ * NOTE: we have turned "off" two-phase commits for running and
+ * installation data. This is necessary because confd only allows
+ * ONE process to subscribe for validation, which would create a
+ * single point-of-failure in the system. Validation will therefore
+ * have to be done in a separate manner (TBD)
  */
 static boolean
 connect_to_confd (qc_confd_t *cc,
@@ -106,7 +113,7 @@ connect_to_confd (qc_confd_t *cc,
      * register a subscription to the install defaults
      */
     if (! qc_subscribe(cc,
-                       QC_SUB_CONFIG_2PHASE,
+                       QC_SUB_CONFIG,
                        QC_SUB_EOD_NOTIFY,       /* flags */
                        0,			/* priority */
                        orcm__ns,
@@ -118,7 +125,7 @@ connect_to_confd (qc_confd_t *cc,
      * register a subscription
      */
     if (! qc_subscribe(cc,
-                       QC_SUB_CONFIG_2PHASE,
+                       QC_SUB_CONFIG,
                        QC_SUB_EOD_NOTIFY,       /* flags */
                        5,			/* priority */
                        orcm__ns,
@@ -233,6 +240,7 @@ static int cfgi_confd_init(void)
     OBJ_CONSTRUCT(&installed_apps, opal_pointer_array_t);
     opal_pointer_array_init(&installed_apps, 16, INT_MAX, 16);
 
+    OPAL_OUTPUT_VERBOSE((1, orcm_cfgi_base.output, "cfgi:confd initialized"));
     return ORCM_SUCCESS;
 }
 
@@ -247,6 +255,8 @@ static int cfgi_confd_finalize(void)
     }
   }
     OBJ_DESTRUCT(&installed_apps);
+
+    OPAL_OUTPUT_VERBOSE((1, orcm_cfgi_base.output, "cfgi:confd finalized"));
     return ORCM_SUCCESS;
 }
 
@@ -303,8 +313,8 @@ static boolean parse(confd_hkeypath_t *kp,
                 OBJ_RELEASE(jdata);
                 return TRUE;
             } else if (CDB_SUB_COMMIT == notify_type) {
-                opal_output(0, "NOTIFY: COMMIT");
                 if (install) {
+                    opal_output(0, "NOTIFY: INSTALLING");
                     /* add this to the installed data array */
                     opal_pointer_array_add(&installed_apps, jdata);
                     /* display the result */
@@ -316,9 +326,9 @@ static boolean parse(confd_hkeypath_t *kp,
                     if (NULL == jdata) {
                         opal_output(0, "ERROR: SPAWN A NULL JOB");
                     } else {
-                        opal_output(0, "SPAWN %s", jdata->name);
-                    /* display the result */
-                    opal_dss.dump(0, jdata, ORTE_JOB);
+                        opal_output(0, "SPAWNING %s", jdata->name);
+                        /* display the result */
+                        opal_dss.dump(0, jdata, ORTE_JOB);
 #if 0
                         orte_plm.spawn(jdata);
 #endif
@@ -337,6 +347,7 @@ static boolean parse(confd_hkeypath_t *kp,
     
     switch (op) {
     case MOP_CREATED:
+        opal_output(0, "CREATED_OP");
         switch(CONFD_GET_XMLTAG(&kp->v[1][0])) {
         case orcm_app:
             /* new job */
@@ -355,6 +366,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 opal_output(0, "NO ACTIVE JOB FOR VALUE SET");
                 break;
             }
+            
             app = OBJ_NEW(orte_app_context_t);
             vp = qc_find_key(kp, orcm_exec, 0);
             if (NULL == vp) {
@@ -362,8 +374,10 @@ static boolean parse(confd_hkeypath_t *kp,
                 break;
             }
             app->name = strdup(CONFD_GET_CBUFPTR(vp));
+            opal_output(0, "NEW APP %s", app->name);
+            app->idx = jdata->num_apps;
             jdata->num_apps++;
-            app->idx = opal_pointer_array_add(jdata->apps, app);
+            opal_pointer_array_set_item(jdata->apps, app->idx, app);
             break;
         case orcm_app_instance:
             /* run an instance of a possibly installed app */
@@ -402,6 +416,7 @@ static boolean parse(confd_hkeypath_t *kp,
         opal_output(0, "MOP_DELETED NOT YET IMPLEMENTED");
         break;
     case MOP_VALUE_SET:
+        opal_output(0, "VALUE_SET");
         switch(qc_get_xmltag(kp,1)) {
             /* JOB-LEVEL VALUES */
         case orcm_app_name:
@@ -423,7 +438,8 @@ static boolean parse(confd_hkeypath_t *kp,
                      * to serve as a default starting point
                      */
                     opal_output(0, "COPYING DEFAULTS FOR APP %s TO INSTANCE %s", jdata->name, jdata->instance);
-                    copy_defaults(jdat, jdata);
+                    copy_defaults(jdata, jdat);
+                    opal_dss.dump(0, jdata, ORTE_JOB);
                     break;
                 }
             }
@@ -441,6 +457,7 @@ static boolean parse(confd_hkeypath_t *kp,
             break;
         case orcm_exec_name:
         case orcm_path:
+            opal_output(0, "PATH");
             app->app = strdup(CONFD_GET_CBUFPTR(value));
             /* get the basename and install it as argv[0] */
             cptr = opal_basename(app->app);
@@ -1290,7 +1307,9 @@ static orte_app_context_t *get_exec(orte_job_t *jdat,
 
     app = OBJ_NEW(orte_app_context_t);
     app->name = strdup(name);
-    app->idx = opal_pointer_array_add(jdat->apps, app);
+    app->idx =jdat->num_apps;
+    jdat->num_apps++;
+    opal_pointer_array_set_item(jdat->apps, app->idx, app);
     return app;
 }
 
