@@ -227,6 +227,24 @@ confd_nanny (void *arg)
 static int cfgi_confd_init(void)
 {
     pthread_t confd_nanny_id;
+    qc_confd_t cc;
+
+    OBJ_CONSTRUCT(&installed_apps, opal_pointer_array_t);
+    opal_pointer_array_init(&installed_apps, 16, INT_MAX, 16);
+
+    /* probe to see if the confd daemon is present */
+    if (! connect_to_confd(&cc, "orcm", stderr)) {
+        /* wait a little and try again */
+        qc_close(&cc);
+        sleep(1);
+        if (! connect_to_confd(&cc, "orcm", stderr)) {
+            /* must not be running - ignore this module */
+            qc_close(&cc);
+            return ORCM_ERR_NOT_AVAILABLE;
+        }
+    }
+    /* close the connection so the thread can maintain it */
+    qc_close(&cc);
 
     if (pthread_create(&confd_nanny_id,
 		       NULL,            /* thread attributes */
@@ -236,9 +254,6 @@ static int cfgi_confd_init(void)
 
         return ORCM_ERROR;
     }
-
-    OBJ_CONSTRUCT(&installed_apps, opal_pointer_array_t);
-    opal_pointer_array_init(&installed_apps, 16, INT_MAX, 16);
 
     OPAL_OUTPUT_VERBOSE((1, orcm_cfgi_base.output, "cfgi:confd initialized"));
     return ORCM_SUCCESS;
