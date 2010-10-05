@@ -51,14 +51,11 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
     orte_daemon_cmd_flag_t command;
     orte_rml_tag_t rmltag=ORTE_RML_TAG_INVALID;
     
-    if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, 0))) {
-        ORTE_ERROR_LOG(ORTE_ERR_BAD_PARAM);
-        return ORTE_ERR_BAD_PARAM;
-    }
-
     OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                         "%s spawn:app: %s",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), app->app));
+                         "%s spawn:app: %s:%s",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         (NULL == jdata->name) ? "UNNAMED" : jdata->name,
+                         (NULL == jdata->instance) ? " " : jdata->instance));
     
     /* see if this is a pre-existing job */
     jlaunch = NULL;
@@ -204,6 +201,7 @@ int orcm_cfgi_base_kill_app(opal_buffer_t *buffer)
     orte_proc_t *proctmp;
     orte_daemon_cmd_flag_t command;
     orte_rml_tag_t rmltag=ORTE_RML_TAG_INVALID;
+    bool found=false;
 
     /* construct the cmd buffer */
     OBJ_CONSTRUCT(&bfr, opal_buffer_t);
@@ -246,14 +244,12 @@ int orcm_cfgi_base_kill_app(opal_buffer_t *buffer)
                 /* job is already terminated */
                 continue;
             }
-            /* retrieve the app */
-            if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, 0))) {
-                /* youch - this won't work */
-                ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
-                rc = ORTE_ERR_NOT_FOUND;
-                goto cleanup_kill;
-            }
-            if (0 == strcasecmp(cmd, app->app)) {
+            if (0 == strcasecmp(cmd, jdata->name)) {
+                OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                     "%s killing app %s job %s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     cmd, ORTE_JOBID_PRINT(jdata->jobid)));
+                found = true;
                 if (NULL == replicas) {
                     /* killall procs of this jobid */
                     proctmp = OBJ_NEW(orte_proc_t);
@@ -276,12 +272,24 @@ int orcm_cfgi_base_kill_app(opal_buffer_t *buffer)
     } else {
         rc = ORTE_SUCCESS;
     }
+    /* if we didn't find anything, then do nothing - if we don't kick
+     * out here, then we would send a kill command with nothing in
+     * the array, which ORTE translates into "kill everything"
+     */
+    if (!found) {
+        goto cleanup_kill;
+    }
+
     /* now execute the kill cmd */
  execute_kill:
     opal_dss.pack(&bfr, &j, 1, OPAL_INT32);
     if (0 < j) {
         for (n=0; n < killapps.size; n++) {
             if (NULL != (proctmp = (orte_proc_t*)opal_pointer_array_get_item(&killapps, n))) {
+                OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                     "%s ordering kill of %s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     ORTE_NAME_PRINT(&proctmp->name)));
                 opal_dss.pack(&bfr, &(proctmp->name), 1, ORTE_NAME);
             }
         }

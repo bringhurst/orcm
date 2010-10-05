@@ -36,6 +36,10 @@ typedef unsigned int boolean;
 static opal_pointer_array_t installed_apps;
 static orte_job_t *jdata;
 static orte_app_context_t *app;
+static opal_mutex_t internal_lock;
+static opal_condition_t internal_cond;
+static bool waiting;
+static bool thread_active;
 
 static orte_job_t *get_app(char *name, bool create);
 static orte_app_context_t *get_exec(orte_job_t *jdat,
@@ -197,14 +201,28 @@ confd_nanny (void *arg)
      * confd interface state
      */
     qc_confd_t cc;
-
+    int num_tries=0;
+    struct timespec delay = {0, 1000};
     /*
      * retry the connection setup until it succeeds
      */
     while (! connect_to_confd(&cc, "orcm", stderr)) {
-        sleep(1);
+        if (2 == num_tries) {
+            opal_output(0, "Confd daemon not found - confd module inactive");
+            thread_active = false;
+            waiting = false;
+            opal_condition_signal(&internal_cond);
+            OPAL_THREAD_UNLOCK(&internal_lock);
+            return NULL;
+        }
+        num_tries++;
+        nanosleep(&delay, NULL);
         qc_close(&cc);
     }
+    thread_active = true;
+    waiting = false;
+    opal_condition_signal(&internal_cond);
+    OPAL_THREAD_UNLOCK(&internal_lock);
 
     /*
      * loop forever handling events, and reconnecting when needed
@@ -233,27 +251,24 @@ static int cfgi_confd_init(void)
     OBJ_CONSTRUCT(&installed_apps, opal_pointer_array_t);
     opal_pointer_array_init(&installed_apps, 16, INT_MAX, 16);
 
-    /* probe to see if the confd daemon is present */
-    if (! connect_to_confd(&cc, "orcm", stderr)) {
-        /* wait a little and try again */
-        qc_close(&cc);
-        sleep(1);
-        if (! connect_to_confd(&cc, "orcm", stderr)) {
-            /* must not be running - ignore this module */
-            opal_output(0, "No detected confd daemon - ignoring confd");
-            qc_close(&cc);
-            return ORCM_ERR_NOT_AVAILABLE;
-        }
-    }
-    /* close the connection so the thread can maintain it */
-    qc_close(&cc);
+    OBJ_CONSTRUCT(&internal_lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&internal_cond, opal_condition_t);
+    waiting = true;
+    thread_active = false;
 
+    OPAL_THREAD_LOCK(&internal_lock);
     if (pthread_create(&confd_nanny_id,
 		       NULL,            /* thread attributes */
 		       confd_nanny,
 		       NULL             /* thread parameter */) < 0) {
-        opal_output(0, "Could not create confd nanny");
+        return ORCM_ERROR;
+    }
+    while (waiting) {
+        opal_condition_wait(&internal_cond, &internal_lock);
+    }
 
+    if (!thread_active) {
+        /* we were unable to contact confd daemon */
         return ORCM_ERROR;
     }
 
@@ -265,6 +280,9 @@ static int cfgi_confd_finalize(void)
 {
   int i;
   orte_job_t *jd;
+
+  OBJ_DESTRUCT(&internal_lock);
+  OBJ_DESTRUCT(&internal_cond);
 
   for (i=0; i < installed_apps.size; i++) {
     if (NULL != (jd = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, i))) {

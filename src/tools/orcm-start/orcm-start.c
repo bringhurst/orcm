@@ -68,6 +68,8 @@
 static struct {
     bool help;
     char *appfile;
+    char *name;
+    char *instance;
     int num_procs;
     char *wdir;
     char *path;
@@ -90,6 +92,16 @@ opal_cmd_line_init_t cmd_line_opts[] = {
     { NULL, NULL, NULL, '\0', NULL, "app", 1,
       &my_globals.appfile, OPAL_CMD_LINE_TYPE_STRING,
       "Provide an appfile; ignore all other command line options" },
+
+    /* Name of the job */
+    { NULL, NULL, NULL, '\0', NULL, "app-name", 1,
+      &my_globals.name, OPAL_CMD_LINE_TYPE_STRING,
+      "Name of the application" },
+
+    /* Name of the instance */
+    { NULL, NULL, NULL, '\0', NULL, "instance", 1,
+      &my_globals.instance, OPAL_CMD_LINE_TYPE_STRING,
+      "Name of the instance of this application" },
 
     { NULL, NULL, NULL, 'n', "np", "np", 1,
       &my_globals.num_procs, OPAL_CMD_LINE_TYPE_INT,
@@ -158,8 +170,8 @@ static void ack_recv(int status,
 static void parse_apps(orte_job_t *jdata, int argc, char *argv[]);
 static int create_app(int argc, char* argv[], orte_app_context_t **app,
                       bool *made_app, char ***app_env, orte_job_t *jdata);
-static int parse_appfile(orte_job_t *jdata, char *filename, char ***env);
-static int capture_cmd_line_params(int argc, int start, char **argv);
+static int parse_appfile(opal_buffer_t *buf);
+static int capture_cmd_line_params(int argc, int start, char **argv, char***app_env);
 
 
 int main(int argc, char *argv[])
@@ -195,6 +207,8 @@ int main(int argc, char *argv[])
     /* initialize the globals */
     my_globals.help = false;
     my_globals.appfile = NULL;
+    my_globals.name = NULL;
+    my_globals.instance = NULL;
     my_globals.num_procs = 0;
     my_globals.wdir = NULL;
     my_globals.path = NULL;
@@ -213,6 +227,9 @@ int main(int argc, char *argv[])
     mca_base_open();
     mca_base_cmd_line_setup(&cmd_line);
     ret = opal_cmd_line_parse(&cmd_line, true, argc, argv);
+    
+    /* extract the MCA/GMCA params */
+    mca_base_cmd_line_process_args(&cmd_line, &environ, &environ);
     
     /**
      * Now start parsing our specific arguments
@@ -318,7 +335,7 @@ int main(int argc, char *argv[])
         }
     }
 
-   /* get the current working directory */
+    /* get the current working directory */
     if (OPAL_SUCCESS != opal_getcwd(cwd, sizeof(cwd))) {
         fprintf(stderr, "failed to get cwd\n");
         return ORTE_ERR_NOT_FOUND;
@@ -367,36 +384,56 @@ int main(int argc, char *argv[])
     /* load the start cmd */
     opal_dss.pack(&buf, &flag, 1, ORCM_TOOL_CMD_T);
     
-    /* setup the job object to be launched */
-    jdata = OBJ_NEW(orte_job_t);
+    if (NULL != my_globals.appfile) {
+        if (ORCM_SUCCESS != parse_appfile(&buf)) {
+            goto cleanup;
+        }
+    } else {
+        /* setup the job object to be launched */
+        jdata = OBJ_NEW(orte_job_t);
+        if (NULL != my_globals.name) {
+            jdata->name = strdup(my_globals.name);
+        }
+        if (NULL != my_globals.instance) {
+            jdata->instance = strdup(my_globals.instance);
+        }
 
-    /* set the spin flag */
-    if (my_globals.gdb) {
-        jdata->controls |= ORTE_JOB_CONTROL_SPIN_FOR_DEBUG;
-    }
+        /* set the spin flag */
+        if (my_globals.gdb) {
+            jdata->controls |= ORTE_JOB_CONTROL_SPIN_FOR_DEBUG;
+        }
 
-    /* set the continuous flag */
-    if (my_globals.continuous) {
-        jdata->controls |= ORTE_JOB_CONTROL_CONTINUOUS_OP;
-    }
-    
-    /* setup the application(s) */
-    parse_apps(jdata, argc, argv);
+        /* set the continuous flag */
+        if (my_globals.continuous) {
+            jdata->controls |= ORTE_JOB_CONTROL_CONTINUOUS_OP;
+        }
 
-    /* save the first app's name */
-    app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, 0);
-    if (NULL == app) {
-        opal_output(0, "Need to specify at least one app");
-        goto cleanup;
-    }
-    app_launched = strdup(app->app);
+        /* setup the application(s) */
+        parse_apps(jdata, argc, argv);
 
-    /* pack the job object */
-    if (ORTE_SUCCESS != (ret = opal_dss.pack(&buf, &jdata, 1, ORTE_JOB))) {
-        ORTE_ERROR_LOG(ret);
+        /* if no apps were given, then abort */
+        if (0 == jdata->num_apps) {
+            opal_output(0, "NO APPS GIVEN");
+            goto cleanup;
+        }
+
+        /* if it wasn't given, set the default app name */
+        if (NULL == jdata->name) {
+            app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, 0);
+            jdata->name = strdup(app->app);
+        }
+        /* save the job's name */
+        app_launched = strdup(jdata->name);
+
+        /* pack the job object */
+        if (ORTE_SUCCESS != (ret = opal_dss.pack(&buf, &jdata, 1, ORTE_JOB))) {
+            ORTE_ERROR_LOG(ret);
+            OBJ_RELEASE(jdata);
+            OBJ_DESTRUCT(&buf);
+            goto cleanup;
+        }
+        /* done with this */
         OBJ_RELEASE(jdata);
-        OBJ_DESTRUCT(&buf);
-        goto cleanup;
     }
 
     if (ORCM_SUCCESS != (ret = orcm_pnp.output(ORCM_PNP_GROUP_OUTPUT_CHANNEL,
@@ -578,22 +615,6 @@ static int create_app(int argc, char* argv[], orte_app_context_t **app_ptr,
 
     *made_app = false;
 
-    /* Pre-process the command line if we are going to parse an appfile later.
-     * save any mca command line args so they can be passed
-     * separately to the daemons.
-     * Use Case:
-     *  $ cat launch.appfile
-     *  -np 1 -mca aaa bbb ./my-app -mca ccc ddd
-     *  -np 1 -mca aaa bbb ./my-app -mca eee fff
-     *  $ mpirun -np 2 -mca foo bar --app launch.appfile
-     * Only pick up '-mca foo bar' on this pass.
-     */
-    if (NULL != my_globals.appfile) {
-        if (ORTE_SUCCESS != (rc = capture_cmd_line_params(argc, 0, argv))) {
-            goto cleanup;
-        }
-    }
-    
     /* Parse application command line options. */
 
     opal_cmd_line_create(&cmd_line, cmd_line_opts);
@@ -601,16 +622,10 @@ static int create_app(int argc, char* argv[], orte_app_context_t **app_ptr,
     cmd_line_made = true;
     rc = opal_cmd_line_parse(&cmd_line, true, argc, argv);
     if (ORTE_SUCCESS != rc) {
+        opal_output(0, "FAILED TO PARSE CMD LINE");
         goto cleanup;
     }
-    mca_base_cmd_line_process_args(&cmd_line, app_env, &global_mca_env);
-
-    /* Is there an appfile in here? */
-
-    if (NULL != my_globals.appfile) {
-        OBJ_DESTRUCT(&cmd_line);
-        return parse_appfile(jdata, strdup(my_globals.appfile), app_env);
-    }
+    mca_base_cmd_line_process_args(&cmd_line, app_env, NULL);
 
     /* Setup application context */
 
@@ -640,17 +655,6 @@ static int create_app(int argc, char* argv[], orte_app_context_t **app_ptr,
         app->constrain = true;
     }    
 
-    /*
-     * Get mca parameters so we can pass them to the daemons.
-     * Use the count determined above to make sure we do not go past
-     * the executable name. Example:
-     *   mpirun -np 2 -mca foo bar ./my-app -mca bip bop
-     * We want to pick up '-mca foo bar' but not '-mca bip bop'
-     */
-    if (ORTE_SUCCESS != (rc = capture_cmd_line_params(argc, count, argv))) {
-        goto cleanup;
-    }
-    
     /* Grab all OMPI_* environment variables */
 
     app->env = opal_argv_copy(*app_env);
@@ -671,6 +675,20 @@ static int create_app(int argc, char* argv[], orte_app_context_t **app_ptr,
         }
     }
     
+#if 0
+    /*
+     * Get mca parameters so we can pass them to the app.
+     * Use the count determined above to make sure we do not go past
+     * the executable name. Example:
+     *   mpirun -np 2 -mca foo bar ./my-app -mca bip bop
+     * We want to pick up '-mca foo bar' but not '-mca bip bop'
+     */
+    if (ORTE_SUCCESS != (rc = capture_cmd_line_params(argc, count, argv, &app->env))) {
+        ORTE_ERROR_LOG(rc);
+        goto cleanup;
+    }
+#endif
+
     /* tell the app to use the right ess module */
     opal_setenv("OMPI_MCA_ess", "orcmapp", true, &app->env);
 
@@ -831,7 +849,7 @@ static int create_app(int argc, char* argv[], orte_app_context_t **app_ptr,
 }
 
 
-static int parse_appfile(orte_job_t *jdata, char *filename, char ***env)
+static int parse_appfile(opal_buffer_t *buf)
 {
     size_t i, len;
     FILE *fp;
@@ -842,22 +860,15 @@ static int parse_appfile(orte_job_t *jdata, char *filename, char ***env)
     bool blank, made_app;
     char bogus[] = "bogus ";
     char **tmp_env;
-
-    /*
-     * Make sure to clear out this variable so we don't do anything odd in
-     * app_create()
-     */
-    if( NULL != my_globals.appfile ) {
-        free( my_globals.appfile );
-        my_globals.appfile =     NULL;
-    }
+    orte_job_t *jdata = NULL;
+    char *filename;
+    char ***env;
 
     /* Try to open the file */
-
-    fp = fopen(filename, "r");
+    fp = fopen(my_globals.appfile, "r");
     if (NULL == fp) {
         orte_show_help("help-orterun.txt", "orterun:appfile-not-found", true,
-                       filename);
+                       my_globals.appfile);
         return ORTE_ERR_NOT_FOUND;
     }
 
@@ -921,42 +932,51 @@ static int parse_appfile(orte_job_t *jdata, char *filename, char ***env)
         argv = opal_argv_split(line, ' ');
         argc = opal_argv_count(argv);
         if (argc > 0) {
-
-            /* Create a temporary env to use in the recursive call --
-               that is: don't disturb the original env so that we can
-               have a consistent global env.  This allows for the
-               case:
-
-                   orterun --mca foo bar --appfile file
-
-               where the "file" contains multiple apps.  In this case,
-               each app in "file" will get *only* foo=bar as the base
-               environment from which its specific environment is
-               constructed. */
-
-            if (NULL != *env) {
-                tmp_env = opal_argv_copy(*env);
-                if (NULL == tmp_env) {
-                    return ORTE_ERR_OUT_OF_RESOURCE;
+            if (0 == strcmp(argv[1], "app-grp:")) {
+                /* if the jdata is already active, then we need to pack
+                 * it before creating the next
+                 */
+                if (NULL != jdata) {
+                    if (ORCM_SUCCESS != (rc = opal_dss.pack(buf, &jdata, 1, ORTE_JOB))) {
+                        ORTE_ERROR_LOG(rc);
+                        OBJ_RELEASE(jdata);
+                        return rc;
+                    }
+                    jdata = NULL;
+                    app_num = 0;
+                }
+                /* setup the job object */
+                jdata = OBJ_NEW(orte_job_t);
+                if (2 < argc && NULL != argv[2]) {
+                    jdata->name = strdup(argv[2]);
+                }
+                if (3 < argc && NULL != argv[3]) {
+                    jdata->instance = strdup(argv[3]);
                 }
             } else {
                 tmp_env = NULL;
-            }
-
-            rc = create_app(argc, argv, &app, &made_app, &tmp_env, jdata);
-            if (ORTE_SUCCESS != rc) {
-                /* Assume that the error message has already been
-                   printed; no need to cleanup -- we can just exit */
-                exit(1);
-            }
-            if (NULL != tmp_env) {
-                opal_argv_free(tmp_env);
-            }
-            if (made_app) {
-                app->idx = app_num;
-                ++app_num;
-                opal_pointer_array_add(jdata->apps, app);
-                ++jdata->num_apps;
+                if (NULL == jdata) {
+                    /* may not have provided an app-grp */
+                    jdata = OBJ_NEW(orte_job_t);
+                }
+                rc = create_app(argc, argv, &app, &made_app, &tmp_env, jdata);
+                if (ORTE_SUCCESS != rc) {
+                    /* Assume that the error message has already been
+                       printed; no need to cleanup -- we can just exit */
+                    if (NULL == jdata) {
+                        /* may not have provided an app-grp */
+                        jdata = OBJ_NEW(orte_job_t);
+                    }
+                }
+                if (NULL != tmp_env) {
+                    opal_argv_free(tmp_env);
+                }
+                if (made_app) {
+                    app->idx = app_num;
+                    ++app_num;
+                    opal_pointer_array_add(jdata->apps, app);
+                    ++jdata->num_apps;
+                }
             }
         }
     } while (!feof(fp));
@@ -964,11 +984,17 @@ static int parse_appfile(orte_job_t *jdata, char *filename, char ***env)
 
     /* All done */
 
-    free(filename);
+    if (NULL != jdata) {
+        if (ORCM_SUCCESS != (rc = opal_dss.pack(buf, &jdata, 1, ORTE_JOB))) {
+            ORTE_ERROR_LOG(rc);
+            OBJ_RELEASE(jdata);
+            return rc;
+        }
+    }
     return ORTE_SUCCESS;
 }
 
-static int capture_cmd_line_params(int argc, int start, char **argv)
+static int capture_cmd_line_params(int argc, int start, char **argv, char***app_env)
 {
     int i, j, k;
     bool ignore;
@@ -979,6 +1005,7 @@ static int capture_cmd_line_params(int argc, int start, char **argv)
         "routed",
         NULL
     };
+    char *tmp, **env = *app_env;
     
     for (i = 0; i < (argc-start); ++i) {
         if (0 == strcmp("-mca",  argv[i]) ||
@@ -997,9 +1024,9 @@ static int capture_cmd_line_params(int argc, int start, char **argv)
              * avoid growing the cmd line with duplicates
              */
             ignore = false;
-            if (NULL != orted_cmd_line) {
-                for (j=0; NULL != orted_cmd_line[j]; j++) {
-                    if (0 == strcmp(argv[i+1], orted_cmd_line[j])) {
+            if (NULL != *app_env) {
+                for (j=0; NULL != env[j]; j++) {
+                    if (0 == strcmp(argv[i+1], env[j])) {
                         /* already here - if the value is the same,
                          * we can quitely ignore the fact that they
                          * provide it more than once. However, some
@@ -1008,7 +1035,7 @@ static int capture_cmd_line_params(int argc, int start, char **argv)
                          * to know this, but we at least make a crude
                          * attempt here to protect ourselves.
                          */
-                        if (0 == strcmp(argv[i+2], orted_cmd_line[j+1])) {
+                        if (0 == strcmp(argv[i+2], env[j+1])) {
                             /* values are the same */
                             ignore = true;
                             break;
@@ -1020,8 +1047,8 @@ static int capture_cmd_line_params(int argc, int start, char **argv)
                                      * and abort as we cannot know which one is correct
                                      */
                                     orte_show_help("help-orterun.txt", "orterun:conflicting-params",
-                                                   true, "orcm-start", argv[i+1],
-                                                   argv[i+2], orted_cmd_line[j+1]);
+                                                   true, "cfgi-file", argv[i+1],
+                                                   argv[i+2], env[j+1]);
                                     return ORTE_ERR_BAD_PARAM;
                                 }
                             }
@@ -1033,9 +1060,9 @@ static int capture_cmd_line_params(int argc, int start, char **argv)
                 }
             }
             if (!ignore) {
-                opal_argv_append_nosize(&orted_cmd_line, argv[i]);
-                opal_argv_append_nosize(&orted_cmd_line, argv[i+1]);
-                opal_argv_append_nosize(&orted_cmd_line, argv[i+2]);
+                asprintf(&tmp, "OMPI_MCA_%s", argv[i+1]);
+                opal_setenv(tmp, argv[i+2], true, app_env);
+                free(tmp);
             }
             i += 2;
         }

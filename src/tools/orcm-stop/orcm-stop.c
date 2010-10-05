@@ -107,7 +107,6 @@ int main(int argc, char *argv[])
 {
     int32_t ret, i;
     opal_cmd_line_t cmd_line;
-    char *cmd;
     char **inpt;
     opal_buffer_t buf;
     int count;
@@ -303,15 +302,7 @@ int main(int argc, char *argv[])
     
     /* for each app */
     for (i=0; NULL != inpt[i]; i++) {
-        /* get the absolute path */
-        if (NULL == (cmd = opal_find_absolute_path(inpt[i]))) {
-            opal_output(orte_clean_output, "App %s could not be found - try changing path\n", inpt[i]);
-            opal_argv_free(inpt);
-            OBJ_DESTRUCT(&buf);
-            goto cleanup;
-        }
-        opal_dss.pack(&buf, &cmd, 1, OPAL_STRING);
-        free(cmd);
+        opal_dss.pack(&buf, &inpt[i], 1, OPAL_STRING);
         /* pack the replicas to be stopped */
         opal_dss.pack(&buf, &my_globals.replicas, 1, OPAL_STRING);
     }
@@ -366,5 +357,5 @@ static void ack_recv(int status,
     }
 
     /* the fact we recvd this is enough */
-    orte_quit();
+    exit(0);
 }

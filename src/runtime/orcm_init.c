@@ -105,7 +105,9 @@ int orcm_init(orcm_proc_type_t flags)
         goto error;
     }
 
-    trap_signals();
+    if (ORCM_PROC_IS_MASTER || ORCM_PROC_IS_DAEMON) {
+        trap_signals();
+    }
 
     orcm_initialized = true;
     
@@ -230,21 +232,6 @@ static void signal_trap(int fd, short flags, void *arg)
 {
     int i;
 
-    /* We are in an event handler; the exit procedure
-     * will delete the signal handler that is currently running
-     * (which is a Bad Thing), so we can't call it directly.
-     * Instead, we have to exit this handler and setup to call
-     * exit after this.
-     */
-    /* if we are an app, just cleanly terminate */
-    if (ORCM_PROC_IS_APP || ORCM_PROC_IS_TOOL) {
-        if (!opal_atomic_trylock(&orte_abort_inprogress_lock)) { /* returns 1 if already locked */
-            return;
-        }
-        ORTE_TIMER_EVENT(0, 0, just_quit);
-        return;
-    }
-    
     /* if we are a daemon or HNP, allow for a forced term */
     if (!opal_atomic_trylock(&orte_abort_inprogress_lock)) { /* returns 1 if already locked */
         if (forcibly_die) {

@@ -46,6 +46,9 @@ int orcm_cfgi_base_select(void)
         cli = (mca_base_component_list_item_t *) item;
         component = (mca_base_component_t *) cli->cli_component;
 
+        opal_output_verbose(5, orcm_cfgi_base.output,
+                            "mca:cfgi:select: checking available component %s", component->mca_component_name);
+
         /* If there's no query function, skip it */
         if (NULL == component->mca_query_component) {
             opal_output_verbose(5, orcm_cfgi_base.output,
