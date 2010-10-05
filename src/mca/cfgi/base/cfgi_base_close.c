@@ -38,5 +38,8 @@ int orcm_cfgi_base_close(void)
     mca_base_components_close(orcm_cfgi_base.output, 
                               &orcm_cfgi_components_available, NULL);
     
+    OBJ_DESTRUCT(&orcm_cfgi_base.lock);
+    OBJ_DESTRUCT(&orcm_cfgi_base.cond);
+
     return ORCM_SUCCESS;
 }

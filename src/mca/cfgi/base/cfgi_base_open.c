@@ -42,7 +42,10 @@ int orcm_cfgi_base_open(void)
      verbose set by the mca open system... */
     orcm_cfgi_base.output = opal_output_open(NULL);
     
-    /* init globals */
+    /* init the globals */
+    OBJ_CONSTRUCT(&orcm_cfgi_base.lock, opal_mutex_t);
+    OBJ_CONSTRUCT(&orcm_cfgi_base.cond, opal_condition_t);
+    orcm_cfgi_base.active = false;
     orcm_cfgi_base.num_active_apps = 0;
     orcm_cfgi_base.daemons = NULL;
     OBJ_CONSTRUCT(&orcm_cfgi_components_available, opal_list_t);

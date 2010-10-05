@@ -153,6 +153,9 @@ static int file_init(void)
         return ORTE_ERR_NOT_FOUND;
     }
 
+    /* wait for any existing action to complete */
+    OPAL_ACQUIRE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
+
     /* Read in line by line */
     line[sizeof(line) - 1] = '\0';
     do {
@@ -268,6 +271,8 @@ static int file_init(void)
         }
     }
 
+    /* release the thread */
+    OPAL_RELEASE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
     return rc;
 }
 

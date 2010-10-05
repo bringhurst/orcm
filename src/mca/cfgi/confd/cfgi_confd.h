@@ -26,6 +26,7 @@ typedef struct {
     char *mode;
     char *ns;
     FILE *log_stream;
+    bool test_mode;
 } orcm_cfgi_confd_component_t;
 
 ORCM_DECLSPEC extern orcm_cfgi_confd_component_t mca_orcm_cfgi_confd_component;

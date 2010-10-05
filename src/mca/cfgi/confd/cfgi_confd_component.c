@@ -44,6 +44,7 @@ orcm_cfgi_confd_component_t mca_orcm_cfgi_confd_component = {
 int orcm_cfgi_confd_component_open(void)
 {
     mca_base_component_t *c = &mca_orcm_cfgi_confd_component.super.cfgic_version;
+    int tmp;
 
     /* check for confd name */
     mca_base_param_reg_string(c, "db_name",
@@ -64,6 +65,12 @@ int orcm_cfgi_confd_component_open(void)
     mca_base_param_reg_string(c, "namespace",
                               "Set namespace",
                               false, false, "confd-example", &mca_orcm_cfgi_confd_component.ns);
+
+    /* whether we are just testing the interface */
+    mca_base_param_reg_int(c, "test_mode",
+                           "Set test mode - just output received commands",
+                           false, false, 0, &tmp);
+    mca_orcm_cfgi_confd_component.test_mode = OPAL_INT_TO_BOOL(tmp);
 
     return ORCM_SUCCESS;
 }

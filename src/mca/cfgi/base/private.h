@@ -18,6 +18,8 @@
 
 #include "orte/runtime/orte_globals.h"
 
+#include "mca/cfgi/cfgi.h"
+
 BEGIN_C_DECLS
 
 ORCM_DECLSPEC int orcm_cfgi_base_spawn_app(orte_job_t *jdata);

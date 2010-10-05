@@ -50,9 +50,6 @@
 
 static int tool_init(void);
 static int tool_finalize(void);
-static opal_mutex_t lock;
-static opal_condition_t cond;
-static bool active;
 
 /* The module struct */
 
@@ -73,11 +70,6 @@ static int tool_init(void)
 {
     int ret;
     
-    /* init the globals */
-    OBJ_CONSTRUCT(&lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&cond, opal_condition_t);
-    active = false;
-
     /* register to catch launch requests */
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-start", "0.1", "alpha",
                                                          ORCM_PNP_GROUP_OUTPUT_CHANNEL,
@@ -112,9 +104,6 @@ static int tool_init(void)
 
 static int tool_finalize(void)
 {
-    OBJ_DESTRUCT(&lock);
-    OBJ_DESTRUCT(&cond);
-
     /* cannot cancel the recvs as the pnp framework will
      * already have been closed
      */
@@ -149,11 +138,10 @@ static void tool_messages(int status,
     orcm_tool_cmd_t flag=ORCM_TOOL_ILLEGAL_CMD;
 
     /* wait for any existing action to complete */
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    OPAL_ACQUIRE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
     OPAL_OUTPUT_VERBOSE((1, orcm_cfgi_base.output,
                          "%s cfgi:tool released to process cmd",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-    active = true;
 
     /* setup the response - we send it regardless so the tool won't hang */
     response = OBJ_NEW(opal_buffer_t);
@@ -214,7 +202,7 @@ static void tool_messages(int status,
     /* return the result of the cmd */
     opal_dss.pack(response, &rc, 1, OPAL_INT);
     /* release the thread */
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    OPAL_RELEASE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
     if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
                                                  sender, ORCM_PNP_TAG_TOOL,
                                                  NULL, 0, response, cbfunc, NULL))) {

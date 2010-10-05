@@ -31,6 +31,7 @@ typedef unsigned int boolean;
 
 #include "mca/cfgi/cfgi.h"
 #include "mca/cfgi/base/public.h"
+#include "cfgi_confd.h"
 
 static opal_pointer_array_t installed_apps;
 static orte_job_t *jdata;
@@ -100,7 +101,7 @@ connect_to_confd (qc_confd_t *cc,
      * initialize the connection to confd
      * the last parameter is { CONFD_SILENT, CONFD_DEBUG, CONFD_TRACE }
      */
-    if (! qc_confd_init(cc, log_prefix, log_file, CONFD_TRACE))
+    if (! qc_confd_init(cc, log_prefix, log_file, CONFD_SILENT))
         return FALSE;
 
     /*
@@ -239,6 +240,7 @@ static int cfgi_confd_init(void)
         sleep(1);
         if (! connect_to_confd(&cc, "orcm", stderr)) {
             /* must not be running - ignore this module */
+            opal_output(0, "No detected confd daemon - ignoring confd");
             qc_close(&cc);
             return ORCM_ERR_NOT_AVAILABLE;
         }
@@ -301,8 +303,11 @@ static boolean parse(confd_hkeypath_t *kp,
     char *cptr, *param;
     unsigned int i, imax;
     int32_t i32;
-    int j;
+    int rc, j;
     orte_job_t *jdat;
+
+    /* wait for any existing action to complete */
+    OPAL_ACQUIRE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
 
     if (NULL == kp) {
         /* process the cmd */
@@ -329,11 +334,13 @@ static boolean parse(confd_hkeypath_t *kp,
                 return TRUE;
             } else if (CDB_SUB_COMMIT == notify_type) {
                 if (install) {
-                    opal_output(0, "NOTIFY: INSTALLING");
+                    if (mca_orcm_cfgi_confd_component.test_mode) {
+                        opal_output(0, "NOTIFY: INSTALLING");
+                        /* display the result */
+                        opal_dss.dump(0, jdata, ORTE_JOB);
+                    }
                     /* add this to the installed data array */
                     opal_pointer_array_add(&installed_apps, jdata);
-                    /* display the result */
-                    opal_dss.dump(0, jdata, ORTE_JOB);
                     /* protect that data */
                     jdata = NULL;
                 } else {
@@ -341,12 +348,18 @@ static boolean parse(confd_hkeypath_t *kp,
                     if (NULL == jdata) {
                         opal_output(0, "ERROR: SPAWN A NULL JOB");
                     } else {
-                        opal_output(0, "SPAWNING %s", jdata->name);
-                        /* display the result */
-                        opal_dss.dump(0, jdata, ORTE_JOB);
-#if 0
-                        orte_plm.spawn(jdata);
-#endif
+                        if (mca_orcm_cfgi_confd_component.test_mode) {
+                            opal_output(0, "SPAWNING %s", jdata->name);
+                            /* display the result */
+                            opal_dss.dump(0, jdata, ORTE_JOB);
+                        } else {
+                            if (ORCM_SUCCESS != (rc = orcm_cfgi_base_spawn_app(jdata))) {
+                                ORTE_ERROR_LOG(rc);
+                                OBJ_RELEASE(jdata);
+                                return FALSE;
+                            }
+                        }
+
                     }
                 }
                 return TRUE;
@@ -362,7 +375,7 @@ static boolean parse(confd_hkeypath_t *kp,
     
     switch (op) {
     case MOP_CREATED:
-        opal_output(0, "CREATED_OP");
+        opal_output_verbose(1, orcm_cfgi_base.output, "CREATED_OP");
         switch(CONFD_GET_XMLTAG(&kp->v[1][0])) {
         case orcm_app:
             /* new job */
@@ -389,7 +402,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 break;
             }
             app->name = strdup(CONFD_GET_CBUFPTR(vp));
-            opal_output(0, "NEW APP %s", app->name);
+            opal_output_verbose(1, orcm_cfgi_base.output, "NEW APP %s", app->name);
             app->idx = jdata->num_apps;
             jdata->num_apps++;
             opal_pointer_array_set_item(jdata->apps, app->idx, app);
@@ -403,7 +416,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 break;
             }
             jdata->instance = strdup(CONFD_GET_CBUFPTR(vp));
-            opal_output(0, "app-instance: %s", jdata->instance);
+            opal_output_verbose(1, orcm_cfgi_base.output, "app-instance: %s", jdata->instance);
             break;
         default:
             opal_output(0, "BAD CREATE CMD");
@@ -414,16 +427,16 @@ static boolean parse(confd_hkeypath_t *kp,
         /* modify a pre-existing object - could require creation */
         switch(CONFD_GET_XMLTAG(&kp->v[1][0])) {
         case orcm_app:
-            opal_output(0, "MODIFY APP");
+            opal_output_verbose(1, orcm_cfgi_base.output, "MODIFY APP");
             break;
         case orcm_exec:
-            opal_output(0, "MODIFY EXEC");
+            opal_output_verbose(1, orcm_cfgi_base.output, "MODIFY EXEC");
             break;
         case orcm_app_instance:
-            opal_output(0, "MODIFY APP-INSTANCE");
+            opal_output_verbose(1, orcm_cfgi_base.output, "MODIFY APP-INSTANCE");
             break;
         default:
-            opal_output(0, "BAD MODIFY CMD");
+            opal_output_verbose(1, orcm_cfgi_base.output, "BAD MODIFY CMD");
             break;
         }
         break;
@@ -431,7 +444,7 @@ static boolean parse(confd_hkeypath_t *kp,
         opal_output(0, "MOP_DELETED NOT YET IMPLEMENTED");
         break;
     case MOP_VALUE_SET:
-        opal_output(0, "VALUE_SET");
+        opal_output_verbose(1, orcm_cfgi_base.output, "VALUE_SET");
         switch(qc_get_xmltag(kp,1)) {
             /* JOB-LEVEL VALUES */
         case orcm_app_name:
@@ -452,7 +465,9 @@ static boolean parse(confd_hkeypath_t *kp,
                     /* we have a match - copy over all the fields
                      * to serve as a default starting point
                      */
-                    opal_output(0, "COPYING DEFAULTS FOR APP %s TO INSTANCE %s", jdata->name, jdata->instance);
+                    opal_output_verbose(1, orcm_cfgi_base.output,
+                                        "COPYING DEFAULTS FOR APP %s TO INSTANCE %s",
+                                        jdata->name, jdata->instance);
                     copy_defaults(jdata, jdat);
                     opal_dss.dump(0, jdata, ORTE_JOB);
                     break;
@@ -472,7 +487,7 @@ static boolean parse(confd_hkeypath_t *kp,
             break;
         case orcm_exec_name:
         case orcm_path:
-            opal_output(0, "PATH");
+            opal_output_verbose(1, orcm_cfgi_base.output, "PATH");
             app->app = strdup(CONFD_GET_CBUFPTR(value));
             /* get the basename and install it as argv[0] */
             cptr = opal_basename(app->app);
@@ -488,10 +503,10 @@ static boolean parse(confd_hkeypath_t *kp,
             /* boolean - presence means do not allow
              * this app to become leader
              */
-            opal_output(0, "ORCM_LDR_EXCLUDE");
+            opal_output_verbose(1, orcm_cfgi_base.output, "ORCM_LDR_EXCLUDE");
             break;
         case orcm_version:
-            opal_output(0, "version: %s", CONFD_GET_CBUFPTR(value));
+            opal_output_verbose(1, orcm_cfgi_base.output, "version: %s", CONFD_GET_CBUFPTR(value));
             break;
         case orcm_config_set:
             cptr = CONFD_GET_CBUFPTR(value);
@@ -555,6 +570,9 @@ static boolean parse(confd_hkeypath_t *kp,
         opal_output(0, "WHAT THE HECK?");
         break;
     }
+
+    /* release the thread */
+    OPAL_RELEASE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
     return TRUE;
 }
 
@@ -582,6 +600,9 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
     uint16_t ui16;
     int32_t i32;
 
+    /* wait for any existing action to complete */
+    OPAL_ACQUIRE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
+
     /*
      * look at the first XML tag in the keypath to see which element
      * is being requested
@@ -599,7 +620,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         }
         CONFD_SET_UINT32(&val, jdat->jobid);
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_job_name:
         vp = qc_find_key(kp, orcm_job, 0);
@@ -617,7 +638,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
             CONFD_SET_CBUF(&val, jdat->name, strlen(jdat->name));
         }
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
         break;
 
     case orcm_job_state:
@@ -679,7 +700,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         }
         CONFD_SET_ENUM_HASH(&val, ret);
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_num_replicas_requested:
     case orcm_num_replicas_launched:
@@ -695,7 +716,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         ui16 = jdat->num_procs;
         CONFD_SET_UINT16(&val, ui16);
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_num_replicas_terminated:
         vp = qc_find_key(kp, orcm_job, 0);
@@ -710,7 +731,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         ui16 = jdat->num_terminated;
         CONFD_SET_UINT16(&val, ui16);
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_aborted:
         vp = qc_find_key(kp, orcm_job, 0);
@@ -769,7 +790,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
             CONFD_SET_CBUF(&val, app->name, strlen(app->name));
         }
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
         break;
 
     case orcm_max_local_restarts:
@@ -798,7 +819,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         i32 = app->max_local_restarts;
         CONFD_SET_INT32(&val, i32);
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
         break;
 
     case orcm_max_global_restarts:
@@ -826,7 +847,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         i32 = app->max_global_restarts;
         CONFD_SET_INT32(&val, i32);
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
         break;
 
     case orcm_replica:
@@ -862,7 +883,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
             CONFD_SET_CBUF(&val, app->name, strlen(app->name));
         }
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_pid:
         vp = qc_find_key(kp, orcm_job, 0);
@@ -887,7 +908,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         }
         CONFD_SET_UINT32(&val, proc->pid);
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_exit_code:
         vp = qc_find_key(kp, orcm_job, 0);
@@ -912,7 +933,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         }
         CONFD_SET_INT32(&val, proc->exit_code);
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_app_context_id:
         vp = qc_find_key(kp, orcm_job, 0);
@@ -937,7 +958,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         }
         CONFD_SET_UINT32(&val, proc->app_idx);
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_rml_contact_info:
         vp = qc_find_key(kp, orcm_job, 0);
@@ -966,7 +987,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
             CONFD_SET_CBUF(&val, "SET", strlen("SET"));
         }
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_replica_state:
         vp = qc_find_key(kp, orcm_job, 0);
@@ -1047,7 +1068,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         }
         CONFD_SET_ENUM_HASH(&val, ret);
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_node_id:
         opal_output(0, "NODE");
@@ -1065,7 +1086,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         }
         CONFD_SET_CBUF(&val, node->name, strlen(node->name));
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_heartbeat_seconds:
         vp = qc_find_key(kp, orcm_orte_node, 0);
@@ -1079,7 +1100,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         }
         CONFD_SET_UINT8(&val, 1);
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_state:
         vp = qc_find_key(kp, orcm_orte_node, 0);
@@ -1105,7 +1126,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
             CONFD_SET_CBUF(&val, "UNKNOWN", strlen("UNKNOWN"));
         }
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_daemon_id:
         vp = qc_find_key(kp, orcm_orte_node, 0);
@@ -1120,7 +1141,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         CONFD_SET_CBUF(&val, ORTE_VPID_PRINT(node->daemon->name.vpid),
                        strlen(ORTE_VPID_PRINT(node->daemon->name.vpid)));
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_temperature:
         vp = qc_find_key(kp, orcm_orte_node, 0);
@@ -1134,7 +1155,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         }
         CONFD_SET_INT8(&val, 1);
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     case orcm_num_procs:
         vp = qc_find_key(kp, orcm_orte_node, 0);
@@ -1148,7 +1169,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         }
         CONFD_SET_INT32(&val, node->num_procs);
         confd_data_reply_value(tctx, &val);
-        return CONFD_OK;
+        goto release;
 
     default:
         goto notfound;
@@ -1157,6 +1178,9 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
  notfound:
     confd_data_reply_not_found(tctx);
 
+ release:
+    /* release the thread */
+    OPAL_RELEASE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
     return CONFD_OK;
 }
 
@@ -1173,6 +1197,9 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
     orte_job_t *jdat;
     orte_proc_t *p;
     int32_t app_idx;
+
+    /* wait for any existing action to complete */
+    OPAL_ACQUIRE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
 
     switch (qc_get_xmltag(kp, 1)) {
     case orcm_job:
@@ -1272,6 +1299,8 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
  notfound:
     confd_data_reply_next_key(tctx, NULL, -1, -1);
 
+    /* release the thread */
+    OPAL_RELEASE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
     return CONFD_OK;
 }
 

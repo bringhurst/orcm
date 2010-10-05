@@ -18,6 +18,8 @@
  *   qc_reconnect
  *   qc_confd_poll
  */
+#include "openrcm_config_private.h"
+#include "constants.h"
 
 #include <stdlib.h>
 #include <stdarg.h>
@@ -28,7 +30,9 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 
-#define QC_DEBUG 0
+#include "opal/util/output.h"
+
+#include "mca/cfgi/base/public.h"
 
 // from types.h
 #define NUM_OF(x) (sizeof(x)/sizeof(x[0]))
@@ -45,6 +49,8 @@ typedef int boolean;
 #define TRUE  1
 #define FALSE 0
 // end types.h
+
+static bool qc_debug = false;
 
 #include "q_confd.h"
 
@@ -311,9 +317,11 @@ cc_cdbsock (qc_confd_t  *cc,
 
     if (cdb_connect(cdbsock, CDB_DATA_SOCKET, (struct sockaddr*) &cc->addr,
                     sizeof(cc->addr)) != CONFD_OK) {
-        cc_err(cc, "cdb_connect(%s:%u): %s",
-               inet_ntoa(cc->addr.sin_addr), ntohs(cc->addr.sin_port),
-               confd_last_err());
+        if (qc_debug) {
+            cc_err(cc, "cdb_connect(%s:%u): %s",
+                   inet_ntoa(cc->addr.sin_addr), ntohs(cc->addr.sin_port),
+                   confd_last_err());
+        }
         close(cdbsock);
         return FALSE;
     }
@@ -382,6 +390,13 @@ qc_confd_init (qc_confd_t            *cc,
                FILE                  *log_stream,
                enum confd_debug_level log_level)
 {
+    /* simplify the debug flag */
+    if (0 < opal_output_get_verbosity(orcm_cfgi_base.output)) {
+        qc_debug = true;
+    } else {
+        qc_debug = false;
+    }
+
     cc_init(cc);
 
     cc_addr_init(&cc->addr);
@@ -1587,7 +1602,7 @@ tagmatch (confd_hkeypath_t *kp,
     *partial = tx;
 
     // dump match results to stderr when debugging
-    if (QC_DEBUG) {
+    if (qc_debug) {
         int ix;
         char buf[32];
         uint32_t kp_ns = 0;
@@ -1693,7 +1708,7 @@ find_cmd (confd_hkeypath_t *kp,
     cmdtbl_t *cmd, *best;
 
     len = kp->len;
-    if (QC_DEBUG) fprintf(stderr, "match_cmd1(%u)\n", len);
+    if (qc_debug) fprintf(stderr, "match_cmd1(%u)\n", len);
     best = cmd = match_cmd(kp, &len, cmdtree, &level);
     // while cmd->tags matched something
     while (cmd) {
@@ -1707,7 +1722,7 @@ find_cmd (confd_hkeypath_t *kp,
 
         // otherwise, look right for a longer match
         len1   = kp->len;
-        if (QC_DEBUG) fprintf(stderr, "match_cmd2(%u)\n", len1);
+        if (qc_debug) fprintf(stderr, "match_cmd2(%u)\n", len1);
         cmd1 = match_cmd(kp, &len1, cmd->right, &level1);
 
         // if we found a longer match (at the same level),
@@ -1766,7 +1781,7 @@ cc_iter_diffs (confd_hkeypath_t *kp,
          * ignore NULL handler
          */
         if (cmd->handler == NULL) {
-            if (QC_DEBUG) fprintf(stderr, "cmd ignored\n");
+            if (qc_debug) fprintf(stderr, "cmd ignored\n");
             return ITER_RECURSE;
         }
 
@@ -2008,7 +2023,7 @@ qc_confd_poll (void* arg)
                                 "txid fail: %s\n", confd_last_err());
                     } else {
                         // print transaction id when debugging
-                        if (QC_DEBUG) {
+                        if (qc_debug) {
                             fprintf(cc->log_stream, "txid %u-%u-%u\n",
                                     cc->txid.s1, cc->txid.s2, cc->txid.s3);
                         }
