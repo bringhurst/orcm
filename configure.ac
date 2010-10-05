@@ -8,6 +8,8 @@
 #
 
 AC_PREREQ([2.65])
+AC_LANG([C])
+
 AC_INIT([openrcm], 
         [m4_normalize(esyscmd([config/openrcm_get_version.sh VERSION --base]))],
         [rcastain@open-mpi.org], [openrcm])
