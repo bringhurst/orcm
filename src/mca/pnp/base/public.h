@@ -15,6 +15,13 @@
 
 BEGIN_C_DECLS
 
+typedef struct {
+    int output;
+    opal_list_t opened;
+    int max_msgs;
+} orcm_pnp_base_t;
+ORCM_DECLSPEC extern orcm_pnp_base_t orcm_pnp_base;
+
 ORCM_DECLSPEC int orcm_pnp_base_open(void);
 ORCM_DECLSPEC int orcm_pnp_base_select(void);
 ORCM_DECLSPEC int orcm_pnp_base_close(void);

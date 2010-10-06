@@ -249,6 +249,7 @@ AC_CONFIG_FILES([Makefile
 
                  src/tools/Makefile
 		 src/tools/orcm/Makefile
+		 src/tools/orcm-info/Makefile
 		 src/tools/orcm-sched/Makefile
 		 src/tools/orcm-start/Makefile
 		 src/tools/orcm-stop/Makefile

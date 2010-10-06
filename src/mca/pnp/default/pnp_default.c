@@ -44,6 +44,7 @@
 
 #include "mca/pnp/pnp.h"
 #include "mca/pnp/base/private.h"
+#include "mca/pnp/base/public.h"
 #include "mca/pnp/default/pnp_default.h"
 
 /* API functions */

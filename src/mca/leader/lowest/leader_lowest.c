@@ -22,7 +22,7 @@
 #include "util/triplets.h"
 
 #include "mca/leader/leader.h"
-#include "mca/leader/base/private.h"
+#include "mca/leader/base/public.h"
 #include "mca/leader/lowest/leader_lowest.h"
 
 /* API functions */

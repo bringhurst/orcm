@@ -28,13 +28,6 @@ BEGIN_C_DECLS
  * globals that might be needed
  */
 typedef struct {
-    int output;
-    opal_list_t opened;
-    int max_msgs;
-} orcm_pnp_base_t;
-ORCM_DECLSPEC extern orcm_pnp_base_t orcm_pnp_base;
-
-typedef struct {
     opal_list_item_t super;
     char *string_id;
     orcm_pnp_tag_t tag;

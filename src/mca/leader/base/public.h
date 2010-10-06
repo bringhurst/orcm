@@ -14,6 +14,16 @@
 
 #include "mca/leader/leader.h"
 
+/*
+ * globals that might be needed
+ */
+typedef struct {
+    int output;
+    opal_list_t opened;
+} orcm_leader_base_t;
+
+ORCM_DECLSPEC extern orcm_leader_base_t orcm_leader_base;
+
 int orcm_leader_base_open(void);
 int orcm_leader_base_select(void);
 int orcm_leader_base_close(void);

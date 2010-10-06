@@ -391,7 +391,7 @@ qc_confd_init (qc_confd_t            *cc,
                enum confd_debug_level log_level)
 {
     /* simplify the debug flag */
-    if (0 < opal_output_get_verbosity(orcm_cfgi_base.output)) {
+    if (4 < opal_output_get_verbosity(orcm_cfgi_base.output)) {
         qc_debug = true;
     } else {
         qc_debug = false;
