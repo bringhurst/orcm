@@ -105,8 +105,15 @@ connect_to_confd (qc_confd_t *cc,
      * initialize the connection to confd
      * the last parameter is { CONFD_SILENT, CONFD_DEBUG, CONFD_TRACE }
      */
-    if (! qc_confd_init(cc, log_prefix, log_file, CONFD_SILENT))
-        return FALSE;
+    if (0 < opal_output_get_verbosity(orcm_cfgi_base.output)) {
+        if (! qc_confd_init(cc, log_prefix, log_file, CONFD_TRACE)) {
+            return FALSE;
+        }
+    } else {
+        if (! qc_confd_init(cc, log_prefix, log_file, CONFD_SILENT)) {
+            return FALSE;
+        }
+    }
 
     /*
      * wait for confd to allow subscriptions
@@ -307,7 +314,8 @@ static boolean cfg_handler(confd_hkeypath_t *kp,
 			   enum cdb_sub_notification notify_type,
                            long              which)
 {
-  return parse(kp, op, value, notify_type, false);
+    opal_output(0, "CFG HANDLER CALLED");
+    return parse(kp, op, value, notify_type, false);
 }
 
 
@@ -323,6 +331,7 @@ static boolean parse(confd_hkeypath_t *kp,
     int32_t i32;
     int rc, j;
     orte_job_t *jdat;
+    boolean ret=FALSE;
 
     /* wait for any existing action to complete */
     OPAL_ACQUIRE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
@@ -340,16 +349,19 @@ static boolean parse(confd_hkeypath_t *kp,
                 if (check_job(jdata)) {
                     opal_output(0, "PREPARE OKAY");
                     OBJ_RELEASE(jdata);
-                    return TRUE;
+                    ret = TRUE;
+                    goto release;
                 }
                 /* nope - missing something, so notify failure */
                 opal_output(0, "PREPARE FAILED");
                 OBJ_RELEASE(jdata);
-                return FALSE;
+                ret = FALSE;
+                goto release;
             } else if (CDB_SUB_ABORT == notify_type) {
                 opal_output(0, "NOTIFY: ABORT - ignoring");
                 OBJ_RELEASE(jdata);
-                return TRUE;
+                ret = TRUE;
+                goto release;
             } else if (CDB_SUB_COMMIT == notify_type) {
                 if (install) {
                     if (mca_orcm_cfgi_confd_component.test_mode) {
@@ -374,21 +386,25 @@ static boolean parse(confd_hkeypath_t *kp,
                             if (ORCM_SUCCESS != (rc = orcm_cfgi_base_spawn_app(jdata))) {
                                 ORTE_ERROR_LOG(rc);
                                 OBJ_RELEASE(jdata);
-                                return FALSE;
+                                ret = FALSE;
+                                goto release;
                             }
                         }
 
                     }
                 }
-                return TRUE;
+                ret = TRUE;
+                goto release;
             } else {
                 opal_output(0, "NOTIFY: UNKNOWN");
-                return TRUE;
+                ret = TRUE;
+                goto release;
             }
         } else {
             opal_output(0, "event completed - null jdata");
         }
-        return TRUE;
+        ret = TRUE;
+        goto release;
     }
     
     switch (op) {
@@ -589,9 +605,10 @@ static boolean parse(confd_hkeypath_t *kp,
         break;
     }
 
+ release:
     /* release the thread */
     OPAL_RELEASE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
-    return TRUE;
+    return ret;
 }
 
 static boolean install_handler(confd_hkeypath_t *kp,
