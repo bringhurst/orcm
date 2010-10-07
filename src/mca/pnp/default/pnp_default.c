@@ -84,6 +84,7 @@ static int default_output_nb(orcm_pnp_channel_t channel,
                              void *cbdata);
 static orcm_pnp_tag_t define_new_tag(void);
 static char* get_string_id(void);
+static int disable_comm(void);
 static int default_finalize(void);
 
 /* The module struct */
@@ -98,6 +99,7 @@ orcm_pnp_base_module_t orcm_pnp_default_module = {
     default_output_nb,
     define_new_tag,
     get_string_id,
+    disable_comm,
     default_finalize
 };
 
@@ -1047,6 +1049,25 @@ static char* get_string_id(void)
     return strdup(my_string_id);
 }
 
+static int disable_comm(void)
+{
+    OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                         "%s pnp:default: disabling comm",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+
+    /* cancel the recvs, if active */
+    if (recv_on) {
+        orte_rmcast.cancel_recv(ORTE_RMCAST_WILDCARD_CHANNEL, ORTE_RMCAST_TAG_WILDCARD);
+        orte_rml.recv_cancel(ORTE_NAME_WILDCARD, ORTE_RML_TAG_MULTICAST_DIRECT);
+        recv_on = false;
+    }
+    
+    /* stop the thread */
+    msg_thread_end = true;
+    opal_thread_join(&msg_thread, NULL);
+}
+
+
 static int default_finalize(void)
 {
     int i;
@@ -1058,18 +1079,6 @@ static int default_finalize(void)
                          "%s pnp:default: finalizing",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
     
-    /* cancel the recvs, if active */
-    if (recv_on) {
-        orte_rmcast.cancel_recv(ORTE_RMCAST_WILDCARD_CHANNEL, ORTE_RMCAST_TAG_WILDCARD);
-        orte_rml.recv_cancel(ORTE_NAME_WILDCARD, ORTE_RML_TAG_MULTICAST_DIRECT);
-        recv_on = false;
-    }
-    
-    /* stop the thread */
-    OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
-    msg_thread_end = true;
-    OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
-    opal_thread_join(&msg_thread, NULL);
     while (NULL != (item = opal_list_remove_first(&msg_delivery))) {
         OBJ_RELEASE(item);
     }
@@ -2122,6 +2131,11 @@ static void* deliver_msg(opal_object_t *obj)
              * to avoid deadlock
              */
             OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+            if (msg_thread_end) {
+                /* make one last check - if comm is disabled, don't deliver msg */
+                OBJ_RELEASE(msg);
+                return OPAL_THREAD_CANCELLED;
+            }
             msg->cbfunc(ORCM_SUCCESS, &msg->sender, msg->tag, iovecs, num_iovecs, NULL, NULL);
             OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
             /* release the memory */
@@ -2143,6 +2157,11 @@ static void* deliver_msg(opal_object_t *obj)
              * to avoid deadlock
              */
             OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+            if (msg_thread_end) {
+                /* make one last check - if comm is disabled, don't deliver msg */
+                OBJ_RELEASE(msg);
+                return OPAL_THREAD_CANCELLED;
+            }
             msg->cbfunc(ORCM_SUCCESS, &msg->sender, msg->tag, NULL, 0, &msg->buf, NULL);
             OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
         }

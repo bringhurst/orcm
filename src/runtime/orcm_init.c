@@ -222,10 +222,8 @@ static void just_quit(int fd, short flags, void*arg)
         orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
     }
    
-#if 0
     /* cleanup and leave */
     orcm_finalize();
-#endif
 
     exit(orte_exit_status);
 }
@@ -234,7 +232,12 @@ static void signal_trap(int fd, short flags, void *arg)
 {
     int i;
 
-    /* if we are a daemon or HNP, allow for a forced term */
+    /* if we are a daemon, ignore */
+    if (ORCM_PROC_IS_DAEMON) {
+        return;
+    }
+
+    /* if we are a daemon or master, allow for a forced term */
     if (!opal_atomic_trylock(&orte_abort_inprogress_lock)) { /* returns 1 if already locked */
         if (forcibly_die) {
             opal_output(0, "%s forcibly exiting upon signal %s",
@@ -260,6 +263,13 @@ static void signal_trap(int fd, short flags, void *arg)
     /* ensure that the forwarding of stdin stops */
     orte_job_term_ordered = true;
     
+    /* if we are a master, order any associated orcm daemons to die */
+    if (ORCM_PROC_IS_MASTER) {
+        orte_plm.terminate_orteds();
+        /* wait here a moment to give the daemons a chance to terminate */
+        sleep(1);
+    }
+
     ORTE_TIMER_EVENT(0, 0, just_quit);
  }
 

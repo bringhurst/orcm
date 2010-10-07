@@ -14,6 +14,7 @@
 
 #include "orte/runtime/runtime.h"
 
+#include "mca/pnp/pnp.h"
 #include "runtime/runtime.h"
 
 int orcm_finalize(void)
@@ -24,6 +25,9 @@ int orcm_finalize(void)
 
     /* remove all signal handlers */
     orcm_remove_signal_handlers();
+
+    /* stop messaging */
+    orcm_pnp.disable_comm();
 
     orte_finalize();
     

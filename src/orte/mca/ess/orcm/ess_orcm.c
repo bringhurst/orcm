@@ -20,6 +20,7 @@
 
 #include <sys/types.h>
 #include <stdio.h>
+#include <stddef.h>
 #ifdef HAVE_FCNTL_H
 #include <fcntl.h>
 #endif
@@ -39,7 +40,7 @@
 
 #include "orte/mca/rmcast/base/base.h"
 #include "orte/mca/errmgr/errmgr.h"
-#include "orte/mca/odls/odls_types.h"
+#include "orte/mca/odls/odls.h"
 #include "orte/mca/plm/base/base.h"
 #include "orte/mca/plm/base/plm_private.h"
 #include "orte/mca/rmaps/rmaps_types.h"
@@ -1049,6 +1050,7 @@ static void local_fin(void)
     /* handle the orcm-specific OPAL stuff */
     opal_sysinfo_base_close();
     opal_pstat_base_close();
+
 }
 
 static void vm_tracker(char *app, char *version, char *release,
@@ -1191,9 +1193,9 @@ static void vm_tracker(char *app, char *version, char *release,
     return;
     
  exitout:
-    /* Remove the signal handlers */
-    orcm_remove_signal_handlers();
-    
+    /* kill any local procs */
+    orte_odls.kill_local_procs(NULL);
+
     /* whack any lingering session directory files from our jobs */
     orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
     
@@ -1283,8 +1285,14 @@ static void recv_input(int status,
 {
     int rc, n;
     uint16_t jfam;
-    
-    opal_output(0, "%s GOT COMMAND FROM %s", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_NAME_PRINT(sender));
+    ptrdiff_t unpack_rel, save_rel;
+    orte_daemon_cmd_flag_t command;
+
+    OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
+                         "%s GOT COMMAND FROM %s",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         ORTE_NAME_PRINT(sender)));
+
     /* if this isn't intended for me, ignore it */
     n=1;
     if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &jfam, &n, OPAL_UINT16))) {
@@ -1292,10 +1300,40 @@ static void recv_input(int status,
         return;
     }
     if (jfam != ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid)) {
-        opal_output(0, "%s GOT COMMAND FOR DVM %d - NOT FOR ME!", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), jfam);
+        OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
+                             "%s GOT COMMAND FOR DVM %d - NOT FOR ME!",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), jfam));
         return;
     }
     
+    /* save the original buffer pointers */
+    unpack_rel = buf->unpack_ptr - buf->base_ptr;
+    
+    /* unpack the initial command */
+    n = 1;
+    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &command, &n, ORTE_DAEMON_CMD))) {
+        ORTE_ERROR_LOG(rc);
+        return;
+    }
+
+    /* if it is a halt command, then handle it here as we have additional
+     * things to do than orte would know about
+     */
+    if (ORTE_DAEMON_HALT_VM_CMD == command) {
+        /* kill any local procs */
+        orte_odls.kill_local_procs(NULL);
+
+        /* whack any lingering session directory files from our jobs */
+        orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
+    
+        /* cleanup and leave */
+        orcm_finalize();
+        exit(orte_exit_status);
+    }
+
+    /* rewind the buffer to the right place for processing the cmd */
+    buf->unpack_ptr = buf->base_ptr + save_rel;
+
     /* pass it down to the cmd processor */
     if (ORTE_SUCCESS != (rc = orte_daemon_process_commands(sender, buf, tag))) {
         OPAL_OUTPUT_VERBOSE((1, orte_ess_base_output,

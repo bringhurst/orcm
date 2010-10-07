@@ -75,27 +75,15 @@
 
 #include "mca/pnp/pnp.h"
 #include "mca/pnp/base/public.h"
-
+#include "runtime/runtime.h"
 /*
  * Globals
  */
-static opal_event_t *orcmd_exit_event;
-static bool signals_set=false;
 static bool orcmd_spin_flag=false;
 
 static int orcmd_comm(orte_process_name_t *recipient,
                       opal_buffer_t *buf, orte_rml_tag_t tag,
                       orte_default_cbfunc_t cbfunc);
-
-static void shutdown_callback(int fd, short flags, void *arg);
-static void shutdown_signal(int fd, short flags, void *arg);
-
-static void recv_input(int status,
-                       orte_process_name_t *sender,
-                       orcm_pnp_tag_t tag,
-                       struct iovec *msg, int count,
-                       opal_buffer_t *buf,
-                       void *cbdata);
 
 static struct {
     bool debug;
@@ -276,6 +264,7 @@ int main(int argc, char *argv[])
         exit(1);
     }
     
+#if 0    
     /* detach from controlling terminal
      * otherwise, remain attached so output can get to us
      */
@@ -285,12 +274,14 @@ int main(int argc, char *argv[])
         /* set the local debug verbosity */
         orcm_debug_output = 5;
     }
-    
+#endif
+
     /* set the odls comm function */
     orte_comm = orcmd_comm;
 
     /* wait to hear we are done */
     opal_event_dispatch();
+    return ret;
 
     /* should never get here, but if we do... */
 DONE:
@@ -300,44 +291,6 @@ DONE:
     /* Finalize and clean up ourselves */
     orcm_finalize();
     return ret;
-}
-
-static void shutdown_callback(int fd, short flags, void *arg)
-{
-    int ret;
-    
-    if (orte_debug_daemons_flag) {
-        opal_output(0, "%s orcmd: finalizing", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-    }
-    
-    /* make sure our local procs are dead */
-    orte_odls.kill_local_procs(NULL);
-    
-    /* whack any lingering session directory files from our jobs */
-    orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
-    
-    /* if we were ordered to abort, do so */
-    if (orcmd_globals.abort) {
-        opal_output(0, "%s is executing clean abort", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-        /* do -not- call finalize as this will send a message to the HNP
-         * indicating clean termination! Instead, just forcibly cleanup
-         * the local session_dir tree and abort
-         */
-        orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
-        abort();
-    } else if ((int)ORTE_PROC_MY_NAME->vpid == orcmd_globals.fail) {
-        opal_output(0, "%s is executing clean abnormal termination", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-        /* do -not- call finalize as this will send a message to the HNP
-         * indicating clean termination! Instead, just forcibly cleanup
-         * the local session_dir tree and exit
-         */
-        orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
-        exit(ORTE_ERROR_DEFAULT_EXIT_CODE);
-    }
-
-    /* Finalize and clean up ourselves */
-    orcm_finalize();
-    exit(orte_exit_status);
 }
 
 static int orcmd_comm(orte_process_name_t *recipient,

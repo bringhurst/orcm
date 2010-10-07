@@ -939,10 +939,19 @@ static int terminate_orteds(void)
     int rc;
     opal_buffer_t buf;
     orte_daemon_cmd_flag_t cmd = ORTE_DAEMON_HALT_VM_CMD;
+    uint16_t jfam;
     
     OBJ_CONSTRUCT(&buf, opal_buffer_t);
-    opal_dss.pack(&buf, &cmd, 1, ORTE_DAEMON_CMD_T);
+    /* pack our job family */
+    jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
+    opal_dss.pack(&buf, &jfam, 1, OPAL_UINT16);
+    /* pack the terminate command */
+    opal_dss.pack(&buf, &cmd, 1, ORTE_DAEMON_CMD);
     
+    OPAL_OUTPUT_VERBOSE((2, orte_plm_globals.output,
+                         "%s plm:orcm: sending terminate command",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+
     if (ORTE_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL, NULL,
                                               ORCM_PNP_TAG_COMMAND, NULL, 0, &buf))) {
         ORTE_ERROR_LOG(rc);
@@ -962,6 +971,10 @@ static int signal_job(orte_jobid_t jobid, int32_t signal)
     opal_dss.pack(&buf, &jobid, 1, ORTE_JOBID);
     opal_dss.pack(&buf, &signal, 1, OPAL_INT32);
     
+    OPAL_OUTPUT_VERBOSE((2, orte_plm_globals.output,
+                         "%s plm:orcm sending signal %d command",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), signal));
+
     if (ORTE_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL, NULL,
                                               ORCM_PNP_TAG_COMMAND, NULL, 0, &buf))) {
         ORTE_ERROR_LOG(rc);
