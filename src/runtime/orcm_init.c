@@ -221,10 +221,12 @@ static void just_quit(int fd, short flags, void*arg)
         /* whack any lingering session directory files from our jobs */
         orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
     }
-    
+   
+#if 0
     /* cleanup and leave */
     orcm_finalize();
-    
+#endif
+
     exit(orte_exit_status);
 }
 
