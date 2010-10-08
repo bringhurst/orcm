@@ -417,15 +417,18 @@ static boolean parse(confd_hkeypath_t *kp,
             vp = qc_find_key(kp, orcm_app, 0);
             if (NULL == vp) {
                 opal_output(0, "ERROR: BAD APP KEY");
+                ret = FALSE;
                 break;
             }
             jdata->name = strdup(CONFD_GET_CBUFPTR(vp));
             opal_output(0, "job: %s", jdata->name);
+            ret = TRUE;
             break;
         case orcm_exec:
             /* new application */
             if (NULL == jdata) {
                 opal_output(0, "NO ACTIVE JOB FOR VALUE SET");
+                ret = FALSE;
                 break;
             }
             
@@ -433,6 +436,7 @@ static boolean parse(confd_hkeypath_t *kp,
             vp = qc_find_key(kp, orcm_exec, 0);
             if (NULL == vp) {
                 opal_output(0, "ERROR: BAD EXEC KEY");
+                ret = FALSE;
                 break;
             }
             app->name = strdup(CONFD_GET_CBUFPTR(vp));
@@ -440,6 +444,7 @@ static boolean parse(confd_hkeypath_t *kp,
             app->idx = jdata->num_apps;
             jdata->num_apps++;
             opal_pointer_array_set_item(jdata->apps, app->idx, app);
+                ret = TRUE;
             break;
         case orcm_app_instance:
             /* run an instance of a possibly installed app */
@@ -447,13 +452,16 @@ static boolean parse(confd_hkeypath_t *kp,
             vp = qc_find_key(kp, orcm_app_instance, 0);
             if (NULL == vp) {
                 opal_output(0, "ERROR: BAD APP-INSTANCE  KEY");
+                ret = FALSE;
                 break;
             }
             jdata->instance = strdup(CONFD_GET_CBUFPTR(vp));
             opal_output_verbose(1, orcm_cfgi_base.output, "app-instance: %s", jdata->instance);
+            ret = TRUE;
             break;
         default:
             opal_output(0, "BAD CREATE CMD");
+            ret = FALSE;
             break;
         }
         break;
@@ -462,20 +470,25 @@ static boolean parse(confd_hkeypath_t *kp,
         switch(CONFD_GET_XMLTAG(&kp->v[1][0])) {
         case orcm_app:
             opal_output_verbose(1, orcm_cfgi_base.output, "MODIFY APP");
+            ret = FALSE;
             break;
         case orcm_exec:
             opal_output_verbose(1, orcm_cfgi_base.output, "MODIFY EXEC");
+            ret = FALSE;
             break;
         case orcm_app_instance:
             opal_output_verbose(1, orcm_cfgi_base.output, "MODIFY APP-INSTANCE");
+            ret = FALSE;
             break;
         default:
             opal_output_verbose(1, orcm_cfgi_base.output, "BAD MODIFY CMD");
+            ret = FALSE;
             break;
         }
         break;
     case MOP_DELETED:
         opal_output(0, "MOP_DELETED NOT YET IMPLEMENTED");
+        ret = FALSE;
         break;
     case MOP_VALUE_SET:
         opal_output_verbose(1, orcm_cfgi_base.output, "VALUE_SET");
@@ -504,20 +517,25 @@ static boolean parse(confd_hkeypath_t *kp,
                                         jdata->name, jdata->instance);
                     copy_defaults(jdata, jdat);
                     opal_dss.dump(0, jdata, ORTE_JOB);
+                    ret = TRUE;
                     break;
                 }
             }
+            ret = TRUE;
             break;
         case orcm_gid:
             jdata->gid = CONFD_GET_INT32(value);
+            ret = TRUE;
             break;
         case orcm_uid:
             jdata->uid = CONFD_GET_INT32(value);
+            ret = TRUE;
             break;
 
             /* APP-LEVEL VALUES */
         case orcm_replicas:
             app->num_procs = CONFD_GET_INT32(value);
+            ret = TRUE;
             break;
         case orcm_exec_name:
         case orcm_path:
@@ -526,27 +544,33 @@ static boolean parse(confd_hkeypath_t *kp,
             /* get the basename and install it as argv[0] */
             cptr = opal_basename(app->app);
             opal_argv_prepend_nosize(&app->argv, cptr);
+            ret = TRUE;
             break;
         case orcm_local_max_restarts:
             app->max_local_restarts = CONFD_GET_INT32(value);
+            ret = TRUE;
             break;
         case orcm_global_max_restarts:
             app->max_global_restarts = CONFD_GET_INT32(value);
+            ret = TRUE;
             break;
         case orcm_leader_exclude:
             /* boolean - presence means do not allow
              * this app to become leader
              */
             opal_output_verbose(1, orcm_cfgi_base.output, "ORCM_LDR_EXCLUDE");
+            ret = TRUE;
             break;
         case orcm_version:
             opal_output_verbose(1, orcm_cfgi_base.output, "version: %s", CONFD_GET_CBUFPTR(value));
+            ret = TRUE;
             break;
         case orcm_config_set:
             cptr = CONFD_GET_CBUFPTR(value);
             param = mca_base_param_environ_variable("orcm", "confd", "config");
             opal_setenv(param, cptr, true, &app->env);
             free(param);
+            ret = TRUE;
             break;
         case orcm_names:
             /* the equivalent to -host */
@@ -555,6 +579,7 @@ static boolean parse(confd_hkeypath_t *kp,
             for (i=0; i < imax; i++) {
                 opal_argv_append_nosize(&app->dash_host, CONFD_GET_CBUFPTR(&clist[i]));
             }
+            ret = TRUE;
             break;
         case orcm_argv:
             clist = CONFD_GET_LIST(value);
@@ -562,6 +587,7 @@ static boolean parse(confd_hkeypath_t *kp,
             for (i=0; i < imax; i++) {
                 opal_argv_append_nosize(&app->argv, CONFD_GET_CBUFPTR(&clist[i]));
             }
+            ret = TRUE;
             break;
         case orcm_env:
             clist = CONFD_GET_LIST(value);
@@ -569,6 +595,7 @@ static boolean parse(confd_hkeypath_t *kp,
             for (i=0; i < imax; i++) {
                 opal_argv_append_nosize(&app->env, CONFD_GET_CBUFPTR(&clist[i]));
             }
+            ret = TRUE;
             break;
         case orcm_nodes:
             i32 = CONFD_GET_ENUM_HASH(value);
@@ -577,9 +604,11 @@ static boolean parse(confd_hkeypath_t *kp,
              * on - need to add a field in app_context_t
              * to flag that info
              */
+            ret = TRUE;
             break;
         case orcm_working_dir:
             app->cwd = strdup(CONFD_GET_CBUFPTR(value));
+            ret = TRUE;
             break;
 
             /* IGNORED VALUES */
@@ -587,21 +616,25 @@ static boolean parse(confd_hkeypath_t *kp,
             /* dealt with in the create when this key
              * was provided - so ignore it here
              */
+            ret = TRUE;
             break;
         case orcm_instance_name:
             /* we already have this info - it was the key
              * when we got the create command, so just
              * keep what we already have
              */
+            ret = TRUE;
             break;
 
         default:
             opal_output(0, "NON-UNDERSTOOD XML TAG");
+            ret = FALSE;
             break;
         }
         break;
     default:
         opal_output(0, "WHAT THE HECK?");
+        ret = FALSE;
         break;
     }
 
