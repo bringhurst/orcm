@@ -46,6 +46,7 @@ int orcm_cfgi_confd_component_open(void)
     mca_base_component_t *c = &mca_orcm_cfgi_confd_component.super.cfgic_version;
     int tmp;
 
+#if 0
     /* check for confd name */
     mca_base_param_reg_string(c, "db_name",
                               "Name of the confd database to which we are to connect",
@@ -65,7 +66,7 @@ int orcm_cfgi_confd_component_open(void)
     mca_base_param_reg_string(c, "namespace",
                               "Set namespace",
                               false, false, "confd-example", &mca_orcm_cfgi_confd_component.ns);
-
+#endif
     /* whether we are just testing the interface */
     mca_base_param_reg_int(c, "test_mode",
                            "Set test mode - just output received commands",

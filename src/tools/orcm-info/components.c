@@ -479,7 +479,7 @@ void orcm_info_open_components(void)
         goto error;
     }
     map = OBJ_NEW(orcm_info_component_map_t);
-    map->type = strdup("cfgi");
+    map->type = strdup("orcm_cfgi");
     map->components = &orcm_cfgi_components_available;
     opal_pointer_array_add(&component_map, map);
 
@@ -487,7 +487,7 @@ void orcm_info_open_components(void)
         goto error;
     }
     map = OBJ_NEW(orcm_info_component_map_t);
-    map->type = strdup("clip");
+    map->type = strdup("orcm_clip");
     map->components = &orcm_clip_base.opened;
     opal_pointer_array_add(&component_map, map);
    
@@ -495,7 +495,7 @@ void orcm_info_open_components(void)
         goto error;
     }
     map = OBJ_NEW(orcm_info_component_map_t);
-    map->type = strdup("leader");
+    map->type = strdup("orcm_leader");
     map->components = &orcm_leader_base.opened;
     opal_pointer_array_add(&component_map, map);
 
@@ -503,7 +503,7 @@ void orcm_info_open_components(void)
         goto error;
     }
     map = OBJ_NEW(orcm_info_component_map_t);
-    map->type = strdup("pnp");
+    map->type = strdup("orcm_pnp");
     map->components = &orcm_pnp_base.opened;
     opal_pointer_array_add(&component_map, map);
 

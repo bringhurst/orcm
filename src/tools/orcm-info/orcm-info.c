@@ -225,10 +225,10 @@ int main(int argc, char *argv[])
     opal_pointer_array_add(&mca_types, "notifier");
     
     /* ORCM frameworks */
-    opal_pointer_array_add(&mca_types, "cfgi");
-    opal_pointer_array_add(&mca_types, "clip");
-    opal_pointer_array_add(&mca_types, "leader");
-    opal_pointer_array_add(&mca_types, "pnp");
+    opal_pointer_array_add(&mca_types, "orcm_cfgi");
+    opal_pointer_array_add(&mca_types, "orcm_clip");
+    opal_pointer_array_add(&mca_types, "orcm_leader");
+    opal_pointer_array_add(&mca_types, "orcm_pnp");
 
     /* Execute the desired action(s) */
     
