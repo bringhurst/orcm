@@ -263,6 +263,23 @@ static int cfgi_confd_init(void)
     waiting = true;
     thread_active = false;
 
+#if 0
+    /* probe to see if the confd daemon is present */
+    if (! connect_to_confd(&cc, "orcm", stderr)) {
+        /* wait a little and try again */
+        qc_close(&cc);
+        sleep(1);
+        if (! connect_to_confd(&cc, "orcm", stderr)) {
+            /* must not be running - ignore this module */
+            opal_output(0, "No detected confd daemon - ignoring confd");
+            qc_close(&cc);
+            return ORCM_ERR_NOT_AVAILABLE;
+        }
+    }
+    /* close the connection so the thread can maintain it */
+    qc_close(&cc);
+#endif
+
     OPAL_THREAD_LOCK(&internal_lock);
     if (pthread_create(&confd_nanny_id,
 		       NULL,            /* thread attributes */
@@ -314,7 +331,6 @@ static boolean cfg_handler(confd_hkeypath_t *kp,
 			   enum cdb_sub_notification notify_type,
                            long              which)
 {
-    opal_output(0, "CFG HANDLER CALLED");
     return parse(kp, op, value, notify_type, false);
 }
 
@@ -412,42 +428,91 @@ static boolean parse(confd_hkeypath_t *kp,
         opal_output_verbose(1, orcm_cfgi_base.output, "CREATED_OP");
         switch(CONFD_GET_XMLTAG(&kp->v[1][0])) {
         case orcm_app:
-            /* new job */
-            jdata = OBJ_NEW(orte_job_t);
-            vp = qc_find_key(kp, orcm_app, 0);
-            if (NULL == vp) {
-                opal_output(0, "ERROR: BAD APP KEY");
+            if (install) {
+                /* new job */
+                jdata = OBJ_NEW(orte_job_t);
+                vp = qc_find_key(kp, orcm_app, 0);
+                if (NULL == vp) {
+                    opal_output(0, "ERROR: BAD APP KEY");
+                    ret = FALSE;
+                    break;
+                }
+                jdata->name = strdup(CONFD_GET_CBUFPTR(vp));
+                opal_output(0, "created new application: %s", jdata->name);
+                ret = TRUE;
+            } else {
+                /* disallowed */
+                opal_output(0, "RUN CONFIG ATTEMPTING TO CREATE NEW APP");
                 ret = FALSE;
-                break;
             }
-            jdata->name = strdup(CONFD_GET_CBUFPTR(vp));
-            opal_output(0, "job: %s", jdata->name);
-            ret = TRUE;
             break;
         case orcm_exec:
-            /* new application */
-            if (NULL == jdata) {
-                opal_output(0, "NO ACTIVE JOB FOR VALUE SET");
-                ret = FALSE;
-                break;
-            }
+            if (install) {
+                /* new application */
+                if (NULL == jdata) {
+                    opal_output(0, "NO ACTIVE JOB FOR VALUE SET");
+                    ret = FALSE;
+                    break;
+                }
             
-            app = OBJ_NEW(orte_app_context_t);
-            vp = qc_find_key(kp, orcm_exec, 0);
-            if (NULL == vp) {
-                opal_output(0, "ERROR: BAD EXEC KEY");
-                ret = FALSE;
-                break;
-            }
-            app->name = strdup(CONFD_GET_CBUFPTR(vp));
-            opal_output_verbose(1, orcm_cfgi_base.output, "NEW APP %s", app->name);
-            app->idx = jdata->num_apps;
-            jdata->num_apps++;
-            opal_pointer_array_set_item(jdata->apps, app->idx, app);
+                app = OBJ_NEW(orte_app_context_t);
+                vp = qc_find_key(kp, orcm_exec, 0);
+                if (NULL == vp) {
+                    opal_output(0, "ERROR: BAD EXEC KEY");
+                    ret = FALSE;
+                    break;
+                }
+                app->name = strdup(CONFD_GET_CBUFPTR(vp));
+                opal_output_verbose(1, orcm_cfgi_base.output, "NEW EXECUTABLE %s", app->name);
+                app->idx = jdata->num_apps;
+                jdata->num_apps++;
+                opal_pointer_array_set_item(jdata->apps, app->idx, app);
                 ret = TRUE;
+            } else {
+                /* modifying an existing app - find it */
+                if (NULL == jdata) {
+                    /* something is wrong */
+                    opal_output(0, "RUN CONFIG: MODIFYING APP FOR UNSPECIFIED JOB");
+                    ret = FALSE;
+                    break;
+                }
+                vp = qc_find_key(kp, orcm_exec, 0);
+                if (NULL == vp) {
+                    opal_output(0, "ERROR: BAD EXEC KEY");
+                    ret = FALSE;
+                    break;
+                }
+                cptr = CONFD_GET_CBUFPTR(vp);
+                for (j=0; j < jdata->apps->size; j++) {
+                    if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, j))) {
+                        continue;
+                    }
+                    if (0 == strcmp(app->name, cptr)) {
+                        /* found the specified app */
+                        opal_output(0, "RUN CONFIG: FOUND SPECIFED EXECUTABLE %s", cptr);
+                        ret = TRUE;
+                        goto release;
+                    }
+                }
+                /* if we get here, the app wasn't found */
+                opal_output(0, "RUN CONFIG: SPECIFIED EXECUTABLE %s NOT FOUND", cptr);
+                ret = FALSE;
+            }
             break;
         case orcm_app_instance:
+            if (install) {
+                /* illegal operation */
+                opal_output(0, "INSTALL CONFIG: ATTEMPTING TO INSTALL INSTANCE");
+                ret = FALSE;
+                break;
+            }
             /* run an instance of a possibly installed app */
+            if (NULL != jdata) {
+                /* one is already underway - error */
+                opal_output(0, "RUN CONFIG: ATTEMPTING TO CREATE INSTANCE WHILE ONE IN PROGRESS");
+                ret = FALSE;
+                break;
+            }
             jdata = OBJ_NEW(orte_job_t);
             vp = qc_find_key(kp, orcm_app_instance, 0);
             if (NULL == vp) {
@@ -456,7 +521,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 break;
             }
             jdata->instance = strdup(CONFD_GET_CBUFPTR(vp));
-            opal_output_verbose(1, orcm_cfgi_base.output, "app-instance: %s", jdata->instance);
+            opal_output_verbose(1, orcm_cfgi_base.output, "created app-instance: %s", jdata->instance);
             ret = TRUE;
             break;
         default:
