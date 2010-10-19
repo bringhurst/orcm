@@ -846,6 +846,18 @@ static int local_setup(char **hosts)
         goto error;
     }
 
+    /* setup the show help recv */
+    if (ORCM_PROC_IS_MASTER) {
+        ret = orte_rml.recv_buffer_nb(ORTE_NAME_WILDCARD, ORTE_RML_TAG_SHOW_HELP,
+                                      ORTE_RML_NON_PERSISTENT, orte_show_help_recv, NULL);
+        if (ret != ORTE_SUCCESS && ret != ORTE_ERR_NOT_IMPLEMENTED) {
+            ORTE_ERROR_LOG(ret);
+            error = "show_help_recv";
+            goto error;
+        }
+    }
+
+
     /* output a message indicating we are alive, our name, and our pid
      * for debugging purposes
      */

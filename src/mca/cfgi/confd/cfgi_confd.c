@@ -24,6 +24,7 @@ typedef unsigned int boolean;
 #include "opal/util/opal_environ.h"
 #include "opal/util/basename.h"
 
+#include "orte/mca/errmgr/errmgr.h"
 #include "orte/mca/plm/plm.h"
 #include "orte/mca/plm/base/plm_private.h"
 #include "orte/runtime/orte_globals.h"
@@ -40,6 +41,7 @@ static opal_mutex_t internal_lock;
 static opal_condition_t internal_cond;
 static bool waiting;
 static bool thread_active;
+static bool valid;
 
 static orte_job_t *get_app(char *name, bool create);
 static orte_app_context_t *get_exec(orte_job_t *jdat,
@@ -263,6 +265,8 @@ static int cfgi_confd_init(void)
     waiting = true;
     thread_active = false;
 
+    valid = true;
+
 #if 0
     /* probe to see if the confd daemon is present */
     if (! connect_to_confd(&cc, "orcm", stderr)) {
@@ -355,8 +359,8 @@ static boolean parse(confd_hkeypath_t *kp,
     if (NULL == kp) {
         /* process the cmd */
         if (NULL != jdata) {
-            opal_output(0, "event completed: %s",
-                        install ? "INSTALL" : "RUN");
+            opal_output_verbose(1, orcm_cfgi_base.output,
+                                "event completed: %s", install ? "INSTALL" : "RUN");
             if (CDB_SUB_PREPARE == notify_type) {
                 opal_output(0, "NOTIFY: PREPARE");
                 /* check to see if all required elements
@@ -379,37 +383,53 @@ static boolean parse(confd_hkeypath_t *kp,
                 ret = TRUE;
                 goto release;
             } else if (CDB_SUB_COMMIT == notify_type) {
-                if (install) {
-                    if (mca_orcm_cfgi_confd_component.test_mode) {
-                        opal_output(0, "NOTIFY: INSTALLING");
-                        /* display the result */
-                        opal_dss.dump(0, jdata, ORTE_JOB);
-                    }
-                    /* add this to the installed data array */
-                    opal_pointer_array_add(&installed_apps, jdata);
-                    /* protect that data */
-                    jdata = NULL;
-                } else {
-                    /*spawn this job */
-                    if (NULL == jdata) {
-                        opal_output(0, "ERROR: SPAWN A NULL JOB");
-                    } else {
+                /* do a basic validity check on the job */
+                valid = check_job(jdata);
+                if (valid) {
+                    if (install) {
                         if (mca_orcm_cfgi_confd_component.test_mode) {
-                            opal_output(0, "SPAWNING %s", jdata->name);
+                            opal_output_verbose(1, orcm_cfgi_base.output,
+                                                "NOTIFY: INSTALLING");
                             /* display the result */
                             opal_dss.dump(0, jdata, ORTE_JOB);
-                        } else {
-                            if (ORCM_SUCCESS != (rc = orcm_cfgi_base_spawn_app(jdata))) {
-                                ORTE_ERROR_LOG(rc);
-                                OBJ_RELEASE(jdata);
-                                ret = FALSE;
-                                goto release;
-                            }
                         }
+                        /* add this to the installed data array */
+                        opal_pointer_array_add(&installed_apps, jdata);
+                        /* protect that data */
+                        jdata = NULL;
+                    } else {
+                        /*spawn this job */
+                        if (NULL == jdata) {
+                            opal_output(0, "ERROR: SPAWN A NULL JOB");
+                        } else {
+                            if (mca_orcm_cfgi_confd_component.test_mode) {
+                                opal_output(0, "SPAWNING %s", jdata->name);
+                                /* display the result */
+                                opal_dss.dump(0, jdata, ORTE_JOB);
+                            } else {
+                                if (ORCM_SUCCESS != (rc = orcm_cfgi_base_spawn_app(jdata))) {
+                                    ORTE_ERROR_LOG(rc);
+                                    opal_output(0, "SPECIFIED APP %s IS INVALID - IGNORING",
+                                                (NULL == jdata->name) ? "NULL" : jdata->name);
+                                    /* remove the job from the global pool */
+                                    opal_pointer_array_set_item(orte_job_data, ORTE_LOCAL_JOBID(jdata->jobid), NULL);
+                                    OBJ_RELEASE(jdata);
+                                    ret = FALSE;
+                                    goto release;
+                                }
+                            }
 
+                        }
                     }
+                    ret = TRUE;
+                } else {
+                    opal_output(0, "SPECIFIED APP %s IS INVALID - IGNORING",
+                                (NULL == jdata->name) ? "NULL" : jdata->name);
+                    OBJ_RELEASE(jdata);
+                    /* reset valid flag for next data */
+                    valid = true;
+                    ret = FALSE;
                 }
-                ret = TRUE;
                 goto release;
             } else {
                 opal_output(0, "NOTIFY: UNKNOWN");
@@ -434,11 +454,13 @@ static boolean parse(confd_hkeypath_t *kp,
                 vp = qc_find_key(kp, orcm_app, 0);
                 if (NULL == vp) {
                     opal_output(0, "ERROR: BAD APP KEY");
+                    OBJ_RELEASE(jdata);
                     ret = FALSE;
                     break;
                 }
                 jdata->name = strdup(CONFD_GET_CBUFPTR(vp));
-                opal_output(0, "created new application: %s", jdata->name);
+                opal_output_verbose(1, orcm_cfgi_base.output,
+                                    "created new application: %s", jdata->name);
                 ret = TRUE;
             } else {
                 /* disallowed */
@@ -451,6 +473,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 /* new application */
                 if (NULL == jdata) {
                     opal_output(0, "NO ACTIVE JOB FOR VALUE SET");
+                    app = NULL;
                     ret = FALSE;
                     break;
                 }
@@ -459,6 +482,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 vp = qc_find_key(kp, orcm_exec, 0);
                 if (NULL == vp) {
                     opal_output(0, "ERROR: BAD EXEC KEY");
+                    app = NULL;
                     ret = FALSE;
                     break;
                 }
@@ -473,12 +497,14 @@ static boolean parse(confd_hkeypath_t *kp,
                 if (NULL == jdata) {
                     /* something is wrong */
                     opal_output(0, "RUN CONFIG: MODIFYING APP FOR UNSPECIFIED JOB");
+                    app = NULL;
                     ret = FALSE;
                     break;
                 }
                 vp = qc_find_key(kp, orcm_exec, 0);
                 if (NULL == vp) {
                     opal_output(0, "ERROR: BAD EXEC KEY");
+                    app = NULL;
                     ret = FALSE;
                     break;
                 }
@@ -495,6 +521,7 @@ static boolean parse(confd_hkeypath_t *kp,
                     }
                 }
                 /* if we get here, the app wasn't found */
+                app = NULL;
                 opal_output(0, "RUN CONFIG: SPECIFIED EXECUTABLE %s NOT FOUND", cptr);
                 ret = FALSE;
             }
@@ -506,7 +533,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 ret = FALSE;
                 break;
             }
-            /* run an instance of a possibly installed app */
+            /* run an instance of an installed app */
             if (NULL != jdata) {
                 /* one is already underway - error */
                 opal_output(0, "RUN CONFIG: ATTEMPTING TO CREATE INSTANCE WHILE ONE IN PROGRESS");
@@ -563,47 +590,66 @@ static boolean parse(confd_hkeypath_t *kp,
             if (NULL == jdata->name) {
                 jdata->name = strdup(CONFD_GET_CBUFPTR(value));
             }
-            if (NULL != jdata->instance) {
-                /* we are adding an instance of a known name
-                 * see if this name is an installed app
-                 */
-                for (j=0; j < installed_apps.size; j++) {
-                    if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, j))) {
-                        continue;
-                    }
-                    if (0 != strcmp(jdat->name, jdata->name)) {
-                        continue;
-                    }
-                    /* we have a match - copy over all the fields
-                     * to serve as a default starting point
-                     */
-                    opal_output_verbose(1, orcm_cfgi_base.output,
-                                        "COPYING DEFAULTS FOR APP %s TO INSTANCE %s",
-                                        jdata->name, jdata->instance);
-                    copy_defaults(jdata, jdat);
-                    opal_dss.dump(0, jdata, ORTE_JOB);
-                    ret = TRUE;
-                    break;
+            /* we require that the app have been previously installed */
+            for (j=0; j < installed_apps.size; j++) {
+                if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, j))) {
+                    continue;
                 }
+                if (0 != strcmp(jdat->name, jdata->name)) {
+                    continue;
+                }
+                /* we have a match - copy over all the fields
+                 * to serve as a default starting point
+                 */
+                opal_output_verbose(1, orcm_cfgi_base.output,
+                                    "COPYING DEFAULTS FOR APP %s TO INSTANCE %s",
+                                    jdata->name, jdata->instance);
+                copy_defaults(jdata, jdat);
+                opal_dss.dump(0, jdata, ORTE_JOB);
+                ret = TRUE;
+                break;
             }
-            ret = TRUE;
+            /* if we get here, then the app was NOT previously installed */
+            opal_output(0, "APP %s WAS NOT PREVIOUSLY INSTALLED", jdata->name);
+            OBJ_RELEASE(jdata);
+            ret = FALSE;
             break;
         case orcm_gid:
+            if (NULL == jdata) {
+                opal_output(0, "CANNOT SET GID - NO ACTIVE JOB");
+                ret = FALSE;
+                break;
+            }
             jdata->gid = CONFD_GET_INT32(value);
             ret = TRUE;
             break;
         case orcm_uid:
+            if (NULL == jdata) {
+                opal_output(0, "CANNOT SET UID - NO ACTIVE JOB");
+                ret = FALSE;
+                break;
+            }
             jdata->uid = CONFD_GET_INT32(value);
             ret = TRUE;
             break;
 
             /* APP-LEVEL VALUES */
         case orcm_replicas:
+            if (NULL == app) {
+                opal_output(0, "CANNOT SET NUM PROCS - NO ACTIVE APP");
+                ret = FALSE;
+                break;
+            }
             app->num_procs = CONFD_GET_INT32(value);
             ret = TRUE;
             break;
         case orcm_exec_name:
         case orcm_path:
+            if (NULL == app) {
+                opal_output(0, "CANNOT SET PATH - NO ACTIVE APP");
+                ret = FALSE;
+                break;
+            }
             opal_output_verbose(1, orcm_cfgi_base.output, "PATH");
             app->app = strdup(CONFD_GET_CBUFPTR(value));
             /* get the basename and install it as argv[0] */
@@ -612,10 +658,20 @@ static boolean parse(confd_hkeypath_t *kp,
             ret = TRUE;
             break;
         case orcm_local_max_restarts:
+            if (NULL == app) {
+                opal_output(0, "CANNOT SET MAX RESTARTS - NO ACTIVE APP");
+                ret = FALSE;
+                break;
+            }
             app->max_local_restarts = CONFD_GET_INT32(value);
             ret = TRUE;
             break;
         case orcm_global_max_restarts:
+            if (NULL == app) {
+                opal_output(0, "CANNOT SET MAX RESTARTS - NO ACTIVE APP");
+                ret = FALSE;
+                break;
+            }
             app->max_global_restarts = CONFD_GET_INT32(value);
             ret = TRUE;
             break;
@@ -631,6 +687,11 @@ static boolean parse(confd_hkeypath_t *kp,
             ret = TRUE;
             break;
         case orcm_config_set:
+            if (NULL == app) {
+                opal_output(0, "CANNOT SET CONFIG ENVAR - NO ACTIVE APP");
+                ret = FALSE;
+                break;
+            }
             cptr = CONFD_GET_CBUFPTR(value);
             param = mca_base_param_environ_variable("orcm", "confd", "config");
             opal_setenv(param, cptr, true, &app->env);
@@ -639,6 +700,11 @@ static boolean parse(confd_hkeypath_t *kp,
             break;
         case orcm_names:
             /* the equivalent to -host */
+            if (NULL == app) {
+                opal_output(0, "CANNOT SET HOST - NO ACTIVE APP");
+                ret = FALSE;
+                break;
+            }
             clist = CONFD_GET_LIST(value);
             imax = CONFD_GET_LISTSIZE(value);
             for (i=0; i < imax; i++) {
@@ -647,6 +713,11 @@ static boolean parse(confd_hkeypath_t *kp,
             ret = TRUE;
             break;
         case orcm_argv:
+            if (NULL == app) {
+                opal_output(0, "CANNOT SET ARGV - NO ACTIVE APP");
+                ret = FALSE;
+                break;
+            }
             clist = CONFD_GET_LIST(value);
             imax = CONFD_GET_LISTSIZE(value);
             for (i=0; i < imax; i++) {
@@ -655,6 +726,11 @@ static boolean parse(confd_hkeypath_t *kp,
             ret = TRUE;
             break;
         case orcm_env:
+            if (NULL == app) {
+                opal_output(0, "CANNOT SET ENV - NO ACTIVE APP");
+                ret = FALSE;
+                break;
+            }
             clist = CONFD_GET_LIST(value);
             imax = CONFD_GET_LISTSIZE(value);
             for (i=0; i < imax; i++) {
@@ -672,6 +748,11 @@ static boolean parse(confd_hkeypath_t *kp,
             ret = TRUE;
             break;
         case orcm_working_dir:
+            if (NULL == app) {
+                opal_output(0, "CANNOT SET CWD - NO ACTIVE APP");
+                ret = FALSE;
+                break;
+            }
             app->cwd = strdup(CONFD_GET_CBUFPTR(value));
             ret = TRUE;
             break;
@@ -704,6 +785,10 @@ static boolean parse(confd_hkeypath_t *kp,
     }
 
  release:
+    /* deal with valid flag */
+    if (valid && !ret) {
+        valid = false;
+    }
     /* release the thread */
     OPAL_RELEASE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
     return ret;
