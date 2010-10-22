@@ -107,7 +107,7 @@ connect_to_confd (qc_confd_t *cc,
      * initialize the connection to confd
      * the last parameter is { CONFD_SILENT, CONFD_DEBUG, CONFD_TRACE }
      */
-    if (0 < opal_output_get_verbosity(orcm_cfgi_base.output)) {
+    if (1 < opal_output_get_verbosity(orcm_cfgi_base.output)) {
         if (! qc_confd_init(cc, log_prefix, log_file, CONFD_TRACE)) {
             return FALSE;
         }
@@ -300,7 +300,7 @@ static int cfgi_confd_init(void)
         return ORCM_ERROR;
     }
 
-    OPAL_OUTPUT_VERBOSE((1, orcm_cfgi_base.output, "cfgi:confd initialized"));
+    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output, "cfgi:confd initialized"));
     return ORCM_SUCCESS;
 }
 
@@ -319,7 +319,7 @@ static int cfgi_confd_finalize(void)
   }
     OBJ_DESTRUCT(&installed_apps);
 
-    OPAL_OUTPUT_VERBOSE((1, orcm_cfgi_base.output, "cfgi:confd finalized"));
+    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output, "cfgi:confd finalized"));
     return ORCM_SUCCESS;
 }
 
@@ -359,7 +359,7 @@ static boolean parse(confd_hkeypath_t *kp,
     if (NULL == kp) {
         /* process the cmd */
         if (NULL != jdata) {
-            opal_output_verbose(1, orcm_cfgi_base.output,
+            opal_output_verbose(2, orcm_cfgi_base.output,
                                 "event completed: %s", install ? "INSTALL" : "RUN");
             if (CDB_SUB_PREPARE == notify_type) {
                 opal_output(0, "NOTIFY: PREPARE");
@@ -388,7 +388,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 if (valid) {
                     if (install) {
                         if (mca_orcm_cfgi_confd_component.test_mode) {
-                            opal_output_verbose(1, orcm_cfgi_base.output,
+                            opal_output_verbose(2, orcm_cfgi_base.output,
                                                 "NOTIFY: INSTALLING");
                             /* display the result */
                             opal_dss.dump(0, jdata, ORTE_JOB);
@@ -445,7 +445,7 @@ static boolean parse(confd_hkeypath_t *kp,
     
     switch (op) {
     case MOP_CREATED:
-        opal_output_verbose(1, orcm_cfgi_base.output, "CREATED_OP");
+        opal_output_verbose(2, orcm_cfgi_base.output, "CREATED_OP");
         switch(CONFD_GET_XMLTAG(&kp->v[1][0])) {
         case orcm_app:
             if (install) {
@@ -459,7 +459,7 @@ static boolean parse(confd_hkeypath_t *kp,
                     break;
                 }
                 jdata->name = strdup(CONFD_GET_CBUFPTR(vp));
-                opal_output_verbose(1, orcm_cfgi_base.output,
+                opal_output_verbose(2, orcm_cfgi_base.output,
                                     "created new application: %s", jdata->name);
                 ret = TRUE;
             } else {
@@ -487,7 +487,7 @@ static boolean parse(confd_hkeypath_t *kp,
                     break;
                 }
                 app->name = strdup(CONFD_GET_CBUFPTR(vp));
-                opal_output_verbose(1, orcm_cfgi_base.output, "NEW EXECUTABLE %s", app->name);
+                opal_output_verbose(2, orcm_cfgi_base.output, "NEW EXECUTABLE %s", app->name);
                 app->idx = jdata->num_apps;
                 jdata->num_apps++;
                 opal_pointer_array_set_item(jdata->apps, app->idx, app);
@@ -548,7 +548,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 break;
             }
             jdata->instance = strdup(CONFD_GET_CBUFPTR(vp));
-            opal_output_verbose(1, orcm_cfgi_base.output, "created app-instance: %s", jdata->instance);
+            opal_output_verbose(2, orcm_cfgi_base.output, "created app-instance: %s", jdata->instance);
             ret = TRUE;
             break;
         default:
@@ -561,19 +561,19 @@ static boolean parse(confd_hkeypath_t *kp,
         /* modify a pre-existing object - could require creation */
         switch(CONFD_GET_XMLTAG(&kp->v[1][0])) {
         case orcm_app:
-            opal_output_verbose(1, orcm_cfgi_base.output, "MODIFY APP");
+            opal_output_verbose(2, orcm_cfgi_base.output, "MODIFY APP");
             ret = FALSE;
             break;
         case orcm_exec:
-            opal_output_verbose(1, orcm_cfgi_base.output, "MODIFY EXEC");
+            opal_output_verbose(2, orcm_cfgi_base.output, "MODIFY EXEC");
             ret = FALSE;
             break;
         case orcm_app_instance:
-            opal_output_verbose(1, orcm_cfgi_base.output, "MODIFY APP-INSTANCE");
+            opal_output_verbose(2, orcm_cfgi_base.output, "MODIFY APP-INSTANCE");
             ret = FALSE;
             break;
         default:
-            opal_output_verbose(1, orcm_cfgi_base.output, "BAD MODIFY CMD");
+            opal_output_verbose(2, orcm_cfgi_base.output, "BAD MODIFY CMD");
             ret = FALSE;
             break;
         }
@@ -583,7 +583,7 @@ static boolean parse(confd_hkeypath_t *kp,
         ret = FALSE;
         break;
     case MOP_VALUE_SET:
-        opal_output_verbose(1, orcm_cfgi_base.output, "VALUE_SET");
+        opal_output_verbose(2, orcm_cfgi_base.output, "VALUE_SET");
         switch(qc_get_xmltag(kp,1)) {
             /* JOB-LEVEL VALUES */
         case orcm_app_name:
@@ -601,7 +601,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 /* we have a match - copy over all the fields
                  * to serve as a default starting point
                  */
-                opal_output_verbose(1, orcm_cfgi_base.output,
+                opal_output_verbose(2, orcm_cfgi_base.output,
                                     "COPYING DEFAULTS FOR APP %s TO INSTANCE %s",
                                     jdata->name, jdata->instance);
                 copy_defaults(jdata, jdat);
@@ -650,7 +650,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 ret = FALSE;
                 break;
             }
-            opal_output_verbose(1, orcm_cfgi_base.output, "PATH");
+            opal_output_verbose(2, orcm_cfgi_base.output, "PATH");
             app->app = strdup(CONFD_GET_CBUFPTR(value));
             /* get the basename and install it as argv[0] */
             cptr = opal_basename(app->app);
@@ -679,11 +679,11 @@ static boolean parse(confd_hkeypath_t *kp,
             /* boolean - presence means do not allow
              * this app to become leader
              */
-            opal_output_verbose(1, orcm_cfgi_base.output, "ORCM_LDR_EXCLUDE");
+            opal_output_verbose(2, orcm_cfgi_base.output, "ORCM_LDR_EXCLUDE");
             ret = TRUE;
             break;
         case orcm_version:
-            opal_output_verbose(1, orcm_cfgi_base.output, "version: %s", CONFD_GET_CBUFPTR(value));
+            opal_output_verbose(2, orcm_cfgi_base.output, "version: %s", CONFD_GET_CBUFPTR(value));
             ret = TRUE;
             break;
         case orcm_config_set:

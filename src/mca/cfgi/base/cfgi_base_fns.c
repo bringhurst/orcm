@@ -50,7 +50,8 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
     orte_proc_t *proctmp;
     orte_daemon_cmd_flag_t command;
     orte_rml_tag_t rmltag=ORTE_RML_TAG_INVALID;
-    
+    int base_channel;
+
     OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                          "%s spawn:app: %s:%s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
@@ -107,6 +108,7 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
      * are local to us so that we keep the assignment consistent
      * across orcmds
      */
+    base_channel = (2*orcm_cfgi_base.num_active_apps) + ORTE_RMCAST_DYNAMIC_CHANNELS;
     for (j=0; j < jlaunch->apps->size; j++) {
         if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jlaunch->apps, j))) {
             continue;
@@ -132,6 +134,24 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }         
+
+    if (0 < opal_output_get_verbosity(orcm_cfgi_base.output)) {
+        opal_output(orcm_cfgi_base.output,
+                    "Launching app %s with jobid %s",
+                    (NULL == jdata->name) ? "UNNAMED" : jdata->name,
+                    (NULL == jdata->instance) ? " " : jdata->instance,
+                    ORTE_JOBID_PRINT(jdata->jobid));
+    
+        for (j=0; j < jlaunch->apps->size; j++) {
+            if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jlaunch->apps, j))) {
+                continue;
+            }
+            opal_output(orcm_cfgi_base.output,
+                        "    exec %s on mcast channels %d (recv) %d (xmit)",
+                        app->app, base_channel, base_channel+1);
+            base_channel += 2;
+        }
+    }
 
     /* since we need to retain our own local map of what
      * processes are where, construct a launch msg for

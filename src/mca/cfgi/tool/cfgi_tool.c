@@ -97,7 +97,7 @@ static int tool_init(void)
         return ret;
     }
     
-    OPAL_OUTPUT_VERBOSE((1, orcm_cfgi_base.output, "cfgi:tool initialized"));
+    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output, "cfgi:tool initialized"));
     return ORCM_SUCCESS;
 }
 
@@ -107,7 +107,7 @@ static int tool_finalize(void)
     /* cannot cancel the recvs as the pnp framework will
      * already have been closed
      */
-    OPAL_OUTPUT_VERBOSE((1, orcm_cfgi_base.output, "cfgi:tool finalized"));
+    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output, "cfgi:tool finalized"));
     return ORCM_SUCCESS;
 }
 
@@ -139,7 +139,7 @@ static void tool_messages(int status,
 
     /* wait for any existing action to complete */
     OPAL_ACQUIRE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
-    OPAL_OUTPUT_VERBOSE((1, orcm_cfgi_base.output,
+    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                          "%s cfgi:tool released to process cmd",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
 

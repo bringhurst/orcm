@@ -143,7 +143,7 @@ static int file_init(void)
     my_globals.global_restarts = -1;
     my_globals.continuous = false;
     
-    OPAL_OUTPUT_VERBOSE((1, orcm_cfgi_base.output, "cfgi:file initialized to read %s",
+    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output, "cfgi:file initialized to read %s",
                          mca_orcm_cfgi_file_component.file));
 
     /* Try to open the file */
@@ -173,7 +173,7 @@ static int file_init(void)
                           sizeof(line) - sizeof(bogus) - 1, fp)) {
             break;
         }
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+        OPAL_OUTPUT_VERBOSE((3, orcm_cfgi_base.output,
                              "READ LINE %s", line));
 
         /* Remove a trailing newline */
@@ -278,7 +278,7 @@ static int file_init(void)
 
 static int file_finalize(void)
 {
-    OPAL_OUTPUT_VERBOSE((1, orcm_cfgi_base.output, "cfgi:file finalized"));
+    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output, "cfgi:file finalized"));
     return ORCM_SUCCESS;
 }
 
