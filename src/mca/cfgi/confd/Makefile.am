@@ -63,7 +63,7 @@ libmca_orcm_cfgi_confd_la_CPPFLAGS = $(orcm_cfgi_confd_CPPFLAGS)
 libmca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
 libmca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS)
 
-yangdir = $(prefix)/yang
+yangdir = $(prefix)/etc/confd
 nodist_yang_HEADERS = orcm.fxs
 
 # Clean out the generated files
