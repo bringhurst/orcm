@@ -391,6 +391,9 @@ static int update_state(orte_jobid_t job,
     /***  UPDATE COMMAND FOR A SPECIFIC PROCESS ***/
     if (ORTE_PROC_STATE_SENSOR_BOUND_EXCEEDED == state) {
         if (ORTE_PROC_STATE_UNTERMINATED > child->state) {
+            opal_output(0, "%s Process %s on node %s terminated: sensor bound exceeded",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        ORTE_NAME_PRINT(proc), orte_process_info.nodename);
             child->state = state;
             child->exit_code = exit_code;
             /* Decrement the number of local procs */
@@ -412,6 +415,9 @@ static int update_state(orte_jobid_t job,
     }
     
     if (ORTE_PROC_STATE_TERMINATED < state) {
+        opal_output(0, "%s Process %s on node %s terminated: %s",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_NAME_PRINT(proc),
+                    orte_process_info.nodename, orte_proc_state_to_str(state));
         /* see if we should recover it locally */
         if (jobdat->enable_recovery) {
             OPAL_OUTPUT_VERBOSE((5, orte_errmgr_base.output,

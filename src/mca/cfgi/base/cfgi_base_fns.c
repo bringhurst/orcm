@@ -137,7 +137,7 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
 
     if (0 < opal_output_get_verbosity(orcm_cfgi_base.output)) {
         opal_output(orcm_cfgi_base.output,
-                    "Launching app %s with jobid %s",
+                    "Launching app %s instance %s with jobid %s",
                     (NULL == jdata->name) ? "UNNAMED" : jdata->name,
                     (NULL == jdata->instance) ? " " : jdata->instance,
                     ORTE_JOBID_PRINT(jdata->jobid));
