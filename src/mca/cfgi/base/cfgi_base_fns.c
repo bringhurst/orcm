@@ -119,6 +119,9 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
         orcm_cfgi_base.num_active_apps++;
     }
 
+    /* tell the app to use the right ess module */
+    opal_setenv("OMPI_MCA_ess", "orcmapp", true, &app->env);
+
     /* setup the map */
     if (NULL == jlaunch->map) {
         jlaunch->map = OBJ_NEW(orte_job_map_t);

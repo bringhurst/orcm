@@ -24,6 +24,7 @@ module orcm {
         // An exec is synonymous to an ORCM app within a job
         leaf replicas {
             // Number of replicas to launch
+	    mandatory true;
             description "Number of replicas to launch";
             type int32;
         }
@@ -128,6 +129,7 @@ module orcm {
 		leaf name {
                     // This is a generic application name that the outside world would see.
                     //   Think "bgp", "isis", "snmpd", etc.
+		    mandatory true;
 		    description "Application name";
 		    type string;
 		}
@@ -141,11 +143,13 @@ module orcm {
 		    leaf exec-name {
                         // The name is assumed to be unique. This probably involves embedding version
                         //   information in the name (bgp_shim-1.0.0)
+			mandatory true;
 			description "Name of this executable";
 			type string;
 		    }
 		    leaf path {
                         // Full path to the executable: e.g., /usr/bin/bgp_shim-1.0.0
+			mandatory true;
 			description "Path to this binary";
 			type string;
 		    }
@@ -177,6 +181,7 @@ module orcm {
             description "Define a running instance of this application";
             key instance-name;
             leaf instance-name {
+	        mandatory true;
                 description "Name of the instance, e.g., \"Production BGP\"";
                 type string;
             }
@@ -185,7 +190,7 @@ module orcm {
 		type leafref {
                   path "/orcm:config/install/app/name";
                 }
-                //mandatory true;
+                mandatory true;
             }
             list exec {
                 key exec-name;

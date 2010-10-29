@@ -591,6 +591,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 jdata->name = strdup(CONFD_GET_CBUFPTR(value));
             }
             /* we require that the app have been previously installed */
+            ret = FALSE;
             for (j=0; j < installed_apps.size; j++) {
                 if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, j))) {
                     continue;
@@ -609,10 +610,11 @@ static boolean parse(confd_hkeypath_t *kp,
                 ret = TRUE;
                 break;
             }
-            /* if we get here, then the app was NOT previously installed */
-            opal_output(0, "APP %s WAS NOT PREVIOUSLY INSTALLED", jdata->name);
-            OBJ_RELEASE(jdata);
-            ret = FALSE;
+            if (!ret) {
+                /* if we get here, then the app was NOT previously installed */
+                opal_output(0, "APP %s WAS NOT PREVIOUSLY INSTALLED", jdata->name);
+                OBJ_RELEASE(jdata);
+            }
             break;
         case orcm_gid:
             if (NULL == jdata) {
