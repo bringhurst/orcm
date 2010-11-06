@@ -43,11 +43,18 @@ orcm_pnp_base_t orcm_pnp_base;
 
 int orcm_pnp_base_open(void)
 {
+    int tmp;
+
     /* Debugging / verbose output.  Always have stream open, with
      * verbose set by the mca open system...
      */
     orcm_pnp_base.output = opal_output_open(NULL);
     
+    mca_base_param_reg_int_name("pnp", "use_threads",
+                                "Use progress threads (default: 0)",
+                                   false, false, 0, &tmp);
+    orcm_pnp_base.use_threads = OPAL_INT_TO_BOOL(tmp);
+
     /* Open up all available components */
     if (ORCM_SUCCESS != 
         mca_base_components_open("orcm_pnp", orcm_pnp_base.output, NULL,

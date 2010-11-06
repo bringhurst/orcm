@@ -155,6 +155,8 @@ typedef struct {
     orte_process_name_t name;
     /* state */
     bool alive;
+    /* track message sequence on its output channel only */
+    orte_rmcast_seq_t seq_num;
 } orcm_source_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_source_t);
 

@@ -16,6 +16,7 @@
 #include "opal/dss/dss_types.h"
 
 #include "orte/types.h"
+#include "orte/mca/rmcast/rmcast_types.h"
 
 #include "runtime/orcm_globals.h"
 
@@ -38,7 +39,9 @@ typedef void (*orcm_leader_module_finalize_fn_t)(void);
  * it wants to make this determination
  */
 typedef bool (*orcm_leader_module_deliver_msg_fn_t)(const char *stringid,
-                                                    const orte_process_name_t *src);
+                                                    const orte_process_name_t *src,
+                                                    const orte_rmcast_channel_t chan,
+                                                    const orte_rmcast_seq_t seq_num);
 
 /* Define the leader policy for a given application triplet. Understanding
  * how this API works requires a brief review of how applications can be

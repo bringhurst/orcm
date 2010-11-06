@@ -22,6 +22,7 @@
 #include "orte/mca/plm/plm.h"
 #include "orte/mca/grpcomm/grpcomm.h"
 #include "orte/runtime/orte_locks.h"
+#include "orte/mca/rmcast/rmcast_types.h"
 
 #include "runtime/orcm_globals.h"
 #include "runtime/runtime.h"
@@ -321,6 +322,7 @@ static void source_constructor(orcm_source_t *ptr)
 
     ptr->name.jobid = ORTE_JOBID_INVALID;
     ptr->name.vpid = ORTE_VPID_INVALID;
+    ptr->seq_num = ORTE_RMCAST_SEQ_INVALID;
     ptr->alive = true;
 }
 static void source_destructor(orcm_source_t *ptr)

@@ -19,6 +19,7 @@ typedef struct {
     int output;
     opal_list_t opened;
     int max_msgs;
+    bool use_threads;
 } orcm_pnp_base_t;
 ORCM_DECLSPEC extern orcm_pnp_base_t orcm_pnp_base;
 

@@ -108,6 +108,7 @@ static void recv_announcements(orte_process_name_t *sender,
                                opal_buffer_t *buf);
 static void recv_input_buffers(int status,
                                orte_rmcast_channel_t channel,
+                               orte_rmcast_seq_t seq_num,
                                orte_rmcast_tag_t tag,
                                orte_process_name_t *sender,
                                opal_buffer_t *buf, void *cbdata);
@@ -115,6 +116,7 @@ static int pack_announcement(opal_buffer_t *buf, orte_process_name_t *name);
 
 static void rmcast_callback(int status,
                             orte_rmcast_channel_t channel,
+                            orte_rmcast_seq_t seq_num,
                             orte_rmcast_tag_t tag,
                             orte_process_name_t *sender,
                             opal_buffer_t *buf, void* cbdata);
@@ -146,6 +148,7 @@ static orcm_pnp_request_t* find_request(opal_list_t *list,
 static int construct_msg(opal_buffer_t **buf, opal_buffer_t *buffer,
                          orcm_pnp_tag_t tag, struct iovec *msg, int count);
 
+static void process_msg(orcm_pnp_msg_t *msg);
 static void* deliver_msg(opal_object_t *obj);
 
 /* Local variables */
@@ -252,13 +255,15 @@ static int default_init(void)
     }
     
     /* startup the msg thread */
-    OPAL_THREAD_LOCK(&msg_lock);
-    if (OPAL_SUCCESS != (ret = opal_thread_start(&msg_thread))) {
-        opal_output(0, "%s Unable to start message delivery thread",
-                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-        return ret;
+    if (orcm_pnp_base.use_threads) {
+        OPAL_THREAD_LOCK(&msg_lock);
+        if (OPAL_SUCCESS != (ret = opal_thread_start(&msg_thread))) {
+            opal_output(0, "%s Unable to start message delivery thread",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            return ret;
+        }
+        OPAL_THREAD_UNLOCK(&msg_lock);
     }
-    OPAL_THREAD_UNLOCK(&msg_lock);
 
     /* open the default "system" channel */
     if (ORCM_SUCCESS != (ret = orte_rmcast.open_channel(chan->channel,
@@ -1063,8 +1068,10 @@ static int disable_comm(void)
     }
     
     /* stop the thread */
-    msg_thread_end = true;
-    opal_thread_join(&msg_thread, NULL);
+    if (orcm_pnp_base.use_threads) {
+        msg_thread_end = true;
+        opal_thread_join(&msg_thread, NULL);
+    }
 }
 
 
@@ -1347,6 +1354,7 @@ static void recv_announcements(orte_process_name_t *sender,
 
 static void recv_input_buffers(int status,
                                orte_rmcast_channel_t channel,
+                               orte_rmcast_seq_t seq_num,
                                orte_rmcast_tag_t tag,
                                orte_process_name_t *sender,
                                opal_buffer_t *buf, void *cbdata)
@@ -1367,8 +1375,8 @@ static void recv_input_buffers(int status,
     }
 
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                         "%s pnp:default:received input buffer on channel %s tag %s from sender %s",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), orcm_pnp_print_channel(channel),
+                         "%s pnp:default:received input buffer on channel %s seq %lu tag %s from sender %s",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), orcm_pnp_print_channel(channel), seq_num,
                          orcm_pnp_print_tag(tag), ORTE_NAME_PRINT(sender)));
     
     /* if this message is from myself, ignore it */
@@ -1412,7 +1420,7 @@ static void recv_input_buffers(int status,
     }
 
     /* check to see if the message is from the leader of this triplet */
-    if (!orcm_leader.deliver_msg(string_id, sender)) {
+    if (!orcm_leader.deliver_msg(string_id, sender, channel, seq_num)) {
         OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                              "%s Message from %s of triplet %s ignored - not leader",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
@@ -1443,11 +1451,16 @@ static void recv_input_buffers(int status,
     msg->tag = tag;
     opal_dss.copy_payload(&msg->buf, buf);
     msg->cbfunc = request->cbfunc;
-    OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
-    opal_list_append(&msg_delivery, &msg->super);
-    /* release our thread in case this gets processed immediately */
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
-    OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+    if (orcm_pnp_base.use_threads) {
+        OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
+        opal_list_append(&msg_delivery, &msg->super);
+        /* release our thread in case this gets processed immediately */
+        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+    } else {
+        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        process_msg(msg);
+    }
     return;
 
  DEPART:
@@ -1566,6 +1579,7 @@ static int pack_announcement(opal_buffer_t *buf, orte_process_name_t *sender)
 /* ORTE callback functions so we can map them to our own */
 static void rmcast_callback(int status,
                             orte_rmcast_channel_t channel,
+                            orte_rmcast_seq_t seq_num,
                             orte_rmcast_tag_t tag,
                             orte_process_name_t *sender,
                             opal_buffer_t *buf, void* cbdata)
@@ -1635,8 +1649,8 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
     /* find the request object for this tag */
     if (NULL == (request = find_request(&my_input_channel->recvs, string_id, tag))) {
         opal_output(0, "%s A direct message was received, but no matching recv"
-                       " has been posted for direct messages sent from trip %s"
-                       " tag %s or to the WILDCARD tag",
+                    " has been posted for direct messages sent from trip %s"
+                    " tag %s or to the WILDCARD tag",
                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), string_id, orcm_pnp_print_tag(tag));
         goto CLEANUP;
     } else {
@@ -1647,19 +1661,24 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
         msg->tag = tag;
         opal_dss.copy_payload(&msg->buf, buffer);
         msg->cbfunc = request->cbfunc;
-        OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
-        opal_list_append(&msg_delivery, &msg->super);
-        /* release our thread in case this gets processed immediately */
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
-        OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+        if (orcm_pnp_base.use_threads) {
+            OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
+            opal_list_append(&msg_delivery, &msg->super);
+            /* release our thread in case this gets processed immediately */
+            OPAL_RELEASE_THREAD(&lock, &cond, &active);
+            OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+        } else {
+            OPAL_RELEASE_THREAD(&lock, &cond, &active);
+            process_msg(msg);
+        }
         goto DEPART;
     }
    
-CLEANUP:
+ CLEANUP:
     /* release the thread */
     OPAL_RELEASE_THREAD(&lock, &cond, &active);
     
-DEPART:
+ DEPART:
     /* reissue the recv */
     if (ORTE_SUCCESS != (rc = orte_rml.recv_buffer_nb(ORTE_NAME_WILDCARD,
                                                       ORTE_RML_TAG_MULTICAST_DIRECT,
@@ -2063,13 +2082,104 @@ static int record_recv(orcm_triplet_t *triplet,
     return ret;
 }
 
-static void* deliver_msg(opal_object_t *obj)
+static void process_msg(orcm_pnp_msg_t *msg)
 {
-    orcm_pnp_msg_t *msg;
-    int rc, n;
+    int n, rc;
     int8_t flag;
     int32_t i, num_iovecs, num_bytes;
     struct iovec *iovecs=NULL;
+
+    /* unpack the iovec vs buffer flag */
+    n=1;
+    if (ORCM_SUCCESS != (rc = opal_dss.unpack(&msg->buf, &flag, &n, OPAL_INT8))) {
+        ORTE_ERROR_LOG(rc);
+        goto DEPART;
+    }    
+    
+    if (0 == flag) {
+        /* iovecs were sent - get them */
+        n=1;
+        if (ORCM_SUCCESS != (rc = opal_dss.unpack(&msg->buf, &num_iovecs, &n, OPAL_INT32))) {
+            ORTE_ERROR_LOG(rc);
+            goto DEPART;
+        }
+        if (0 < num_iovecs) {
+            iovecs = (struct iovec *)malloc(num_iovecs * sizeof(struct iovec));
+            for (i=0; i < num_iovecs; i++) {
+                n=1;
+                if (ORCM_SUCCESS != (rc = opal_dss.unpack(&msg->buf, &num_bytes, &n, OPAL_INT32))) {
+                    ORTE_ERROR_LOG(rc);
+                    goto DEPART;
+                }
+                iovecs[i].iov_len = num_bytes;
+                if (0 < num_bytes) {
+                    iovecs[i].iov_base = (uint8_t*)malloc(num_bytes);
+                    if (ORCM_SUCCESS != (rc = opal_dss.unpack(&msg->buf, iovecs[i].iov_base, &num_bytes, OPAL_UINT8))) {
+                        ORTE_ERROR_LOG(rc);
+                        goto DEPART;
+                    }
+                } else {
+                    iovecs[i].iov_base = NULL;
+                }
+            }
+        }
+        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                             "%s pnp:default:received input iovecs - delivering msg",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+
+        /* release the local thread prior to executing the callback
+         * to avoid deadlock
+         */
+        if (orcm_pnp_base.use_threads) {
+            OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+            if (msg_thread_end) {
+                /* make one last check - if comm is disabled, don't deliver msg */
+                OBJ_RELEASE(msg);
+                return;
+            }
+        }
+        msg->cbfunc(ORCM_SUCCESS, &msg->sender, msg->tag, iovecs, num_iovecs, NULL, NULL);
+        if (orcm_pnp_base.use_threads) {
+            OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
+        }
+        /* release the memory */
+        if (0 < num_iovecs) {
+            for (i=0; i < num_iovecs; i++) {
+                free(iovecs[i].iov_base);
+            }
+            free(iovecs);
+        }
+        goto DEPART;
+    }
+
+    if (1 == flag) {
+        /* buffer was sent - just hand it over */
+        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                             "%s pnp:default:received input buffer - delivering msg",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        /* release the thread prior to executing the callback
+         * to avoid deadlock
+         */
+        if (orcm_pnp_base.use_threads) {
+            OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+            if (msg_thread_end) {
+                /* make one last check - if comm is disabled, don't deliver msg */
+                OBJ_RELEASE(msg);
+                return;
+            }
+        }
+        msg->cbfunc(ORCM_SUCCESS, &msg->sender, msg->tag, NULL, 0, &msg->buf, NULL);
+        if (orcm_pnp_base.use_threads) {
+            OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
+        }
+    }
+ DEPART:
+    OBJ_RELEASE(msg);
+}
+
+static void* deliver_msg(opal_object_t *obj)
+{
+    orcm_pnp_msg_t *msg;
     struct timespec s;
 
     s.tv_sec = 1;
@@ -2089,84 +2199,6 @@ static void* deliver_msg(opal_object_t *obj)
             continue;
         }
 
-        /* unpack the iovec vs buffer flag */
-        n=1;
-        if (ORCM_SUCCESS != (rc = opal_dss.unpack(&msg->buf, &flag, &n, OPAL_INT8))) {
-            ORTE_ERROR_LOG(rc);
-            goto DEPART;
-        }    
-    
-        if (0 == flag) {
-            /* iovecs were sent - get them */
-            n=1;
-            if (ORCM_SUCCESS != (rc = opal_dss.unpack(&msg->buf, &num_iovecs, &n, OPAL_INT32))) {
-                ORTE_ERROR_LOG(rc);
-                goto DEPART;
-            }
-            if (0 < num_iovecs) {
-                iovecs = (struct iovec *)malloc(num_iovecs * sizeof(struct iovec));
-                for (i=0; i < num_iovecs; i++) {
-                    n=1;
-                    if (ORCM_SUCCESS != (rc = opal_dss.unpack(&msg->buf, &num_bytes, &n, OPAL_INT32))) {
-                        ORTE_ERROR_LOG(rc);
-                        goto DEPART;
-                    }
-                    iovecs[i].iov_len = num_bytes;
-                    if (0 < num_bytes) {
-                        iovecs[i].iov_base = (uint8_t*)malloc(num_bytes);
-                        if (ORCM_SUCCESS != (rc = opal_dss.unpack(&msg->buf, iovecs[i].iov_base, &num_bytes, OPAL_UINT8))) {
-                            ORTE_ERROR_LOG(rc);
-                            goto DEPART;
-                        }
-                    } else {
-                        iovecs[i].iov_base = NULL;
-                    }
-                }
-            }
-            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                 "%s pnp:default:received input iovecs - delivering msg",
-                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-
-            /* release the local thread prior to executing the callback
-             * to avoid deadlock
-             */
-            OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
-            if (msg_thread_end) {
-                /* make one last check - if comm is disabled, don't deliver msg */
-                OBJ_RELEASE(msg);
-                return OPAL_THREAD_CANCELLED;
-            }
-            msg->cbfunc(ORCM_SUCCESS, &msg->sender, msg->tag, iovecs, num_iovecs, NULL, NULL);
-            OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
-            /* release the memory */
-            if (0 < num_iovecs) {
-                for (i=0; i < num_iovecs; i++) {
-                    free(iovecs[i].iov_base);
-                }
-                free(iovecs);
-            }
-            goto DEPART;
-        }
-
-        if (1 == flag) {
-            /* buffer was sent - just hand it over */
-            OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                                 "%s pnp:default:received input buffer - delivering msg",
-                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-            /* release the thread prior to executing the callback
-             * to avoid deadlock
-             */
-            OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
-            if (msg_thread_end) {
-                /* make one last check - if comm is disabled, don't deliver msg */
-                OBJ_RELEASE(msg);
-                return OPAL_THREAD_CANCELLED;
-            }
-            msg->cbfunc(ORCM_SUCCESS, &msg->sender, msg->tag, NULL, 0, &msg->buf, NULL);
-            OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
-        }
-    DEPART:
-        OBJ_RELEASE(msg);
         OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
     }
 

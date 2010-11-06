@@ -29,7 +29,10 @@
 
 static int lowest_init(void);
 static void lowest_finalize(void);
-static bool deliver_msg(const char *stringid, const orte_process_name_t *src);
+static bool deliver_msg(const char *stringid,
+                        const orte_process_name_t *src,
+                        const orte_rmcast_channel_t channel,
+                        const orte_rmcast_seq_t seq_num);
 static int set_policy(const char *app,
                       const char *version,
                       const char *release,
@@ -318,10 +321,15 @@ static int set_leader(const char *app,
     return ORCM_SUCCESS;
 }
 
-static bool deliver_msg(const char *stringid, const orte_process_name_t *src)
+static bool deliver_msg(const char *stringid,
+                        const orte_process_name_t *src,
+                        const orte_rmcast_channel_t channel,
+                        const orte_rmcast_seq_t seq_num)
 {
     bool ret=false;
     orcm_triplet_t *trp;
+    orcm_source_t *source;
+    orcm_triplet_group_t *grp;
     int i;
 
     OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
@@ -340,6 +348,28 @@ static bool deliver_msg(const char *stringid, const orte_process_name_t *src)
     /* do we need to set the leader? */
     if (!trp->leader_set) {
         eval_policy(trp);
+    }
+
+    /* get the group */
+    grp = orcm_get_triplet_group(trp, src->jobid, true);
+
+    /* if this is on the group output channel, then update the seq num
+     * for this source
+     */
+    if (channel == grp->output) {
+        source = orcm_get_source_in_group(grp, src->vpid, true);
+        if (ORTE_RMCAST_SEQ_INVALID == source->seq_num) {
+            /* initialize */
+            source->seq_num = seq_num;
+        } else {
+            if (1 != (seq_num - source->seq_num)) {
+                opal_output(0, "%s RECVD OUT-OF-ORDER MESSAGE: recvd %lu prior %lu",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                            seq_num, source->seq_num);
+            }
+            source->seq_num = seq_num;
+        }
+        OPAL_RELEASE_THREAD(&source->lock, &source->cond, &source->in_use);
     }
 
     /* if the proc is within the defined leaders, let it thru */

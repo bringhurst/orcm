@@ -61,12 +61,12 @@ int main(int argc, char* argv[])
     if (1 < argc) {
         tp.tv_sec = strtol(argv[1], NULL, 10);
     } else {
-        tp.tv_sec = 2;
+        tp.tv_sec = 0;
     }
     if (2 < argc) {
         tp.tv_usec = strtol(argv[2], NULL, 10);
     } else {
-        tp.tv_usec = 0;
+        tp.tv_usec = 10000;
     }
 
     /* init the ORCM library - this includes registering
@@ -136,7 +136,6 @@ static void send_data(int fd, short flags, void *arg)
     int j, n;
     struct iovec *msg;
     opal_event_t *tmp = (opal_event_t*)arg;
-    struct timeval now;
 
     count = ORTE_PROC_MY_NAME->vpid+1;
     msg = (struct iovec*)malloc(count * sizeof(struct iovec));
@@ -150,17 +149,18 @@ static void send_data(int fd, short flags, void *arg)
         msg[j].iov_len = 5 * sizeof(int32_t);
     }
     
+    if (0 == (msg_num % 100)) {
+        opal_output(0, "%s mcasting data for msg number %d",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
+    }
+
     /* output the values */
     if (ORCM_PNP_INVALID_CHANNEL == peer || msg_num % 2) {
-        opal_output(0, "%s mcasting data on output channel for msg number %d",
-                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
         if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, NULL,
                                                      ORCM_PNP_TAG_OUTPUT, msg, count, NULL, cbfunc, NULL))) {
             ORTE_ERROR_LOG(rc);
         }
     } else {
-        opal_output(0, "%s mcasting data on channel %d for msg number %d",
-                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), peer, msg_num);
         if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, NULL,
                                                      ORCM_PNP_TAG_OUTPUT, msg, count, NULL, cbfunc, NULL))) {
             ORTE_ERROR_LOG(rc);
@@ -171,9 +171,7 @@ static void send_data(int fd, short flags, void *arg)
     msg_num++;
     
     /* reset the timer */
-    now.tv_sec = tp.tv_sec;
-    now.tv_usec = tp.tv_usec;
-    opal_evtimer_add(tmp, &now);
+    opal_evtimer_add(tmp, &tp);
     
 }
 
@@ -186,10 +184,6 @@ static void recv_input(int status,
 {
     int32_t i, n, *data;
 
-    opal_output(0, "%s recvd message on my input from %s on tag %d with %d iovecs",
-                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                ORTE_NAME_PRINT(sender), (int)tag, count);
-
     /* loop over the iovecs */
     for (i=0; i < count; i++) {
         /* check the number of values */
@@ -197,11 +191,7 @@ static void recv_input(int status,
             opal_output(0, "\tError: iovec has incorrect length %d", (int)msg[i].iov_len);
             return;
         }
-        
-        /* print the first value */
         data = (int32_t*)msg[i].iov_base;
-        opal_output(0, "\tValue in iovec %d first posn: %d", i, data[0]);
-        
         /* now check the values */
         for (n=1; n < 5; n++) {
             if (data[n] != data[0]) {
@@ -221,10 +211,6 @@ static void server_output(int status,
 {
     int32_t i, n, *data;
 
-    opal_output(0, "%s recvd output from %s on tag %d with %d iovecs",
-                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                ORTE_NAME_PRINT(sender), (int)tag, count);
-
     /* loop over the iovecs */
     for (i=0; i < count; i++) {
         /* check the number of values */
@@ -232,11 +218,7 @@ static void server_output(int status,
             opal_output(0, "\tError: iovec has incorrect length %d", (int)msg[i].iov_len);
             return;
         }
-        
-        /* print the first value */
         data = (int32_t*)msg[i].iov_base;
-        opal_output(0, "\tValue in first posn: %d", data[0]);
-        
         /* now check the values */
         for (n=1; n < 5; n++) {
             if (data[n] != data[0]) {
@@ -245,15 +227,16 @@ static void server_output(int status,
             }
         }
    }
-    
+    if (0 == (data[0] % 100)) {
+        opal_output(0, "%s recvd data sender %s msg number %d",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                    ORTE_NAME_PRINT(sender), data[0]);
+    }
 }
 
 static void found_channel(const char *app, const char *version,
                           const char *release,
                           orcm_pnp_channel_t channel)
 {
-    opal_output(0, "%s recvd channel %d for triplet %s:%s:%s",
-                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                channel, app, version, release);
     peer = channel;
 }

@@ -42,6 +42,7 @@ static void proc_failed(const char *stringid,
                         const orte_process_name_t *leader);
 
 static int msg_num=0;
+static struct timeval tp;
 
 int main(int argc, char* argv[])
 {
@@ -49,6 +50,17 @@ int main(int argc, char* argv[])
     float pi;
     int rc;
     
+    if (1 < argc) {
+        tp.tv_sec = strtol(argv[1], NULL, 10);
+    } else {
+        tp.tv_sec = 0;
+    }
+    if (2 < argc) {
+        tp.tv_usec = strtol(argv[2], NULL, 10);
+    } else {
+        tp.tv_usec = 10000;
+    }
+
     /* init the ORCM library - this includes registering
      * a multicast recv so we hear announcements and
      * their responses from other apps
@@ -83,7 +95,7 @@ int main(int argc, char* argv[])
     opal_output(0, "SERVER %s ACTIVE", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
     
     /* wake up every x seconds to send something */
-    ORTE_TIMER_EVENT(2, 0, send_data);
+    ORTE_TIMER_EVENT(tp.tv_sec, tp.tv_usec, send_data);
 
     /* just sit here */
     opal_event_dispatch();
@@ -101,7 +113,6 @@ static void cbfunc(int status, orte_process_name_t *name,
 {
     int i;
     
-    opal_output(0, "%s mesg sent", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
     for (i=0; i < count; i++) {
         if (NULL != msg[i].iov_base) {
             free(msg[i].iov_base);
@@ -120,10 +131,6 @@ static void recv_input(int status,
     struct iovec *response;
     int rc;
     
-    opal_output(0, "%s recvd message from client %s on tag %d with %d iovecs",
-                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                ORTE_NAME_PRINT(sender), (int)tag, count);
-    
     /* loop over the iovecs */
     for (i=0; i < count; i++) {
         /* check the number of values */
@@ -131,11 +138,7 @@ static void recv_input(int status,
             opal_output(0, "\tError: iovec has incorrect length %d", (int)msg[i].iov_len);
             return;
         }
-        
-        /* print the first value */
         data = (int32_t*)msg[i].iov_base;
-        opal_output(0, "\tValue in first posn: %d", data[0]);
-        
         /* now check the values */
         for (n=1; n < 5; n++) {
             if (data[n] != data[0]) {
@@ -145,6 +148,12 @@ static void recv_input(int status,
         }
    }
     
+    if (0 == (data[0] % 100)) {
+        opal_output(0, "%s recvd data sender %s msg number %d",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                    ORTE_NAME_PRINT(sender), data[0]);
+    }
+
     /* see if we want to respond directly to the client */
     if (1 == (data[0] % 5)) {
         response = (struct iovec*)malloc(count * sizeof(struct iovec));
@@ -159,9 +168,6 @@ static void recv_input(int status,
         }
         
         /* output the values */
-        opal_output(0, "%s sending response to %s for msg number %d",
-                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                    ORTE_NAME_PRINT(sender), data[0]);
         if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_GROUP_OUTPUT_CHANNEL, sender,
                                                   ORCM_TEST_CLIENT_SERVER_TAG,
                                                   response, count, NULL))) {
@@ -195,7 +201,6 @@ static void send_data(int fd, short flags, void *arg)
     int j, n;
     struct iovec *msg;
     opal_event_t *tmp = (opal_event_t*)arg;
-    struct timeval now;
 
     count = ORTE_PROC_MY_NAME->vpid+1;
     msg = (struct iovec*)malloc(count * sizeof(struct iovec));
@@ -210,7 +215,11 @@ static void send_data(int fd, short flags, void *arg)
     }
     
     /* output the values */
-    opal_output(0, "%s multicasting data for msg number %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
+    if (0 == (msg_num % 100)) {
+        opal_output(0, "%s mcasting data for msg number %d",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
+    }
+
     if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, NULL,
                                                  ORCM_PNP_TAG_OUTPUT, msg, count, NULL, cbfunc_mcast, NULL))) {
         ORTE_ERROR_LOG(rc);
@@ -220,9 +229,7 @@ static void send_data(int fd, short flags, void *arg)
     msg_num++;
     
     /* reset the timer */
-    now.tv_sec = 2;
-    now.tv_usec = 0;
-    opal_evtimer_add(tmp, &now);
+    opal_evtimer_add(tmp, &tp);
     
 }
 
