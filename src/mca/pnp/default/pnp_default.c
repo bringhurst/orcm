@@ -1174,6 +1174,23 @@ static void recv_announcements(orte_process_name_t *sender,
         return;
     }
 
+    /* set the contact info - this has to be done even if the source is known
+     * as it could be a repeat invocation of the same application
+     */
+    if (ORTE_SUCCESS != (rc = orte_rml.set_contact_info(rml_uri))) {
+        ORTE_ERROR_LOG(rc);
+        goto RELEASE;
+    }
+
+    /* update the route if it is from some other family */
+    if (ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid) != ORTE_JOB_FAMILY(sender->jobid)) {
+        /* set the route to be direct */
+        if (ORTE_SUCCESS != (rc = orte_routed.update_route(sender, sender))) {
+            ORTE_ERROR_LOG(rc);
+            goto RELEASE;
+        }
+    }
+
     /* who are they responding to? */
     n=1;
     if (ORCM_SUCCESS != (rc = opal_dss.unpack(buf, &originator, &n, ORTE_NAME))) {
@@ -1247,25 +1264,6 @@ static void recv_announcements(orte_process_name_t *sender,
     }
     /* release the triplet thread */
     OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-
-    /* set the contact info - this has to be done even if the source is known
-     * as it could be a repeat invocation of the same application
-     */
-    if (ORTE_SUCCESS != (rc = orte_rml.set_contact_info(rml_uri))) {
-        ORTE_ERROR_LOG(rc);
-        goto RELEASE;
-    }
-
-    /* if the job family is different, then this wasn't launched
-     * by our dvm, so we won't already know the route to it.
-     */
-    if (ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid) != ORTE_JOB_FAMILY(sender->jobid)) {
-        /* set the route to be direct */
-        if (ORTE_SUCCESS != (rc = orte_routed.update_route(sender, sender))) {
-            ORTE_ERROR_LOG(rc);
-            goto RELEASE;
-        }
-    }
 
     /* if this is a new source and they wanted a callback,
      * now is the time to do it in case it needs to do some
