@@ -15,6 +15,7 @@
 #include "opal/util/error.h"
 #include "opal/class/opal_pointer_array.h"
 #include "opal/class/opal_ring_buffer.h"
+#include "opal/mca/event/event.h"
 
 #include "orte/runtime/runtime.h"
 #include "orte/mca/errmgr/errmgr.h"
@@ -59,7 +60,7 @@ static int signals[] = {
     SIGQUIT,
     SIGPIPE
 };
-static struct opal_event trap_handler[4];
+static opal_event_t trap_handler[4];
 static int num_signals=4;
 
 static void trap_signals(void);
@@ -191,7 +192,7 @@ void orcm_remove_signal_handlers(void)
     int i;
     
     for (i=0; i < num_signals; i++) {
-        opal_signal_del(&trap_handler[i]);
+        opal_event_signal_del(&trap_handler[i]);
     }
 }
 
@@ -202,13 +203,13 @@ static void trap_signals(void)
     for (i=0; i < num_signals; i++) {
         if (SIGPIPE == signals[i]) {
             /* ignore this signal */
-            opal_signal_set(&trap_handler[i], signals[i],
-                            ignore_trap, &trap_handler[i]);
+            opal_event_signal_set(opal_event_base, &trap_handler[i], signals[i],
+                                  ignore_trap, &trap_handler[i]);
         } else {
-            opal_signal_set(&trap_handler[i], signals[i],
-                            signal_trap, &trap_handler[i]);
+            opal_event_signal_set(opal_event_base, &trap_handler[i], signals[i],
+                                  signal_trap, &trap_handler[i]);
         }
-        opal_signal_add(&trap_handler[i], NULL);
+        opal_event_signal_add(&trap_handler[i], NULL);
     }
 }
 

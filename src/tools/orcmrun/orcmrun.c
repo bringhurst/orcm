@@ -52,7 +52,7 @@
 #include <sys/time.h>
 #endif  /* HAVE_SYS_TIME_H */
 
-#include "opal/event/event.h"
+#include "opal/mca/event/event.h"
 #include "opal/mca/installdirs/installdirs.h"
 #include "opal/mca/base/base.h"
 #include "opal/mca/paffinity/base/base.h"
@@ -775,7 +775,7 @@ int orcmrun(int argc, char *argv[])
     OBJ_DESTRUCT(&buf);
     
     /* now wait until the termination event fires */
-    opal_event_dispatch();
+    opal_event_dispatch(opal_event_base);
     
     /* we only reach this point by jumping there due
      * to an error - so just cleanup and leave
