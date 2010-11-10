@@ -645,6 +645,11 @@ static int create_app(int argc, char* argv[], orte_app_context_t **app_ptr,
     /* set the max global restarts value */
     app->max_global_restarts = my_globals.global_restarts;
 
+    if (0 < app->max_local_restarts ||
+        0 < app->max_global_restarts) {
+        jdata->enable_recovery = true;
+    }
+
     /* set the starting hosts */
     if (NULL != my_globals.hosts) {
         app->dash_host = opal_argv_split(my_globals.hosts, ',');
