@@ -46,27 +46,6 @@ int orcm_cfgi_confd_component_open(void)
     mca_base_component_t *c = &mca_orcm_cfgi_confd_component.super.cfgic_version;
     int tmp;
 
-#if 0
-    /* check for confd name */
-    mca_base_param_reg_string(c, "db_name",
-                              "Name of the confd database to which we are to connect",
-                              false, false, NULL, &mca_orcm_cfgi_confd_component.db);
-    
-    /* check for logfile name */
-    mca_base_param_reg_string(c, "logfile",
-                              "File in which to log transactions (default: NULL)",
-                              false, false, NULL, &mca_orcm_cfgi_confd_component.logfile);
-    
-    /* check for mode */
-    mca_base_param_reg_string(c, "mode",
-                              "Operating mode (SILENT | DEBUG | TRACE [default])",
-                              false, false, "TRACE", &mca_orcm_cfgi_confd_component.mode);
-
-    /* set namespace */
-    mca_base_param_reg_string(c, "namespace",
-                              "Set namespace",
-                              false, false, "confd-example", &mca_orcm_cfgi_confd_component.ns);
-#endif
     /* whether we are just testing the interface */
     mca_base_param_reg_int(c, "test_mode",
                            "Set test mode - just output received commands",
@@ -83,12 +62,32 @@ int orcm_cfgi_confd_component_close(void)
 
 int orcm_cfgi_confd_component_query(mca_base_module_t **module, int *priority)
 {
+    char *comp, **values;
+    bool use;
+    int i;
+
     if (ORCM_PROC_IS_DAEMON) {
+        /* if not specifically requested, don't use this module */
+        if (NULL == (comp = getenv("OMPI_MCA_orcm_cfgi"))) {
+            goto donotuse;
+        }
+        values = opal_argv_split(comp, ',');
+        use = false;
+        for (i=0; NULL != values[i]; i++) {
+            if (0 == strcmp("confd", values[i])) {
+                use = true;
+                break;
+            }
+        }
+        if (!use) {
+            goto donotuse;
+        }
         *module = (mca_base_module_t*)&orcm_cfgi_confd_module;
         *priority = 100;
         return ORCM_SUCCESS;
     }
 
+ donotuse:
     /* otherwise, cannot use this module */
     *priority = 0;
     *module = NULL;
