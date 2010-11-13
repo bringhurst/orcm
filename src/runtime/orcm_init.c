@@ -234,11 +234,6 @@ static void signal_trap(int fd, short flags, void *arg)
 {
     int i;
 
-    /* if we are a daemon, ignore */
-    if (ORCM_PROC_IS_DAEMON) {
-        return;
-    }
-
     /* if we are a daemon or master, allow for a forced term */
     if (!opal_atomic_trylock(&orte_abort_inprogress_lock)) { /* returns 1 if already locked */
         if (forcibly_die) {
