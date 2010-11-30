@@ -275,7 +275,7 @@ int main(int argc, char *argv[])
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-stop", "0.1", "alpha",
                                                          ORCM_PNP_GROUP_INPUT_CHANNEL,
                                                          ORCM_PNP_TAG_TOOL,
-                                                         ack_recv))) {
+                                                         ack_recv, NULL))) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }

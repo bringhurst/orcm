@@ -87,7 +87,7 @@ int main(int argc, char* argv[])
     /* register to recv anything sent to our input  */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("client", "1.0", "alpha",
                                                         ORCM_PNP_GROUP_INPUT_CHANNEL,
-                                                        ORCM_PNP_TAG_WILDCARD, recv_input))) {
+                                                        ORCM_PNP_TAG_WILDCARD, recv_input, NULL))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -95,7 +95,7 @@ int main(int argc, char* argv[])
     /* register to recv anything the server outputs */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("SERVER", "1.0", "alpha",
                                                         ORCM_PNP_GROUP_OUTPUT_CHANNEL,
-                                                        ORCM_PNP_TAG_WILDCARD, server_output))) {
+                                                        ORCM_PNP_TAG_WILDCARD, server_output, NULL))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -199,7 +199,10 @@ static void recv_input(int status,
                 return;
             }
         }
-   }
+    }
+    opal_output(0, "%s recvd direct msg %d from sender %s",
+                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                data[0], ORTE_NAME_PRINT(sender));
 }
 
 static void server_output(int status,
@@ -228,7 +231,7 @@ static void server_output(int status,
         }
    }
     if (0 == (data[0] % 100)) {
-        opal_output(0, "%s recvd data sender %s msg number %d",
+        opal_output(0, "%s recvd mcast data sender %s msg number %d",
                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                     ORTE_NAME_PRINT(sender), data[0]);
     }

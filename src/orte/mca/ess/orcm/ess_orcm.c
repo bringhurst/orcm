@@ -35,8 +35,6 @@
 #include "opal/mca/paffinity/paffinity.h"
 #include "opal/mca/sysinfo/sysinfo.h"
 #include "opal/mca/sysinfo/base/base.h"
-#include "opal/threads/mutex.h"
-#include "opal/threads/condition.h"
 
 #include "orte/mca/rmcast/base/base.h"
 #include "orte/mca/errmgr/errmgr.h"
@@ -55,6 +53,7 @@
 #include "orte/runtime/orte_wait.h"
 #include "orte/runtime/orte_globals.h"
 #include "orte/orted/orted.h"
+#include "orte/threads/threads.h"
 
 #include "orte/mca/ess/ess.h"
 #include "orte/mca/ess/base/base.h"
@@ -144,7 +143,7 @@ static int rte_init(void)
         goto error;
     }
     
-    /* open the plm in case we need it to set out name */
+    /* open the plm in case we need it to set our name */
     if (ORTE_SUCCESS != (ret = orte_plm_base_open())) {
         ORTE_ERROR_LOG(ret);
         error = "orte_plm_base_open";
@@ -156,6 +155,11 @@ static int rte_init(void)
         error = "orte_plm_base_select";
         goto error;
     }
+    /* Initialize the launch thread ctl */
+    OBJ_CONSTRUCT(&orcm_vm_launch, orte_thread_ctl_t);
+    /* set the name for debug purposes */
+    orcm_vm_launch.name = strdup("VM Launch");
+    orcm_vm_launch.cond.name = strdup(orcm_vm_launch.name);
 
     /* if we were given a jobid, use it */
     mca_base_param_reg_string_name("orte", "ess_jobid", "Process jobid",
@@ -910,7 +914,7 @@ static int local_setup(char **hosts)
         if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm", "0.1", "alpha",
                                                              ORCM_PNP_SYS_CHANNEL,
                                                              ORCM_PNP_TAG_WILDCARD,
-                                                             recv_input))) {
+                                                             recv_input, NULL))) {
             ORTE_ERROR_LOG(ret);
             orte_quit();
         }
@@ -920,7 +924,7 @@ static int local_setup(char **hosts)
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-ps", "0.1", "alpha",
                                                          ORCM_PNP_SYS_CHANNEL,
                                                          ORCM_PNP_TAG_PS,
-                                                         ps_request))) {
+                                                         ps_request, NULL))) {
         ORTE_ERROR_LOG(ret);
         orte_quit();
     }
@@ -949,12 +953,14 @@ static int local_setup(char **hosts)
     /* give ourselves a second to wait for announce responses to detect
      * any pre-existing daemons/orcms that might conflict
      */
+#if 0
     if (ORCM_PROC_IS_MASTER) {
         ORTE_TIMER_EVENT(1, 0, release);
     
         OPAL_ACQUIRE_THREAD(&start_lock, &start_cond, &start_flag);
         OPAL_THREAD_UNLOCK(&start_lock);
     }
+#endif
 
     /* if we are an orcmd, open the cfgi framework so
      * we can receive configuration instructions
@@ -1196,9 +1202,7 @@ static void vm_tracker(char *app, char *version, char *release,
             OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
                                  "%s declaring launch complete",
                                  ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        
-            OPAL_WAKEUP_THREAD(&orte_plm_globals.spawn_in_progress_cond,
-                               &orte_plm_globals.spawn_in_progress);
+            ORTE_WAKEUP_THREAD(&orcm_vm_launch);
         }
     }
     

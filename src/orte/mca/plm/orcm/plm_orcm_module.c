@@ -647,7 +647,9 @@ static int launch(orte_job_t *jdata)
     OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output, "released to spawn"));
     orte_plm_globals.spawn_in_progress = true;
     OPAL_THREAD_UNLOCK(&orte_plm_globals.spawn_lock);
-    
+
+    orcm_vm_launch.active = true;
+
     /* if we are launching an app instead of daemons, then
      * construct the launch msg and send it out
      */
@@ -680,9 +682,11 @@ static int launch(orte_job_t *jdata)
         }
         OBJ_RELEASE(buffer);
         /* wait for the procs to report back in the announce callback */
+#if 0
         OPAL_ACQUIRE_THREAD(&orte_plm_globals.spawn_lock,
                             &orte_plm_globals.spawn_in_progress_cond,
                             &orte_plm_globals.spawn_in_progress);
+#endif
         OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output,
                              "completed spawn for job %s", ORTE_JOBID_PRINT(jdata->jobid)));
         goto cleanup;
@@ -899,9 +903,7 @@ static int launch(orte_job_t *jdata)
     }
 
     /* wait for the daemons to report back in the announce callback */
-    OPAL_ACQUIRE_THREAD(&orte_plm_globals.spawn_lock,
-                        &orte_plm_globals.spawn_in_progress_cond,
-                        &orte_plm_globals.spawn_in_progress);
+    ORTE_ACQUIRE_THREAD(&orcm_vm_launch);
     OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output,
                          "completed spawn for job %s", ORTE_JOBID_PRINT(jdata->jobid)));
     
@@ -924,9 +926,10 @@ static int launch(orte_job_t *jdata)
     }
 
     /* RELEASE THE THREAD */
+#if 0
     orte_plm_globals.spawn_in_progress = false;
     OPAL_THREAD_UNLOCK(&orte_plm_globals.spawn_lock);
-
+#endif
     return rc;
 }
 

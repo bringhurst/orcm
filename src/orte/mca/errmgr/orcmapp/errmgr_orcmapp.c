@@ -27,6 +27,7 @@
 #include "orte/util/name_fns.h"
 #include "orte/runtime/orte_globals.h"
 #include "orte/mca/errmgr/errmgr.h"
+#include "orte/threads/threads.h"
 
 #include "mca/pnp/pnp.h"
 #include "mca/leader/leader.h"
@@ -81,9 +82,7 @@ orte_errmgr_base_module_t orte_errmgr_orcmapp_module = {
 /*
  * Local functions and globals
  */
-static opal_mutex_t lock;
-static opal_condition_t cond;
-static bool active;
+static orte_thread_ctl_t local_thread;
 static void notify_failure(int status,
                           orte_process_name_t *sender,
                           orcm_pnp_tag_t tag,
@@ -100,15 +99,13 @@ static int init(void)
     int rc=ORTE_SUCCESS;
 
     /* construct globals */
-    OBJ_CONSTRUCT(&lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&cond, opal_condition_t);
-    active = false;
+    OBJ_CONSTRUCT(&local_thread, orte_thread_ctl_t);
 
     /* setup to recv proc failure notifications */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("orcmd", "0.1", "alpha",
                                                         ORCM_PNP_ERROR_CHANNEL,
                                                         ORCM_PNP_TAG_ERRMGR,
-                                                        notify_failure))) {
+                                                        notify_failure, NULL))) {
         ORTE_ERROR_LOG(rc);
     }
 
@@ -118,8 +115,7 @@ static int init(void)
 static int finalize(void)
 {
     /* destruct globals */
-    OBJ_DESTRUCT(&lock);
-    OBJ_DESTRUCT(&cond);
+    OBJ_DESTRUCT(&local_thread);
 
     orcm_pnp.cancel_receive("orcmd", "0.1", "alpha",
                             ORCM_PNP_APP_PUBLIC_CHANNEL,
@@ -176,7 +172,7 @@ static void notify_failure(int status,
     int n, rc;
 
     /* get the thread */
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    ORTE_ACQUIRE_THREAD(&local_thread);
 
     /* unpack the name of the failed proc */
     n=1;
@@ -195,7 +191,7 @@ static void notify_failure(int status,
         opal_output(0, "%s errmgr: no triplet found for proc %s",
                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                     ORTE_NAME_PRINT(&failed));
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&local_thread);
         return;
     }
 
@@ -205,7 +201,7 @@ static void notify_failure(int status,
     src = orcm_get_source(trp, &failed, true);
     /* flag the source as failed */
     src->alive = false;
-    OPAL_RELEASE_THREAD(&src->lock, &src->cond, &src->in_use);
+    ORTE_RELEASE_THREAD(&src->ctl);
 
     /* save the stringid */
     stringid = strdup(trp->string_id);
@@ -213,10 +209,10 @@ static void notify_failure(int status,
     /* notify the leader framework in case comm leader needs to change - be
      * sure to release thread prior to call to avoid conflict
      */
-    OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
+    ORTE_RELEASE_THREAD(&trp->ctl);
     orcm_leader.proc_failed(stringid, &failed);
 
     free(stringid);
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&local_thread);
 }
 

@@ -377,7 +377,7 @@ int main(int argc, char *argv[])
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm", "0.1", "alpha",
                                                          ORCM_PNP_SYS_CHANNEL,
                                                          ORCM_PNP_TAG_COMMAND,
-                                                         vm_commands))) {
+                                                         vm_commands, NULL))) {
         ORTE_ERROR_LOG(ret);
         goto xtra_cleanup;
     }
@@ -386,7 +386,7 @@ int main(int argc, char *argv[])
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-ps", "0.1", "alpha",
                                                          ORCM_PNP_SYS_CHANNEL,
                                                          ORCM_PNP_TAG_PS,
-                                                         ps_request))) {
+                                                         ps_request, NULL))) {
         ORTE_ERROR_LOG(ret);
         goto xtra_cleanup;
     }

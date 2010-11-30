@@ -30,6 +30,7 @@
 
 #include "orte/util/proc_info.h"
 #include "orte/mca/rmcast/rmcast_types.h"
+#include "orte/threads/threads.h"
 
 BEGIN_C_DECLS
 
@@ -89,9 +90,7 @@ typedef void (*orcm_pnp_open_channel_cbfunc_t)(const char *app,
 typedef struct {
     opal_object_t super;
     /* thread protection */
-    opal_mutex_t lock;
-    opal_condition_t cond;
-    bool in_use;
+    orte_thread_ctl_t ctl;
     /* storage for wildcard triplets - this is where
      * we "hold" recvs registered against triplets
      * containing one or more wildcard fields
@@ -105,9 +104,7 @@ ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_triplets_array_t);
 typedef struct {
     opal_object_t super;
     /* thread protection */
-    opal_mutex_t lock;
-    opal_condition_t cond;
-    bool in_use;
+    orte_thread_ctl_t ctl;
     /* id and groups */
     char *string_id;
     orte_vpid_t num_procs;
@@ -148,9 +145,7 @@ ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_triplet_group_t);
 typedef struct {
     opal_object_t super;
     /* thread protection */
-    opal_mutex_t lock;
-    opal_condition_t cond;
-    bool in_use;
+    orte_thread_ctl_t ctl;
     /* id */
     orte_process_name_t name;
     /* state */
@@ -164,7 +159,7 @@ ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_source_t);
 ORCM_DECLSPEC extern const char openrcm_version_string[];
 
 /**
- * Whether ORCM is initialized or we are in openrcm_finalize
+ * Whether ORCM is initialized or we are in orcm_finalize
  */
 ORCM_DECLSPEC extern bool orcm_initialized;
 ORCM_DECLSPEC extern bool orcm_util_initialized;
@@ -178,6 +173,9 @@ ORCM_DECLSPEC extern int orcm_debug_verbosity;
 ORCM_DECLSPEC extern orcm_triplets_array_t *orcm_triplets;
 ORCM_DECLSPEC extern int orcm_max_msg_ring_size;
 ORCM_DECLSPEC extern orte_process_name_t orcm_default_leader_policy;
+
+/* thread ctl for vm launch */
+ORCM_DECLSPEC extern orte_thread_ctl_t orcm_vm_launch;
 
 #define ORCM_WILDCARD_STRING_ID "@:@:@"
 

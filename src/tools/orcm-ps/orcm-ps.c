@@ -274,7 +274,7 @@ int main(int argc, char *argv[])
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-ps", "0.1", "alpha",
                                                          ORCM_PNP_GROUP_INPUT_CHANNEL,
                                                          ORCM_PNP_TAG_PS,
-                                                         ps_recv))) {
+                                                         ps_recv, NULL))) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }

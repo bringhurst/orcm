@@ -175,7 +175,7 @@ static int init(void)
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("orcmd", "0.1", "alpha",
                                                         ORCM_PNP_SYS_CHANNEL,
                                                         ORCM_PNP_TAG_ERRMGR,
-                                                        remote_update))) {
+                                                        remote_update, NULL))) {
         ORTE_ERROR_LOG(rc);
     }
     return rc;

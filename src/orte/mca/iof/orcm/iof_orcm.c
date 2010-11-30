@@ -91,7 +91,7 @@ static int orcm_push(const orte_process_name_t* dst_name, orte_iof_tag_t src_tag
         if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcmd", "0.1", "alpha",
                                                              ORCM_PNP_SYS_CHANNEL,
                                                              ORCM_PNP_TAG_IOF,
-                                                             orte_iof_orcm_recv))) {
+                                                             orte_iof_orcm_recv, NULL))) {
             ORTE_ERROR_LOG(ret);
         }        
     }

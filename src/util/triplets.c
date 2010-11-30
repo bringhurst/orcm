@@ -13,6 +13,7 @@
 #include <stdio.h>
 
 #include "orte/util/name_fns.h"
+#include "orte/threads/threads.h"
 #include "orte/runtime/orte_globals.h"
 
 #include "runtime/orcm_globals.h"
@@ -25,9 +26,7 @@ orcm_triplet_t* orcm_get_triplet_jobid(const orte_jobid_t jobid)
     orcm_triplet_group_t *grp;
 
     /* lock the global array for our use */
-    OPAL_ACQUIRE_THREAD(&orcm_triplets->lock,
-                        &orcm_triplets->cond,
-                        &orcm_triplets->in_use);
+    ORTE_ACQUIRE_THREAD(&orcm_triplets->ctl);
 
     for (i=0; i < orcm_triplets->array.size; i++) {
         if (NULL == (triplet = (orcm_triplet_t*)opal_pointer_array_get_item(&orcm_triplets->array, i))) {
@@ -44,21 +43,17 @@ orcm_triplet_t* orcm_get_triplet_jobid(const orte_jobid_t jobid)
                 /* lock the triplet for use - the caller is responsible for
                  * unlocking it!
                  */
-                OPAL_ACQUIRE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+                ORTE_ACQUIRE_THREAD(&triplet->ctl);
  
                 /* release the global array */
-                OPAL_RELEASE_THREAD(&orcm_triplets->lock,
-                                    &orcm_triplets->cond,
-                                    &orcm_triplets->in_use);
+                ORTE_RELEASE_THREAD(&orcm_triplets->ctl);
                 return triplet;
             }
         }
     }
 
     /* release the global array */
-    OPAL_RELEASE_THREAD(&orcm_triplets->lock,
-                        &orcm_triplets->cond,
-                        &orcm_triplets->in_use);
+    ORTE_RELEASE_THREAD(&orcm_triplets->ctl);
     return NULL;
 }
 
@@ -69,9 +64,7 @@ orcm_triplet_t* orcm_get_triplet_stringid(const char *stringid)
     opal_pointer_array_t *array;
 
     /* lock the global array for our use */
-    OPAL_ACQUIRE_THREAD(&orcm_triplets->lock,
-                        &orcm_triplets->cond,
-                        &orcm_triplets->in_use);
+    ORTE_ACQUIRE_THREAD(&orcm_triplets->ctl);
 
     /* if the string_id contains a wildcard, then we have to look
      * in the wildcard array
@@ -95,20 +88,16 @@ orcm_triplet_t* orcm_get_triplet_stringid(const char *stringid)
             /* lock the triplet for use - the caller is responsible for
              * unlocking it!
              */
-            OPAL_ACQUIRE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+            ORTE_ACQUIRE_THREAD(&triplet->ctl);
  
             /* release the global array */
-            OPAL_RELEASE_THREAD(&orcm_triplets->lock,
-                                &orcm_triplets->cond,
-                                &orcm_triplets->in_use);
+            ORTE_RELEASE_THREAD(&orcm_triplets->ctl);
             return triplet;
         }
     }
 
     /* release the global array */
-    OPAL_RELEASE_THREAD(&orcm_triplets->lock,
-                        &orcm_triplets->cond,
-                        &orcm_triplets->in_use);
+    ORTE_RELEASE_THREAD(&orcm_triplets->ctl);
     return NULL;
 }
 
@@ -132,9 +121,7 @@ orcm_triplet_t* orcm_get_triplet(const char *app,
     ORCM_CREATE_STRING_ID(&string_id, app, version, release);
 
     /* lock the global array for our use */
-    OPAL_ACQUIRE_THREAD(&orcm_triplets->lock,
-                        &orcm_triplets->cond,
-                        &orcm_triplets->in_use);
+    ORTE_ACQUIRE_THREAD(&orcm_triplets->ctl);
 
     /* if the string_id contains a wildcard, then we have to look
      * in the wildcard array
@@ -174,13 +161,11 @@ orcm_triplet_t* orcm_get_triplet(const char *app,
      * responsible for unlocking it!
      */
     if (NULL != triplet) {
-        OPAL_ACQUIRE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+        ORTE_ACQUIRE_THREAD(&triplet->ctl);
     }
 
     /* release the global array lock */
-    OPAL_RELEASE_THREAD(&orcm_triplets->lock,
-                        &orcm_triplets->cond,
-                        &orcm_triplets->in_use);
+    ORTE_RELEASE_THREAD(&orcm_triplets->ctl);
 
     OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
                          "%s pnp:default:get_triplet created triplet %s",
@@ -258,7 +243,7 @@ orcm_source_t* orcm_get_source_in_group(orcm_triplet_group_t *grp,
     /* lock the source - the caller is reponsible
      * for unlocking it!
      */
-    OPAL_ACQUIRE_THREAD(&src->lock, &src->cond, &src->in_use);
+    ORTE_ACQUIRE_THREAD(&src->ctl);
     return src;
 }
 
@@ -306,7 +291,7 @@ orcm_source_t* orcm_get_source(orcm_triplet_t *triplet,
         /* lock the source - the caller is reponsible
          * for unlocking it!
          */
-        OPAL_ACQUIRE_THREAD(&src->lock, &src->cond, &src->in_use);
+        ORTE_ACQUIRE_THREAD(&src->ctl);
         return src;
     }
 
@@ -330,7 +315,7 @@ orcm_source_t* orcm_get_source(orcm_triplet_t *triplet,
     /* lock the source - the caller is reponsible
      * for unlocking it!
      */
-    OPAL_ACQUIRE_THREAD(&src->lock, &src->cond, &src->in_use);
+    ORTE_ACQUIRE_THREAD(&src->ctl);
 
     return src;
 }

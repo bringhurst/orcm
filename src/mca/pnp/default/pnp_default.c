@@ -29,7 +29,6 @@
 #include "opal/class/opal_pointer_array.h"
 #include "opal/util/argv.h"
 #include "opal/util/output.h"
-#include "opal/threads/threads.h"
 #include "opal/mca/sysinfo/sysinfo.h"
 
 #include "orte/mca/rmcast/rmcast.h"
@@ -37,6 +36,7 @@
 #include "orte/mca/rml/rml.h"
 #include "orte/mca/routed/routed.h"
 #include "orte/runtime/orte_globals.h"
+#include "orte/threads/threads.h"
 
 #include "mca/leader/leader.h"
 #include "runtime/runtime.h"
@@ -64,7 +64,8 @@ static int register_receive(const char *app,
                             const char *release,
                             orcm_pnp_channel_t channel,
                             orcm_pnp_tag_t tag,
-                            orcm_pnp_callback_fn_t cbfunc);
+                            orcm_pnp_callback_fn_t cbfunc,
+                            void *cbdata);
 static int cancel_receive(const char *app,
                           const char *version,
                           const char *release,
@@ -139,7 +140,8 @@ static void update_pending_recvs(orcm_triplet_t *trp);
 static int record_recv(orcm_triplet_t *triplet,
                        orcm_pnp_channel_t channel,
                        orcm_pnp_tag_t tag,
-                       orcm_pnp_callback_fn_t cbfunc);
+                       orcm_pnp_callback_fn_t cbfunc,
+                       void *cbdata);
 
 static orcm_pnp_request_t* find_request(opal_list_t *list,
                                         char *string_id,
@@ -163,12 +165,8 @@ static orcm_triplet_t *my_triplet=NULL;
 static orcm_triplet_group_t *my_group=NULL;
 
 /* local thread support */
-static opal_mutex_t lock;
-static opal_condition_t cond;
-static volatile bool active;
-static opal_mutex_t msg_lock;
-static opal_condition_t msg_cond;
-static volatile bool msg_active;
+static orte_thread_ctl_t local_thread;
+static orte_thread_ctl_t msg_ctl;
 static opal_thread_t msg_thread;
 static opal_list_t msg_delivery;
 static volatile bool msg_thread_end=false;
@@ -192,16 +190,12 @@ static int default_init(void)
     }
     
     /* setup the threading support */
-    OBJ_CONSTRUCT(&lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&cond, opal_condition_t);
-    active = false;
+    OBJ_CONSTRUCT(&local_thread, orte_thread_ctl_t);
     /* setup the msg threading support */
     OBJ_CONSTRUCT(&msg_thread, opal_thread_t);
     msg_thread.t_run = deliver_msg;
-    OBJ_CONSTRUCT(&msg_lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&msg_cond, opal_condition_t);
+    OBJ_CONSTRUCT(&msg_ctl, orte_thread_ctl_t);
     OBJ_CONSTRUCT(&msg_delivery, opal_list_t);
-    msg_active = false;
 
     /* init the array of channels */
     OBJ_CONSTRUCT(&channels, opal_pointer_array_t);
@@ -256,13 +250,11 @@ static int default_init(void)
     
     /* startup the msg thread */
     if (orcm_pnp_base.use_threads) {
-        OPAL_THREAD_LOCK(&msg_lock);
         if (OPAL_SUCCESS != (ret = opal_thread_start(&msg_thread))) {
             opal_output(0, "%s Unable to start message delivery thread",
                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             return ret;
         }
-        OPAL_THREAD_UNLOCK(&msg_lock);
     }
 
     /* open the default "system" channel */
@@ -317,14 +309,14 @@ static int announce(const char *app,
     }
     
     /* protect against threading */
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    ORTE_ACQUIRE_THREAD(&local_thread);
     
     if (NULL != my_string_id) {
         /* must have been called before */
         OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                              "%s pnp:default:announce called before",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&local_thread);
         return ORCM_SUCCESS;
     }
     
@@ -358,10 +350,10 @@ static int announce(const char *app,
     check_pending_recvs(my_triplet, my_group);
 
     /* release the triplet as we no longer require it */
-    OPAL_RELEASE_THREAD(&my_triplet->lock, &my_triplet->cond, &my_triplet->in_use);
+    ORTE_RELEASE_THREAD(&my_triplet->ctl);
 
     /* no need to hold the lock any further */
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&local_thread);
     
     /* assemble the announcement message */
     OBJ_CONSTRUCT(&buf, opal_buffer_t);
@@ -381,6 +373,9 @@ static int announce(const char *app,
     }
     
     /* send it */
+    OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                         "%s pnp:default:announce sending",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
     if (ORCM_SUCCESS != (ret = default_output(chan, NULL,
                                               ORCM_PNP_TAG_ANNOUNCE,
                                               NULL, 0, &buf))) {
@@ -412,8 +407,13 @@ static int open_channel(const char *app,
         return ORCM_ERR_BAD_PARAM;
     }
 
+    OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                         "%s pnp:default:open channel for app %s version %s release %s",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         app, version, release));
+    
     /* protect the global arrays */
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    ORTE_ACQUIRE_THREAD(&local_thread);
     
     /* see if we already know this triplet - automatically
      * creates it if not
@@ -435,24 +435,28 @@ static int open_channel(const char *app,
                 /* release the threads before doing the callback in
                  * case the caller sends messages
                  */
-                OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-                OPAL_RELEASE_THREAD(&lock, &cond, &active);
+                OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                                     "%s pnp:default:open channel executing callback for jobid %s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     ORTE_JOBID_PRINT(grp->jobid)));
+                ORTE_RELEASE_THREAD(&triplet->ctl);
+                ORTE_RELEASE_THREAD(&local_thread);
                 cbfunc(app, version, release, grp->input);
                 /* reacquire the threads */
-                OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
-                OPAL_ACQUIRE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+                ORTE_ACQUIRE_THREAD(&local_thread);
+                ORTE_ACQUIRE_THREAD(&triplet->ctl);
                 /* flag that this group has executed its callback */
                 grp->pnp_cbfunc = NULL;
             }
         }
         /* release the threads */
-        OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&triplet->ctl);
+        ORTE_RELEASE_THREAD(&local_thread);
         return ORCM_SUCCESS;
     }
 
     if (ORTE_JOBID_INVALID == jobid) {
-        /* see if we have know about any group with this triplet */
+        /* see if we know about any group with this triplet */
         done = false;
         for (i=0; i < triplet->groups.size; i++) {
             if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&triplet->groups, i))) {
@@ -461,13 +465,17 @@ static int open_channel(const char *app,
             grp->pnp_cbfunc = cbfunc;
             if (ORCM_PNP_INVALID_CHANNEL != grp->input) {
                 /* flag that we already did the callback so we don't do it again */
+                OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                                     "%s pnp:default:open channel executing callback for jobid %s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     ORTE_JOBID_PRINT(grp->jobid)));
                 done = true;
-                OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-                OPAL_RELEASE_THREAD(&lock, &cond, &active);
+                ORTE_RELEASE_THREAD(&triplet->ctl);
+                ORTE_RELEASE_THREAD(&local_thread);
                 cbfunc(app, version, release, grp->input);
                 /* reacquire the threads */
-                OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
-                OPAL_ACQUIRE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+                ORTE_ACQUIRE_THREAD(&local_thread);
+                ORTE_ACQUIRE_THREAD(&triplet->ctl);
                 break;
             }
         }
@@ -483,8 +491,8 @@ static int open_channel(const char *app,
             }
         }
         /* release the threads */
-        OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&triplet->ctl);
+        ORTE_RELEASE_THREAD(&local_thread);
         return ORCM_SUCCESS;
     }
 
@@ -502,12 +510,16 @@ static int open_channel(const char *app,
                 /* release the threads before doing the callback in
                  * case the caller sends messages
                  */
-                OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-                OPAL_RELEASE_THREAD(&lock, &cond, &active);
+                OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                                     "%s pnp:default:open channel executing callback for jobid %s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     ORTE_JOBID_PRINT(grp->jobid)));
+                ORTE_RELEASE_THREAD(&triplet->ctl);
+                ORTE_RELEASE_THREAD(&local_thread);
                 cbfunc(app, version, release, grp->input);
                 /* reacquire the threads */
-                OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
-                OPAL_ACQUIRE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+                ORTE_ACQUIRE_THREAD(&local_thread);
+                ORTE_ACQUIRE_THREAD(&triplet->ctl);
                 /* flag that this group has executed its callback */
                 grp->pnp_cbfunc = NULL;
                 break;
@@ -521,8 +533,8 @@ static int open_channel(const char *app,
         grp->pnp_cbfunc = cbfunc;
     }
 
-    OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&triplet->ctl);
+    ORTE_RELEASE_THREAD(&local_thread);
     return ORCM_SUCCESS;
 }
 
@@ -531,7 +543,8 @@ static int register_receive(const char *app,
                             const char *release,
                             orcm_pnp_channel_t channel,
                             orcm_pnp_tag_t tag,
-                            orcm_pnp_callback_fn_t cbfunc)
+                            orcm_pnp_callback_fn_t cbfunc,
+                            void *cbdata)
 {
     orcm_triplet_t *triplet, *trp;
     int i;
@@ -557,7 +570,7 @@ static int register_receive(const char *app,
     /* since we are modifying global lists, lock
      * the thread
      */
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    ORTE_ACQUIRE_THREAD(&local_thread);
     
     /* get a triplet object for this triplet - creates
      * it if one doesn't already exist
@@ -585,6 +598,7 @@ static int register_receive(const char *app,
                     req->string_id = strdup(triplet->string_id);
                     req->tag = tag;
                     req->cbfunc = cbfunc;
+                    req->cbdata = cbdata;
                     opal_list_append(&triplet->input_recvs, &req->super);
                 }
             } else {
@@ -594,14 +608,13 @@ static int register_receive(const char *app,
                     req->string_id = strdup(triplet->string_id);
                     req->tag = tag;
                     req->cbfunc = cbfunc;
+                    req->cbdata = cbdata;
                     opal_list_append(&triplet->output_recvs, &req->super);
                 }
             }
 
             /* lock the global triplet arrays for our use */
-            OPAL_ACQUIRE_THREAD(&orcm_triplets->lock,
-                                &orcm_triplets->cond,
-                                &orcm_triplets->in_use);
+            ORTE_ACQUIRE_THREAD(&orcm_triplets->ctl);
 
             /* check all known triplets to find those that match */
             for (i=0; i < orcm_triplets->array.size; i++) {
@@ -609,21 +622,19 @@ static int register_receive(const char *app,
                     continue;
                 }
                 /* lock the triplet thread */
-                OPAL_ACQUIRE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
+                ORTE_ACQUIRE_THREAD(&trp->ctl);
                 if (orcm_triplet_cmp(trp->string_id, triplet->string_id)) {
                     /* triplet matches - transfer the recv */
-                    if (ORCM_SUCCESS != (ret = record_recv(trp, channel, tag, cbfunc))) {
+                    if (ORCM_SUCCESS != (ret = record_recv(trp, channel, tag, cbfunc, cbdata))) {
                         ORTE_ERROR_LOG(ret);
                     }
                 }
                 /* release this triplet */
-                OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
+                ORTE_RELEASE_THREAD(&trp->ctl);
             }
 
             /* release the global arrays */
-            OPAL_RELEASE_THREAD(&orcm_triplets->lock,
-                                &orcm_triplets->cond,
-                                &orcm_triplets->in_use);
+            ORTE_RELEASE_THREAD(&orcm_triplets->ctl);
         } else {
             /* if we were given a specific channel, then we can add this
              * recv to it
@@ -638,6 +649,8 @@ static int register_receive(const char *app,
                 req = OBJ_NEW(orcm_pnp_request_t);
                 req->string_id = strdup(req->string_id);
                 req->tag = req->tag;
+                req->cbfunc = cbfunc;
+                req->cbdata = cbdata;
                 opal_list_append(&recvr->recvs, &req->super);
             }
             if (channel < ORCM_PNP_SYS_CHANNEL) {
@@ -667,15 +680,15 @@ static int register_receive(const char *app,
 
     } else {
         /* we are dealing with a non-wildcard triplet - record the request */
-        if (ORCM_SUCCESS != (ret = record_recv(triplet, channel, tag, cbfunc))) {
+        if (ORCM_SUCCESS != (ret = record_recv(triplet, channel, tag, cbfunc, cbdata))) {
             ORTE_ERROR_LOG(ret);
         }
     }
 
  cleanup:
     /* clear the threads */
-    OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&triplet->ctl);
+    ORTE_RELEASE_THREAD(&local_thread);
     
     return ret;
 }
@@ -707,7 +720,7 @@ static int cancel_receive(const char *app,
     /* since we are modifying global lists, lock
      * the thread
      */
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    ORTE_ACQUIRE_THREAD(&local_thread);
     
     /* if this is the wildcard channel, loop across all channels */
     if (ORCM_PNP_WILDCARD_CHANNEL == channel) {
@@ -758,7 +771,7 @@ static int cancel_receive(const char *app,
                     chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, grp->input);
                     if (NULL == chan) {
                         /* nothing to do */
-                        OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+                        ORTE_RELEASE_THREAD(&triplet->ctl);
                         goto cleanup;
                     }
                     item = opal_list_get_first(&chan->recvs);
@@ -774,7 +787,7 @@ static int cancel_receive(const char *app,
                 }
             }
             /* release the triplet */
-            OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+            ORTE_RELEASE_THREAD(&triplet->ctl);
         }
         goto cleanup;
     }
@@ -803,7 +816,7 @@ static int cancel_receive(const char *app,
                     chan = (orcm_pnp_channel_obj_t*)opal_pointer_array_get_item(&channels, grp->output);
                     if (NULL == chan) {
                         /* nothing to do */
-                        OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+                        ORTE_RELEASE_THREAD(&triplet->ctl);
                         goto cleanup;
                     }
                     item = opal_list_get_first(&chan->recvs);
@@ -819,7 +832,7 @@ static int cancel_receive(const char *app,
                 }
             }
             /* release the triplet */
-            OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+            ORTE_RELEASE_THREAD(&triplet->ctl);
         }
         goto cleanup;
     }
@@ -844,7 +857,7 @@ static int cancel_receive(const char *app,
 
  cleanup:
     /* clear the thread */
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&local_thread);
     
     return ret;
 }
@@ -865,12 +878,12 @@ static int default_output(orcm_pnp_channel_t channel,
     }
 
     /* protect against threading */
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    ORTE_ACQUIRE_THREAD(&local_thread);
     
     /* setup the message for xmission */
     if (ORTE_SUCCESS != (ret = construct_msg(&buf, buffer, tag, msg, count))) {
         ORTE_ERROR_LOG(ret);
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&local_thread);
         return ret;
     }
     
@@ -901,7 +914,7 @@ static int default_output(orcm_pnp_channel_t channel,
             ORTE_ERROR_LOG(ret);
         }
         OBJ_RELEASE(buf);
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&local_thread);
         return ORCM_SUCCESS;
     }
     
@@ -912,7 +925,7 @@ static int default_output(orcm_pnp_channel_t channel,
         ORTE_VPID_WILDCARD == recipient->vpid) {
         ORTE_ERROR_LOG(ORTE_ERR_NOT_IMPLEMENTED);
         OBJ_RELEASE(buf);
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&local_thread);
         return ORTE_ERR_NOT_IMPLEMENTED;
     }
     
@@ -925,7 +938,7 @@ static int default_output(orcm_pnp_channel_t channel,
                          orcm_pnp_print_tag(tag)));
 
     /* release the thread prior to send */
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&local_thread);
     
     /* send the msg */
     if (0 > (ret = orte_rml.send_buffer(recipient, buf, ORTE_RML_TAG_MULTICAST_DIRECT, 0))) {
@@ -956,7 +969,7 @@ static int default_output_nb(orcm_pnp_channel_t channel,
     }
 
     /* protect against threading */
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    ORTE_ACQUIRE_THREAD(&local_thread);
     
     send = OBJ_NEW(orcm_pnp_send_t);
     send->tag = tag;
@@ -969,7 +982,7 @@ static int default_output_nb(orcm_pnp_channel_t channel,
     /* setup the message for xmission */
     if (ORTE_SUCCESS != (ret = construct_msg(&buf, buffer, tag, msg, count))) {
         ORTE_ERROR_LOG(ret);
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&local_thread);
         return ret;
     }
     send->buffer = buf;
@@ -997,7 +1010,7 @@ static int default_output_nb(orcm_pnp_channel_t channel,
                              orcm_pnp_print_tag(tag)));
         
         /* release thread prior to send */
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&local_thread);
         /* send the iovecs to the channel */
         if (ORCM_SUCCESS != (ret = orte_rmcast.send_buffer_nb(chan, tag, buf,
                                                               rmcast_callback, send))) {
@@ -1013,7 +1026,7 @@ static int default_output_nb(orcm_pnp_channel_t channel,
         ORTE_VPID_WILDCARD == recipient->vpid) {
         ORTE_ERROR_LOG(ORTE_ERR_NOT_IMPLEMENTED);
         OBJ_RELEASE(send);
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&local_thread);
         return ORTE_ERR_NOT_IMPLEMENTED;
     }
     
@@ -1027,7 +1040,7 @@ static int default_output_nb(orcm_pnp_channel_t channel,
                          orcm_pnp_print_tag(tag)));
 
     /* release thread prior to send */
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&local_thread);
     
     /* send the msg */
     if (0 > (ret = orte_rml.send_buffer_nb(recipient, buf,
@@ -1090,12 +1103,10 @@ static int default_finalize(void)
         OBJ_RELEASE(item);
     }
     OBJ_DESTRUCT(&msg_delivery);
-    OBJ_DESTRUCT(&msg_lock);
-    OBJ_DESTRUCT(&msg_cond);
+    OBJ_DESTRUCT(&msg_ctl);
 
     /* destruct the threading support */
-    OBJ_DESTRUCT(&lock);
-    OBJ_DESTRUCT(&cond);
+    OBJ_DESTRUCT(&local_thread);
     
     /* release the array of known channels */
     for (i=0; i < channels.size; i++) {
@@ -1182,15 +1193,6 @@ static void recv_announcements(orte_process_name_t *sender,
         goto RELEASE;
     }
 
-    /* update the route if it is from some other family */
-    if (ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid) != ORTE_JOB_FAMILY(sender->jobid)) {
-        /* set the route to be direct */
-        if (ORTE_SUCCESS != (rc = orte_routed.update_route(sender, sender))) {
-            ORTE_ERROR_LOG(rc);
-            goto RELEASE;
-        }
-    }
-
     /* who are they responding to? */
     n=1;
     if (ORCM_SUCCESS != (rc = opal_dss.unpack(buf, &originator, &n, ORTE_NAME))) {
@@ -1208,7 +1210,6 @@ static void recv_announcements(orte_process_name_t *sender,
 
     /* find this triplet - create if not found */
     triplet = orcm_get_triplet(app, version, release, true);
-
     /* get the sender's group - create if not found */
     grp = orcm_get_triplet_group(triplet, sender->jobid, true);
 
@@ -1224,7 +1225,7 @@ static void recv_announcements(orte_process_name_t *sender,
          */
         if (ORTE_SUCCESS != (rc = orte_rmcast.open_channel(input, string_id, NULL, -1, NULL, ORTE_RMCAST_XMIT))) {
             ORTE_ERROR_LOG(rc);
-            OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+            ORTE_RELEASE_THREAD(&triplet->ctl);
             goto RELEASE;
         }
         grp->pnp_cbfunc(app, version, release, input);
@@ -1260,10 +1261,10 @@ static void recv_announcements(orte_process_name_t *sender,
         /* flag it as alive */
         source->alive = true;
         /* the source returns locked, so release it */
-        OPAL_RELEASE_THREAD(&source->lock, &source->cond, &source->in_use);
+        ORTE_RELEASE_THREAD(&source->ctl);
     }
     /* release the triplet thread */
-    OPAL_RELEASE_THREAD(&triplet->lock, &triplet->cond, &triplet->in_use);
+    ORTE_RELEASE_THREAD(&triplet->ctl);
 
     /* if this is a new source and they wanted a callback,
      * now is the time to do it in case it needs to do some
@@ -1271,14 +1272,14 @@ static void recv_announcements(orte_process_name_t *sender,
      */
     if (!known && NULL != my_announce_cbfunc) {
         /* have to release the local thread in case this function does something right away */
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&local_thread);
         my_announce_cbfunc(app, version, release, sender, nodename, rml_uri, uid);
         /* need to reacquire the thread to avoid double-release */
-        OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+        ORTE_ACQUIRE_THREAD(&local_thread);
     }
 
     OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
-                         "%s pnp:default:received announcement from originator %s",
+                         "%s pnp:default: announcement sent in response to originator %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                          ORTE_NAME_PRINT(&originator)));
     
@@ -1289,6 +1290,9 @@ static void recv_announcements(orte_process_name_t *sender,
     if (originator.jobid != ORTE_JOBID_INVALID &&
         originator.vpid != ORTE_VPID_INVALID) {
         /* nothing more to do */
+        OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                             "%s pnp:default:recvd_ann response to another announce - ignoring",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         goto RELEASE;
     }
     
@@ -1317,7 +1321,7 @@ static void recv_announcements(orte_process_name_t *sender,
     }
     
     /* send it - have to release the thread in case we receive something right away */
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&local_thread);
     if (ORCM_SUCCESS != (rc = default_output(chan, NULL,
                                              ORCM_PNP_TAG_ANNOUNCE,
                                              NULL, 0, &ann))) {
@@ -1329,7 +1333,7 @@ static void recv_announcements(orte_process_name_t *sender,
     goto cleanup;
 
  RELEASE:
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&local_thread);
     
  cleanup:
     if (NULL != app) {
@@ -1347,6 +1351,9 @@ static void recv_announcements(orte_process_name_t *sender,
     if (NULL != rml_uri) {
         free(rml_uri);
     }
+    OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
+                         "%s pnp:default:recvd_announce complete",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
     return;
 }
 
@@ -1384,7 +1391,7 @@ static void recv_input_buffers(int status,
     }
 
     /* protect against threading */
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    ORTE_ACQUIRE_THREAD(&local_thread);
     
     /* extract the string id of the sender */
     n=1;
@@ -1449,14 +1456,16 @@ static void recv_input_buffers(int status,
     msg->tag = tag;
     opal_dss.copy_payload(&msg->buf, buf);
     msg->cbfunc = request->cbfunc;
+    msg->cbdata = request->cbdata;
+
     if (orcm_pnp_base.use_threads) {
-        OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
+        ORTE_ACQUIRE_THREAD(&msg_ctl);
         opal_list_append(&msg_delivery, &msg->super);
         /* release our thread in case this gets processed immediately */
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
-        OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+        ORTE_RELEASE_THREAD(&local_thread);
+        ORTE_RELEASE_THREAD(&msg_ctl);
     } else {
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&local_thread);
         process_msg(msg);
     }
     return;
@@ -1466,7 +1475,7 @@ static void recv_input_buffers(int status,
         free(string_id);
     }
     /* release the thread */
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&local_thread);
 }
 
 /* pack the common elements of an announcement message */
@@ -1628,7 +1637,7 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
                          ORTE_NAME_PRINT(sender)));
     
     /* protect against threading */
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    ORTE_ACQUIRE_THREAD(&local_thread);
     
     /* unpack the sender's string id */
     n=1;
@@ -1659,14 +1668,15 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
         msg->tag = tag;
         opal_dss.copy_payload(&msg->buf, buffer);
         msg->cbfunc = request->cbfunc;
+
         if (orcm_pnp_base.use_threads) {
-            OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
+            ORTE_ACQUIRE_THREAD(&msg_ctl);
             opal_list_append(&msg_delivery, &msg->super);
             /* release our thread in case this gets processed immediately */
-            OPAL_RELEASE_THREAD(&lock, &cond, &active);
-            OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+            ORTE_RELEASE_THREAD(&local_thread);
+            ORTE_RELEASE_THREAD(&msg_ctl);
         } else {
-            OPAL_RELEASE_THREAD(&lock, &cond, &active);
+            ORTE_RELEASE_THREAD(&local_thread);
             process_msg(msg);
         }
         goto DEPART;
@@ -1674,7 +1684,7 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
    
  CLEANUP:
     /* release the thread */
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&local_thread);
     
  DEPART:
     /* reissue the recv */
@@ -1889,9 +1899,7 @@ static void check_pending_recvs(orcm_triplet_t *trp,
 
     /* check the wildcard triplets and see if any match */
     /* lock the global triplet arrays for our use */
-    OPAL_ACQUIRE_THREAD(&orcm_triplets->lock,
-                        &orcm_triplets->cond,
-                        &orcm_triplets->in_use);
+    ORTE_ACQUIRE_THREAD(&orcm_triplets->ctl);
     for (i=0; i < orcm_triplets->wildcards.size; i++) {
         if (NULL == (triplet = (orcm_triplet_t*)opal_pointer_array_get_item(&orcm_triplets->wildcards, i))) {
             continue;
@@ -1912,9 +1920,7 @@ static void check_pending_recvs(orcm_triplet_t *trp,
         }
     }
     /* release the global arrays */
-    OPAL_RELEASE_THREAD(&orcm_triplets->lock,
-                        &orcm_triplets->cond,
-                        &orcm_triplets->in_use);
+    ORTE_RELEASE_THREAD(&orcm_triplets->ctl);
            
 
     /* check the triplet input_recv list */
@@ -1963,7 +1969,8 @@ static void update_pending_recvs(orcm_triplet_t *trp)
 static int record_recv(orcm_triplet_t *triplet,
                        orcm_pnp_channel_t channel,
                        orcm_pnp_tag_t tag,
-                       orcm_pnp_callback_fn_t cbfunc)
+                       orcm_pnp_callback_fn_t cbfunc,
+                       void *cbdata)
 {
     orcm_pnp_request_t *req;
     orcm_pnp_channel_obj_t *chan;
@@ -1985,6 +1992,7 @@ static int record_recv(orcm_triplet_t *triplet,
             req->string_id = strdup(ORCM_WILDCARD_STRING_ID);
             req->tag = tag;
             req->cbfunc = cbfunc;
+            req->cbdata = cbdata;
             opal_list_append(&triplet->input_recvs, &req->super);
         } else {
             /* want the input from another triplet */
@@ -1997,6 +2005,7 @@ static int record_recv(orcm_triplet_t *triplet,
             req->string_id = strdup(triplet->string_id);
             req->tag = tag;
             req->cbfunc = cbfunc;
+            req->cbdata = cbdata;
             opal_list_append(&triplet->input_recvs, &req->super);
         }
         /* update channel recv info for all triplet-groups already known */
@@ -2013,6 +2022,7 @@ static int record_recv(orcm_triplet_t *triplet,
         req->string_id = strdup(triplet->string_id);
         req->tag = tag;
         req->cbfunc = cbfunc;
+        req->cbdata = cbdata;
         opal_list_append(&triplet->output_recvs, &req->super);
         /* update channel recv info for all triplet-groups already known */
         update_pending_recvs(triplet);
@@ -2047,6 +2057,7 @@ static int record_recv(orcm_triplet_t *triplet,
         req->string_id = strdup(triplet->string_id);
         req->tag = tag;
         req->cbfunc = cbfunc;
+        req->cbdata = cbdata;
         opal_list_append(&chan->recvs, &req->super);
     }
 
@@ -2129,16 +2140,16 @@ static void process_msg(orcm_pnp_msg_t *msg)
          * to avoid deadlock
          */
         if (orcm_pnp_base.use_threads) {
-            OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+            ORTE_RELEASE_THREAD(&msg_ctl);
             if (msg_thread_end) {
                 /* make one last check - if comm is disabled, don't deliver msg */
                 OBJ_RELEASE(msg);
                 return;
             }
         }
-        msg->cbfunc(ORCM_SUCCESS, &msg->sender, msg->tag, iovecs, num_iovecs, NULL, NULL);
+        msg->cbfunc(ORCM_SUCCESS, &msg->sender, msg->tag, iovecs, num_iovecs, NULL, msg->cbdata);
         if (orcm_pnp_base.use_threads) {
-            OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
+            ORTE_ACQUIRE_THREAD(&msg_ctl);
         }
         /* release the memory */
         if (0 < num_iovecs) {
@@ -2159,16 +2170,16 @@ static void process_msg(orcm_pnp_msg_t *msg)
          * to avoid deadlock
          */
         if (orcm_pnp_base.use_threads) {
-            OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+            ORTE_RELEASE_THREAD(&msg_ctl);
             if (msg_thread_end) {
                 /* make one last check - if comm is disabled, don't deliver msg */
                 OBJ_RELEASE(msg);
                 return;
             }
         }
-        msg->cbfunc(ORCM_SUCCESS, &msg->sender, msg->tag, NULL, 0, &msg->buf, NULL);
+        msg->cbfunc(ORCM_SUCCESS, &msg->sender, msg->tag, NULL, 0, &msg->buf, msg->cbdata);
         if (orcm_pnp_base.use_threads) {
-            OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
+            ORTE_ACQUIRE_THREAD(&msg_ctl);
         }
     }
  DEPART:
@@ -2184,20 +2195,20 @@ static void* deliver_msg(opal_object_t *obj)
     s.tv_nsec = 10000L;
 
     while (1) {
-        OPAL_ACQUIRE_THREAD(&msg_lock, &msg_cond, &msg_active);
+        ORTE_ACQUIRE_THREAD(&msg_ctl);
         if (msg_thread_end) {
-            OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+            ORTE_RELEASE_THREAD(&msg_ctl);
             return OPAL_THREAD_CANCELLED;
         }
 
         if (NULL == (msg = (orcm_pnp_msg_t*)opal_list_remove_first(&msg_delivery))) {
-            OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+            ORTE_RELEASE_THREAD(&msg_ctl);
             /* don't hammer the cpu */
             nanosleep(&s, NULL);
             continue;
         }
 
-        OPAL_RELEASE_THREAD(&msg_lock, &msg_cond, &msg_active);
+        ORTE_RELEASE_THREAD(&msg_ctl);
     }
 
     return OPAL_THREAD_CANCELLED;

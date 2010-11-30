@@ -73,7 +73,7 @@ int main(int argc, char* argv[])
     /* we want to listen to output from all versions and releases of the CLIENT app */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("CLIENT", NULL, NULL,
                                                         ORCM_PNP_GROUP_OUTPUT_CHANNEL,
-                                                        ORCM_PNP_TAG_OUTPUT, recv_input))) {
+                                                        ORCM_PNP_TAG_OUTPUT, recv_input, NULL))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -146,16 +146,16 @@ static void recv_input(int status,
                 return;
             }
         }
-   }
+    }
     
     if (0 == (data[0] % 100)) {
-        opal_output(0, "%s recvd data sender %s msg number %d",
+        opal_output(0, "%s recvd mcast data sender %s msg number %d",
                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                     ORTE_NAME_PRINT(sender), data[0]);
     }
 
-    /* see if we want to respond directly to the client */
-    if (1 == (data[0] % 5)) {
+    if (0 == (data[0] % 300)) {
+        /* respond directly to the client */
         response = (struct iovec*)malloc(count * sizeof(struct iovec));
         for (j=0; j < count; j++) {
             response[j].iov_base = (void*)malloc(5 * sizeof(int32_t));
@@ -167,6 +167,10 @@ static void recv_input(int status,
             response[j].iov_len = 5 * sizeof(int32_t);
         }
         
+        opal_output(0, "%s sending response %d direct to %s",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                    data[0], ORTE_NAME_PRINT(sender));
+
         /* output the values */
         if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_GROUP_OUTPUT_CHANNEL, sender,
                                                   ORCM_TEST_CLIENT_SERVER_TAG,

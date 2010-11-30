@@ -62,7 +62,7 @@ int main(int argc, char* argv[])
     /* for this application, register to hear messages sent to our input  */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("client", "2.0", "beta",
                                                         ORCM_PNP_GROUP_INPUT_CHANNEL,
-                                                        ORCM_TEST_CLIENT_SERVER_TAG, recv_input))) {
+                                                        ORCM_TEST_CLIENT_SERVER_TAG, recv_input, NULL))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }

@@ -730,7 +730,7 @@ int orcmrun(int argc, char *argv[])
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("orcmrun", "0.1", "alpha",
                                                         ORCM_PNP_GROUP_INPUT_CHANNEL,
                                                         ORCM_PNP_TAG_TOOL,
-                                                        ack_recv))) {
+                                                        ack_recv, NULL))) {
         ORTE_ERROR_LOG(rc);
         goto DONE;
     }

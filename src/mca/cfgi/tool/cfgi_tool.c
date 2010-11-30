@@ -74,7 +74,7 @@ static int tool_init(void)
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-start", "0.1", "alpha",
                                                          ORCM_PNP_GROUP_OUTPUT_CHANNEL,
                                                          ORCM_PNP_TAG_TOOL,
-                                                         tool_messages))) {
+                                                         tool_messages, NULL))) {
         ORTE_ERROR_LOG(ret);
         return ret;
     }
@@ -83,7 +83,7 @@ static int tool_init(void)
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-stop", "0.1", "alpha",
                                                          ORCM_PNP_GROUP_OUTPUT_CHANNEL,
                                                          ORCM_PNP_TAG_TOOL,
-                                                         tool_messages))) {
+                                                         tool_messages, NULL))) {
         ORTE_ERROR_LOG(ret);
         return ret;
     }
@@ -92,7 +92,7 @@ static int tool_init(void)
     if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcmrun", "0.1", "alpha",
                                                          ORCM_PNP_GROUP_OUTPUT_CHANNEL,
                                                          ORCM_PNP_TAG_TOOL,
-                                                         tool_messages))) {
+                                                         tool_messages, NULL))) {
         ORTE_ERROR_LOG(ret);
         return ret;
     }

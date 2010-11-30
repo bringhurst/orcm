@@ -32,6 +32,7 @@ typedef struct {
     char *string_id;
     orcm_pnp_tag_t tag;
     orcm_pnp_callback_fn_t cbfunc;
+    void *cbdata;
 } orcm_pnp_request_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_request_t);
 
@@ -64,6 +65,7 @@ typedef struct {
     orcm_pnp_tag_t tag;
     opal_buffer_t buf;
     orcm_pnp_callback_fn_t cbfunc;
+    void *cbdata;
 } orcm_pnp_msg_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_msg_t);
 

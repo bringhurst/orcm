@@ -79,7 +79,8 @@ typedef int (*orcm_pnp_module_register_receive_fn_t)(const char *app,
                                                      const char *release,
                                                      orcm_pnp_channel_t channel,
                                                      orcm_pnp_tag_t tag,
-                                                     orcm_pnp_callback_fn_t cbfunc);
+                                                     orcm_pnp_callback_fn_t cbfunc,
+                                                     void *cbdata);
 
 /* Cancel a receive - must provide the triplet and the channel (GROUP_OUTPUT or GROUP_INPUT)
  * and tag to get cancelled. A wildcard value for tag will cancel all receives on the

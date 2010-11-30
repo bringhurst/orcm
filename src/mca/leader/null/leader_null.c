@@ -12,11 +12,11 @@
 
 #include "opal/class/opal_list.h"
 #include "opal/util/output.h"
-#include "opal/threads/threads.h"
 
 #include "orte/mca/errmgr/errmgr.h"
 #include "orte/runtime/orte_globals.h"
 #include "orte/util/name_fns.h"
+#include "orte/threads/threads.h"
 
 #include "mca/pnp/pnp.h"
 #include "runtime/orcm_globals.h"
@@ -61,18 +61,14 @@ orcm_leader_base_module_t orcm_leader_null_module = {
 };
 
 /* local globals */
-static opal_mutex_t lock;
-static opal_condition_t cond;
-static bool active;
+static orte_thread_ctl_t local_thread;
 
 
 static int null_init(void)
 {
     int ret;
 
-    OBJ_CONSTRUCT(&lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&cond, opal_condition_t);
-    active = false;
+    OBJ_CONSTRUCT(&local_thread, orte_thread_ctl_t);
 
     return ORCM_SUCCESS;
 }
@@ -80,11 +76,8 @@ static int null_init(void)
 static void null_finalize(void)
 {
     /* ensure any pending items complete */
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
-    OPAL_THREAD_UNLOCK(&lock);
 
-    OBJ_DESTRUCT(&lock);
-    OBJ_DESTRUCT(&cond);
+    OBJ_DESTRUCT(&local_thread);
 }
 
 static void eval_policy(orcm_triplet_t *trp)
@@ -133,7 +126,7 @@ static int set_policy(const char *app,
 {
     orcm_triplet_t *trp;
 
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    ORTE_ACQUIRE_THREAD(&local_thread);
 
     OPAL_OUTPUT_VERBOSE((2, orcm_leader_base.output,
                          "%s leader:null:set_policy for %s %s %s to %s",
@@ -158,7 +151,7 @@ static int set_policy(const char *app,
         /* set the cbfunc and leave the policy as default */
         trp->notify = notify;
         trp->leader_cbfunc = cbfunc;
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&local_thread);
         return ORCM_SUCCESS;
     }
 
@@ -178,9 +171,9 @@ static int set_policy(const char *app,
     eval_policy(trp);
 
     /* release the triplet */
-    OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
+    ORTE_RELEASE_THREAD(&trp->ctl);
 
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&local_thread);
     return ORCM_SUCCESS;
 }
 
@@ -190,7 +183,7 @@ static int set_leader(const char *app, const char *version,
 {
     orcm_triplet_t *trp;
 
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    ORTE_ACQUIRE_THREAD(&local_thread);
 
     /* find this triplet - create it if not found */
     trp = orcm_get_triplet(app, version, release, true);
@@ -209,9 +202,9 @@ static int set_leader(const char *app, const char *version,
     }
 
     /* release the triplet */
-    OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
+    ORTE_RELEASE_THREAD(&trp->ctl);
 
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&local_thread);
     return ORCM_SUCCESS;
 }
 
@@ -225,7 +218,7 @@ static bool deliver_msg(const char *stringid,
     orcm_source_t *source;
     orcm_triplet_group_t *grp;
 
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    ORTE_ACQUIRE_THREAD(&local_thread);
 
      /* find this triplet */
     if (NULL == (trp = orcm_get_triplet_stringid(stringid))) {
@@ -233,7 +226,7 @@ static bool deliver_msg(const char *stringid,
                              "%s leader: stringid %s is unknown - can't deliver msg",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), stringid));
         /* can't deliver it */
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&local_thread);
         return false;
     }
 
@@ -256,7 +249,7 @@ static bool deliver_msg(const char *stringid,
             }
             source->seq_num = seq_num;
         }
-        OPAL_RELEASE_THREAD(&source->lock, &source->cond, &source->in_use);
+        ORTE_RELEASE_THREAD(&source->ctl);
     }
 
     /* if the proc is within the defined leaders, let it thru */
@@ -270,8 +263,8 @@ static bool deliver_msg(const char *stringid,
     }
 
  cleanup:
-    OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&trp->ctl);
+    ORTE_RELEASE_THREAD(&local_thread);
     return ret;
 }
 
@@ -280,7 +273,7 @@ static int get_leader(const char *app, const char *version,
 {
     orcm_triplet_t *trp;
 
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    ORTE_ACQUIRE_THREAD(&local_thread);
 
       /* find this triplet - create it if not found */
     trp = orcm_get_triplet(app, version, release, true);
@@ -290,9 +283,9 @@ static int get_leader(const char *app, const char *version,
     leader->vpid = trp->leader.vpid;
 
     /* done with triplet */
-    OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
+    ORTE_RELEASE_THREAD(&trp->ctl);
 
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&local_thread);
     return ORCM_SUCCESS;
 }
 
@@ -302,12 +295,12 @@ static void proc_failed(const char *stringid, const orte_process_name_t *failed)
     int i;
     bool notify=false;
 
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &active);
+    ORTE_ACQUIRE_THREAD(&local_thread);
 
     /* find this triplet */
     if (NULL == (trp = orcm_get_triplet_stringid(stringid))) {
         /* unknown - ignore it */
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&local_thread);
         return;
     }
 
@@ -354,13 +347,13 @@ static void proc_failed(const char *stringid, const orte_process_name_t *failed)
     }
 
     if (notify && NULL != trp->leader_cbfunc) {
-        OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
-        OPAL_RELEASE_THREAD(&lock, &cond, &active);
+        ORTE_RELEASE_THREAD(&trp->ctl);
+        ORTE_RELEASE_THREAD(&local_thread);
         /* pass back the old and new info */
         trp->leader_cbfunc(stringid, failed, &trp->leader);
         return;
     }
 
-    OPAL_RELEASE_THREAD(&trp->lock, &trp->cond, &trp->in_use);
-    OPAL_RELEASE_THREAD(&lock, &cond, &active);
+    ORTE_RELEASE_THREAD(&trp->ctl);
+    ORTE_RELEASE_THREAD(&local_thread);
 }

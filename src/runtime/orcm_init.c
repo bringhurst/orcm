@@ -24,6 +24,7 @@
 #include "orte/mca/grpcomm/grpcomm.h"
 #include "orte/runtime/orte_locks.h"
 #include "orte/mca/rmcast/rmcast_types.h"
+#include "orte/threads/threads.h"
 
 #include "runtime/orcm_globals.h"
 #include "runtime/runtime.h"
@@ -37,6 +38,7 @@ int orcm_debug_verbosity = 0;
 orcm_triplets_array_t *orcm_triplets;
 int orcm_max_msg_ring_size;
 orte_process_name_t orcm_default_leader_policy;
+orte_thread_ctl_t orcm_vm_launch;
 
 /* signal trap support */
 /* available signals
@@ -281,9 +283,7 @@ static void ignore_trap(int fd, short flags, void *arg)
 /**   INSTANTIATE OPENRCM OBJECTS **/
 static void triplets_array_constructor(orcm_triplets_array_t *ptr)
 {
-    OBJ_CONSTRUCT(&ptr->lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&ptr->cond, opal_condition_t);
-    ptr->in_use = false;
+    OBJ_CONSTRUCT(&ptr->ctl, orte_thread_ctl_t);
 
     OBJ_CONSTRUCT(&ptr->wildcards, opal_pointer_array_t);
     opal_pointer_array_init(&ptr->wildcards, 8, INT_MAX, 8);
@@ -296,8 +296,7 @@ static void triplets_array_destructor(orcm_triplets_array_t *ptr)
     int i;
     orcm_triplet_t *trp;
 
-    OBJ_DESTRUCT(&ptr->lock);
-    OBJ_DESTRUCT(&ptr->cond);
+    OBJ_DESTRUCT(&ptr->ctl);
     for (i=0; i < ptr->array.size; i++) {
         if (NULL != (trp = (orcm_triplet_t*)opal_pointer_array_get_item(&ptr->array, i))) {
             OBJ_RELEASE(trp);
@@ -312,9 +311,7 @@ OBJ_CLASS_INSTANCE(orcm_triplets_array_t,
 
 static void source_constructor(orcm_source_t *ptr)
 {
-    OBJ_CONSTRUCT(&ptr->lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&ptr->cond, opal_condition_t);
-    ptr->in_use = false;
+    OBJ_CONSTRUCT(&ptr->ctl, orte_thread_ctl_t);
 
     ptr->name.jobid = ORTE_JOBID_INVALID;
     ptr->name.vpid = ORTE_VPID_INVALID;
@@ -323,8 +320,7 @@ static void source_constructor(orcm_source_t *ptr)
 }
 static void source_destructor(orcm_source_t *ptr)
 {
-    OBJ_DESTRUCT(&ptr->lock);
-    OBJ_DESTRUCT(&ptr->cond);
+    OBJ_DESTRUCT(&ptr->ctl);
 }
 OBJ_CLASS_INSTANCE(orcm_source_t,
                    opal_object_t,
@@ -333,9 +329,7 @@ OBJ_CLASS_INSTANCE(orcm_source_t,
 
 static void triplet_constructor(orcm_triplet_t *ptr)
 {
-    OBJ_CONSTRUCT(&ptr->lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&ptr->cond, opal_condition_t);
-    ptr->in_use = false;
+    OBJ_CONSTRUCT(&ptr->ctl, orte_thread_ctl_t);
 
     ptr->string_id = NULL;
     ptr->num_procs = 0;
@@ -361,8 +355,7 @@ static void triplet_destructor(orcm_triplet_t *ptr)
     orcm_triplet_group_t *grp;
     opal_list_item_t *item;
 
-    OBJ_DESTRUCT(&ptr->lock);
-    OBJ_DESTRUCT(&ptr->cond);
+    OBJ_DESTRUCT(&ptr->ctl);
 
     if (NULL != ptr->string_id) {
         free(ptr->string_id);

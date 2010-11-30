@@ -91,6 +91,7 @@ static void request_constructor(orcm_pnp_request_t *ptr)
     ptr->string_id = NULL;
     ptr->tag = ORCM_PNP_TAG_WILDCARD;
     ptr->cbfunc = NULL;
+    ptr->cbdata = NULL;
 }
 static void request_destructor(orcm_pnp_request_t *ptr)
 {
@@ -135,6 +136,7 @@ static void msg_constructor(orcm_pnp_msg_t *ptr)
     ptr->tag = ORCM_PNP_TAG_INVALID;
     OBJ_CONSTRUCT(&ptr->buf, opal_buffer_t);
     ptr->cbfunc = NULL;
+    ptr->cbdata = NULL;
 }
 static void msg_destructor(orcm_pnp_msg_t *ptr)
 {
