@@ -163,6 +163,7 @@ static orcm_pnp_announce_fn_t my_announce_cbfunc = NULL;
 static orcm_pnp_channel_obj_t *my_output_channel=NULL, *my_input_channel=NULL;
 static orcm_triplet_t *my_triplet=NULL;
 static orcm_triplet_group_t *my_group=NULL;
+static bool comm_enabled = false;
 
 /* local thread support */
 static orte_thread_ctl_t local_thread;
@@ -290,6 +291,7 @@ static int default_init(void)
         }
     }
 
+    comm_enabled = true;
     return ORCM_SUCCESS;
 }
 
@@ -308,6 +310,10 @@ static int announce(const char *app,
         return ORCM_ERR_BAD_PARAM;
     }
     
+    if (!comm_enabled) {
+        return ORCM_ERR_COMM_DISABLED;
+    }
+
     /* protect against threading */
     ORTE_ACQUIRE_THREAD(&local_thread);
     
@@ -872,6 +878,10 @@ static int default_output(orcm_pnp_channel_t channel,
     opal_buffer_t *buf;
     orcm_pnp_channel_t chan;
     
+    if (!comm_enabled) {
+        return ORCM_ERR_COMM_DISABLED;
+    }
+
     /* if we have not announced, ignore this message */
     if (NULL == my_string_id) {
         return ORCM_ERR_NOT_AVAILABLE;
@@ -962,6 +972,10 @@ static int default_output_nb(orcm_pnp_channel_t channel,
     orcm_pnp_send_t *send;
     opal_buffer_t *buf;
     orcm_pnp_channel_t chan;
+
+    if (!comm_enabled) {
+        return ORCM_ERR_COMM_DISABLED;
+    }
 
     /* if we have not announced, ignore this message */
     if (NULL == my_string_id) {
@@ -1073,6 +1087,11 @@ static int disable_comm(void)
                          "%s pnp:default: disabling comm",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
 
+    comm_enabled = false;
+
+    /* stop the rmcast framework */
+    orte_rmcast.disable_comm();
+
     /* cancel the recvs, if active */
     if (recv_on) {
         orte_rmcast.cancel_recv(ORTE_RMCAST_WILDCARD_CHANNEL, ORTE_RMCAST_TAG_WILDCARD);
@@ -1099,6 +1118,8 @@ static int default_finalize(void)
                          "%s pnp:default: finalizing",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
     
+    comm_enabled = false;
+
     while (NULL != (item = opal_list_remove_first(&msg_delivery))) {
         OBJ_RELEASE(item);
     }
@@ -1141,6 +1162,10 @@ static void recv_announcements(orte_process_name_t *sender,
     bool known=true;
     char *rml_uri=NULL;
     
+    if (!comm_enabled) {
+        return;
+    }
+
     /* don't lock the thread here - it was previously locked */
     
     /* unpack the sender's triplet */
@@ -1325,7 +1350,10 @@ static void recv_announcements(orte_process_name_t *sender,
     if (ORCM_SUCCESS != (rc = default_output(chan, NULL,
                                              ORCM_PNP_TAG_ANNOUNCE,
                                              NULL, 0, &ann))) {
-        ORTE_ERROR_LOG(rc);
+        /* protect against a race condition */
+        if (ORTE_ERR_COMM_DISABLED != rc) {
+            ORTE_ERROR_LOG(rc);
+        }
     }
     /* cleanup */
     OBJ_DESTRUCT(&ann);
@@ -1372,6 +1400,10 @@ static void recv_input_buffers(int status,
     orte_jobid_t jobid;
     orcm_pnp_msg_t *msg;
     int8_t flag;
+
+    if (!comm_enabled) {
+        return;
+    }
 
     /* if we have not announced, ignore this message */
     if (NULL == my_string_id) {
@@ -1625,6 +1657,10 @@ static void recv_direct_msgs(int status, orte_process_name_t* sender,
     orcm_pnp_request_t *request;
     char *string_id;
     orcm_pnp_msg_t *msg;
+
+    if (!comm_enabled) {
+        return;
+    }
 
     /* if we have not announced, ignore this message */
     if (NULL == my_string_id) {
@@ -2097,6 +2133,11 @@ static void process_msg(orcm_pnp_msg_t *msg)
     int8_t flag;
     int32_t i, num_iovecs, num_bytes;
     struct iovec *iovecs=NULL;
+
+    if (!comm_enabled) {
+        ORTE_ERROR_LOG(ORTE_ERR_COMM_DISABLED);
+        goto DEPART;
+    }
 
     /* unpack the iovec vs buffer flag */
     n=1;
