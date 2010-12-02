@@ -329,3 +329,48 @@ int orcm_cfgi_base_kill_app(opal_buffer_t *buffer)
 
     return rc;
 }
+
+int orcm_cfgi_base_check_job(orte_job_t *jdat)
+{
+    int i;
+    orte_app_context_t *app;
+
+    /* must have at least one app */
+    if (NULL == opal_pointer_array_get_item(jdat->apps, 0)) {
+        opal_output(0, "JOB %s MISSING APP", (NULL == jdat->name) ? "UNNAMED" : jdat->name);
+        return ORCM_ERR_BAD_PARAM;
+    }
+    if (jdat->num_apps <= 0) {
+        opal_output(0, "JOB %s ZERO APPS", (NULL == jdat->name) ? "UNNAMED" : jdat->name);
+        return ORCM_ERR_BAD_PARAM;
+    }
+    /* we require that an executable and the number of procs be specified
+     * for each app
+     */
+    for (i=0; i < jdat->apps->size; i++) {
+        if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, i))) {
+            continue;
+        }
+        if (NULL == app->app || NULL == app->argv || 0 == opal_argv_count(app->argv)) {
+            opal_output(0, "JOB %s NO EXE FOR APP %d", (NULL == jdat->name) ? "UNNAMED" : jdat->name, i);
+            return ORCM_ERR_BAD_PARAM;
+        }
+        if (app->num_procs <= 0) {
+            opal_output(0, "JOB %s ZERO PROCS FOR APP %d", (NULL == jdat->name) ? "UNNAMED" : jdat->name, i);
+            return ORCM_ERR_VALUE_OUT_OF_BOUNDS;
+        }
+        /* ensure we can find the executable */
+        if (NULL == app->env || 0 == opal_argv_count(app->env)) {
+            if (ORTE_SUCCESS != orte_util_check_context_app(app, environ)) {
+                opal_output(0, "JOB %s EXE NOT FOUND FOR APP %d IN STD ENVIRON", (NULL == jdat->name) ? "UNNAMED" : jdat->name, i);
+                return ORCM_ERR_EXE_NOT_FOUND;
+            }
+        } else {
+            if (ORTE_SUCCESS != orte_util_check_context_app(app, app->env)) {
+                opal_output(0, "JOB %s EXE NOT FOUND FOR APP %d", (NULL == jdat->name) ? "UNNAMED" : jdat->name, i);
+                return ORCM_ERR_EXE_NOT_FOUND;
+            }
+        }
+    }
+    return ORCM_SUCCESS;
+}

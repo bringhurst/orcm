@@ -184,6 +184,12 @@ static void tool_messages(int status,
             goto cleanup;
         }
 
+        /* check it for validity */
+        if (ORTE_SUCCESS != (rc = orcm_cfgi_base_check_job(jdata))) {
+            /* error message already printed - just depart */
+            goto cleanup;
+        }
+
         /* launch the job */
         if (ORCM_SUCCESS != (rc = orcm_cfgi_base_spawn_app(jdata))) {
             ORTE_ERROR_LOG(rc);

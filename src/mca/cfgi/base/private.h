@@ -26,6 +26,8 @@ ORCM_DECLSPEC int orcm_cfgi_base_spawn_app(orte_job_t *jdata);
 
 ORCM_DECLSPEC int orcm_cfgi_base_kill_app(opal_buffer_t *buffer);
 
+ORCM_DECLSPEC int orcm_cfgi_base_check_job(orte_job_t *jdat);
+
 typedef struct {
     opal_list_item_t super;
     orcm_cfgi_base_module_t *module;

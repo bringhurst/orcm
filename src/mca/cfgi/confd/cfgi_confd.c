@@ -48,8 +48,6 @@ static orte_app_context_t *get_exec(orte_job_t *jdat,
                                     char *name, bool create);
 static void copy_defaults(orte_job_t *target, orte_job_t *src);
 
-static bool check_job(orte_job_t *jdat);
-
 static boolean cfg_handler(confd_hkeypath_t *kp,
 			   enum cdb_iter_op  op,
 			   confd_value_t    *value,
@@ -366,7 +364,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 /* check to see if all required elements
                  * of the job object have been provided
                  */
-                if (check_job(jdata)) {
+                if (ORCM_SUCCESS == orcm_cfgi_base_check_job(jdata)) {
                     opal_output(0, "PREPARE OKAY");
                     OBJ_RELEASE(jdata);
                     ret = TRUE;
@@ -384,7 +382,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 goto release;
             } else if (CDB_SUB_COMMIT == notify_type) {
                 /* do a basic validity check on the job */
-                valid = check_job(jdata);
+                valid = orcm_cfgi_base_check_job(jdata);
                 if (valid) {
                     if (install) {
                         if (mca_orcm_cfgi_confd_component.test_mode) {
@@ -1594,49 +1592,4 @@ static void copy_defaults(orte_job_t *target, orte_job_t *src)
     target->stdin_target = src->stdin_target;
     target->uid = src->uid;
     target->gid = src->gid;
-}
-
-static bool check_job(orte_job_t *jdat)
-{
-    int i;
-    orte_app_context_t *app;
-
-    /* must have at least one app */
-    if (NULL == opal_pointer_array_get_item(jdat->apps, 0)) {
-        opal_output(0, "JOB %s MISSING APP", (NULL == jdat->name) ? "UNNAMED" : jdat->name);
-        return false;
-    }
-    if (jdat->num_apps <= 0) {
-        opal_output(0, "JOB %s ZERO APPS", (NULL == jdat->name) ? "UNNAMED" : jdat->name);
-        return false;
-    }
-    /* we require that an executable and the number of procs be specified
-     * for each app
-     */
-    for (i=0; i < jdat->apps->size; i++) {
-        if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, i))) {
-            continue;
-        }
-        if (NULL == app->app || NULL == app->argv || 0 == opal_argv_count(app->argv)) {
-            opal_output(0, "JOB %s NO EXE FOR APP %d", (NULL == jdat->name) ? "UNNAMED" : jdat->name, i);
-            return false;
-        }
-        if (app->num_procs <= 0) {
-            opal_output(0, "JOB %s ZERO PROCS FOR APP %d", (NULL == jdat->name) ? "UNNAMED" : jdat->name, i);
-            return false;
-        }
-        /* ensure we can find the executable */
-        if (NULL == app->env || 0 == opal_argv_count(app->env)) {
-            if (ORTE_SUCCESS != orte_util_check_context_app(app, environ)) {
-                opal_output(0, "JOB %s EXE NOT FOUND FOR APP %d IN STD ENVIRON", (NULL == jdat->name) ? "UNNAMED" : jdat->name, i);
-                return false;
-            }
-        } else {
-            if (ORTE_SUCCESS != orte_util_check_context_app(app, app->env)) {
-                opal_output(0, "JOB %s EXE NOT FOUND FOR APP %d", (NULL == jdat->name) ? "UNNAMED" : jdat->name, i);
-                return false;
-            }
-        }
-    }
-    return true;
 }
