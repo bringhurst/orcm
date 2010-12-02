@@ -283,7 +283,7 @@ static int update_state(orte_jobid_t job,
             /* mark all local procs for this job as failed to start */
             failed_start(jobdat, exit_code);
             /* send a notification */
-            notify_failure(jobdat, NULL, NULL);
+            notify_failure(jobdat, NULL, false);
             break;
         case ORTE_JOB_STATE_SENSOR_BOUND_EXCEEDED:
             /* update all procs in job */
@@ -291,7 +291,7 @@ static int update_state(orte_jobid_t job,
             /* order all local procs for this job to be killed */
             killprocs(jobdat->jobid, ORTE_VPID_WILDCARD);
             /* send a notification */
-            notify_failure(jobdat, NULL, NULL);
+            notify_failure(jobdat, NULL, false);
             break;
 
         default:
@@ -955,19 +955,41 @@ static void notify_failure(orte_odls_job_t *jobdat, orte_odls_child_t *child, bo
 {
     opal_buffer_t *alert;
     int rc;
+    orte_process_name_t name;
 
     alert = OBJ_NEW(opal_buffer_t);
 
     /* notify all procs of the failure */
-    if (ORTE_SUCCESS != (rc = opal_dss.pack(alert, child->name, 1, ORTE_NAME))) {
+    if (NULL == child) {
+        /* get the jobid from the jobdat */
+        name.jobid = jobdat->jobid;
+        /* provide the wildcard vpid to indicate they all failed */
+        name.vpid = ORTE_VPID_WILDCARD;
+    } else {
+        name.jobid = child->name->jobid;
+        name.vpid = child->name->vpid;
+    }
+
+    /* pack the name */
+    if (ORTE_SUCCESS != (rc = opal_dss.pack(alert, &name, 1, ORTE_NAME))) {
         ORTE_ERROR_LOG(rc);
         return;
     }
+
+    /* pack the restart flag that indicates if we are trying to restart
+     * the proc locally - let's the other daemons know if they should
+     * try to restart it instead
+     */
+    if (ORTE_SUCCESS != (rc = opal_dss.pack(alert, &restart, 1, OPAL_BOOL))) {
+        ORTE_ERROR_LOG(rc);
+        return;
+    }
+
     /* send it */
     OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
                          "%s NOTIFYING ALL OF %s FAILURE",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         ORTE_NAME_PRINT(child->name)));
+                         ORTE_NAME_PRINT(&name)));
     if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_ERROR_CHANNEL, NULL,
                                                  ORCM_PNP_TAG_ERRMGR, NULL, 0,
                                                  alert, callback, NULL))) {
