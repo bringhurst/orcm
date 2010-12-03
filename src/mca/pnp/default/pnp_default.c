@@ -1899,7 +1899,8 @@ static void check_trip_recvs(char *stringid,
             }
             /* update the cbfunc */
             reqcp->cbfunc = req->cbfunc;
-            
+            reqcp->cbdata = req->cbdata;
+
             OPAL_OUTPUT_VERBOSE((2, orcm_pnp_base.output,
                                  "%s pnp:default:check_trip_recvs putting recv for %s:%s on channel %s",
                                  ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), reqcp->string_id,
