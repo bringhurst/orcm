@@ -52,6 +52,8 @@ ORCM_DECLSPEC int orcm_init_util(void);
  */
 ORCM_DECLSPEC int orcm_finalize(void);
 
+ORCM_DECLSPEC void orcm_just_quit(int fd, short flags, void*arg);
+
 /*
  * Cleanup signal handlers
  */

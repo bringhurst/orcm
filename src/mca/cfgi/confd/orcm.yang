@@ -24,7 +24,6 @@ module orcm {
         // An exec is synonymous to an ORCM app within a job
         leaf replicas {
             // Number of replicas to launch
-	    mandatory true;
             description "Number of replicas to launch";
             type int32;
         }
@@ -35,53 +34,15 @@ module orcm {
             description "Exclude from leader consideration";
             type empty;
         }
-        container location {
-            // Some indication of the placement scheme for running this executable. Initially,
-            //   it will be relatively simple, but we can add more options here as needed.
-            description "Where to run this binary";
-            choice loc {
-                // The "choice" keyword is purely an organizational construct to distinguish
-                //   between the options of picking what kind of nodes to run it on versus
-                //   specifying exact nodes. When this is actually stored, it will be:
-                //
-                //                  /container/nodes/all
-                //                  /container/names/foo
-                case class {
-                    leaf nodes {
-                        description "Define what types of nodes to run on";
-                        type enumeration {
-                            enum all {
-                                description "Run on all processing nodes";
-                                value 0;
-                            }
-                            enum RPs {
-                                description "Run only on RPs";
-                                value 1;
-                            }
-                            enum LCs {
-                                description "Run only on LCs";
-                                value 2;
-                            }
-                            enum not-SPs {
-                                description "Run on all processing nodes except Service Processors";
-                                value 3;
-                            }
-                        }
-                    }
-                }
-                case nodes {
-                    leaf-list names {
-                        description "Define specific nodes to run on";
-                        type string;
-                    }
-                }
-            }
+        leaf-list nodes {
+            description "Comma-separated list of specific nodes to run on";
+            type string;
         }
         leaf uid {
             description "Running as (user)";
             type int32;
         }
-        leaf-list gid {
+        leaf gid {
             description "Running as (groups)";
             type int32;
         }
@@ -98,12 +59,8 @@ module orcm {
             description "Working directory";
             type string;
         }
-        leaf local-max-restarts {
-            description "Maximum number of local restarts";
-            type int32;
-        }
-        leaf global-max-restarts {
-            description "Maximum number of global restarts";
+        leaf max-restarts {
+            description "Maximum number of restarts";
             type int32;
         }
     }
@@ -129,10 +86,13 @@ module orcm {
 		leaf name {
                     // This is a generic application name that the outside world would see.
                     //   Think "bgp", "isis", "snmpd", etc.
-		    mandatory true;
 		    description "Application name";
 		    type string;
 		}
+		leaf enable-recovery {
+	    	    description "Enable recovery of failed processes";
+	    	    type int32;
+	        }
 		list exec {
                     // Each generic application may comprise several programs (app-groups) that
                     //   work together -- the best example right now is BGP, which has a shim
@@ -143,13 +103,11 @@ module orcm {
 		    leaf exec-name {
                         // The name is assumed to be unique. This probably involves embedding version
                         //   information in the name (bgp_shim-1.0.0)
-			mandatory true;
 			description "Name of this executable";
 			type string;
 		    }
 		    leaf path {
                         // Full path to the executable: e.g., /usr/bin/bgp_shim-1.0.0
-			mandatory true;
 			description "Path to this binary";
 			type string;
 		    }
@@ -181,7 +139,6 @@ module orcm {
             description "Define a running instance of this application";
             key instance-name;
             leaf instance-name {
-	        mandatory true;
                 description "Name of the instance, e.g., \"Production BGP\"";
                 type string;
             }
@@ -190,8 +147,11 @@ module orcm {
 		type leafref {
                   path "/orcm:config/install/app/name";
                 }
-                mandatory true;
             }
+	    leaf enable-recovery {
+	        description "Enable recovery of failed processes";
+		type int32;
+	    }
             list exec {
                 key exec-name;
                 // Use the already-defined fields from the execGroup grouping. Since
@@ -236,107 +196,18 @@ module orcm {
                 description "Plain name of the job";
                 type string;
             }
-            leaf job-state {
-                description "State of the job";
-                type enumeration {
-                    enum PENDING {
-                        value 0;
-                        description "Pending launch";
-                    }
-                    enum INIT {
-                        value 1;
-                        description "Created";
-                    }
-                    enum RESTART {
-                        value 2;
-                        description "Ready for restart after one or more replicas failed";
-                    }
-                    enum LAUNCHED {
-                        value 3;
-                        description "Has been launched";
-                    }
-                    enum RUNNING {
-                        value 4;
-                        description "All replicas have been forked";
-                    }
-		    enum REGISTERED {
-		        value 5;
-		        description "Has called orcm_init";
-		    }
-                    enum UNTERMINATED {
-                        value 6;
-                        description "Boundary value - launch group not terminated";
-                    }
-                    enum TERMINATED {
-                        value 7;
-                        description "All replicas have terminated and launch group is no longer running";
-                    }
-                    enum KILLED_BY_CMD {
-                        value 8;
-                        description "Replica was killed by ORTE command";
-                    }
-                    enum ABORTED {
-                        value 9;
-                        description "At least one replica aborted, causing the job to abort";
-                    }
-                    enum FAILED_TO_START {
-                        value 10;
-                        description "At least one replica failed to start";
-                    }
-                    enum ABORTED_BY_SIG {
-                        value 11;
-                        description "Launch group was killed by a signal";
-                    }
-                    enum ABORTED_WO_SYNC {
-                        value 12;
-                        description "Launch group was aborted because a replica exited w/o required sync";
-                    }
-                    enum NEVER_LAUNCHED {
-                        value 13;
-                        description "Launch group never attempted to launch due to an error earlier in the launch procedure";
-                    }
-                    enum ABORT_ORDERED {
-                        value 14;
-                        description "Replicas have been ordered to die, but may not have completed yet.";
-                    }
-                }
-            }
-            leaf num-replicas-requested {
-                description "Number of replicas requested for this job (num_procs)";
-                type uint16;
-            }
-            leaf num-replicas-launched {
-                description "Number of replicas launched for this job (num_procs)";
-                type uint16;
-            }
-            leaf num-replicas-terminated {
-                description "Number of replicas terminated in this job (num_terminated)";
-                type uint16;
-            }
-            leaf aborted {
-                description "Did this job abort?";
-                type boolean;
-            }
-            leaf aborted-procedure {
-                description "Procedure that caused the abort";
-                type string;
-            }
             list app-context {
                 key app-context-id;
                 leaf app-context-id {
                     description "ORCM app ID";
-                    type int32;
+                    type uint32;
                 }
                 leaf path {
                     description "Absolute pathname to executable";
                     type string;
                 }
-                leaf max-local-restarts {
-                    description "Max # of local restarts";
-                    type int32;
-                }
-                leaf max-global-restarts {
-                    description "Max # of global restarts";
+                leaf max-restarts {
+                    description "Max # of restarts";
                     type int32;
                 }
                 list replica {
@@ -346,102 +217,17 @@ module orcm {
 		        description "Virtual process ID for launched replica";
 			type uint32;
 		    }
-                    leaf replica-name {
-                        description "Replica Name (vpid)";
-                        type string;
-                    }
                     leaf pid {
                         description "Process ID for launched replica";
-                        type uint32;
-                    }
-		    leaf rml-contact-info {
-		        description "RML contact info";
-			type string;
-		    }
-                    leaf exit-code {
-                        description "Exit code";
-                        type int32;
-                    }
-                    leaf appl-context-id {
-                        description "Application context that generated this replica";
                         type uint32;
                     }
                     leaf node {
                         description "Node where this replica is running";
                         type string;
                     }
-                    leaf replica-state {
-                        description "State of the replica";
-                        type enumeration {
-                            enum PENDING {
-                                value 0;
-                                description "Undefined";
-                            }
-                            enum INIT {
-                                value 1;
-                                description "Created";
-                            }
-                            enum RESTART {
-                                value 2;
-                                description "Ready for restart";
-                            }
-                            enum LAUNCHED {
-                                value 3;
-                                description "Has been launched";
-                            }
-                            enum RUNNING {
-                                value 4;
-                                description "Local daemon has forked the replica";
-                            }
-			    enum REGISTERED {
-			        value 5;
-			        description "Has called orcm_init";
-			    }
-                            enum UNTERMINATED {
-                                value 6;
-                                description "Boundary value -- not terminated";
-                            }
-                            enum TERMINATED {
-                                value 7;
-                                description "Replica has terminated and is no longer running";
-                            }
-                            enum KILLED_BY_CMD {
-                                value 8;
-                                description "Replica was killed by ORTE command";
-                            }
-                            enum ABORTED {
-                                value 9;
-                                description "Replica aborted";
-                            }
-                            enum FAILED_TO_START {
-                                value 10;
-                                description "Replica failed to start";
-                            }
-                            enum ABORTED_BY_SIG {
-                                value 11;
-                                description "Replica was killed by a signal";
-                            }
-                            enum TERM_WO_SYNC {
-                                value 12;
-                                description "Replica exited w/o required sync";
-			    }
-                            enum COMM_FAILED {
-                                value 13;
-                                description "Required communication channel failed";
-                            }
-                            enum SENSOR_BOUND_EXCEEDED {
-                                value 14;
-                                description "Sensor exceeded specified boundary value";
-                            }
-                            enum CALLED_ABORT {
-                                value 15;
-                                description "Replica called abort";
-                            }
-                            enum HEARTBEAT_FAILED {
-                                value 16;
-                                description "Replica did not provide a required heartbeat within the specified period";
-                            }
-                        }
+		    leaf num_restarts {
+		        description "Number of times this process has been restarted";
+			type int32;
                     }
                 }
             }
@@ -454,10 +240,6 @@ module orcm {
 	    }
             leaf node-name {
                 description "Node name";
-                type string;
-            }
-            leaf daemon-id {
-                description "Daemon ID";
                 type string;
             }
             leaf state {
@@ -473,10 +255,6 @@ module orcm {
             leaf num-procs {
                 description "Number of procs running on this node";
                 type int32;
-            }
-            leaf heartbeat-seconds {
-                description "Seconds since last detected heartbeat";
-                type uint8;
             }
         }
     }

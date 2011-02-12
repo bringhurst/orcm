@@ -55,6 +55,11 @@
 
 #include "errmgr_orcm.h"
 
+/* The ORCM MASTER is just a shell process for launching
+ * orcm daemons - it doesn't launch nor monitor processes.
+ * Thus, the errmgr is empty - it still has to exist, though,
+ * as various code elements do call it
+ */
 
 /*
  * Module functions: Global
@@ -115,181 +120,6 @@ static int update_state(orte_jobid_t job,
 			pid_t pid,
                         orte_exit_code_t exit_code)
 {
-    orte_job_t *jdata;
-    orte_job_t *jnew;
-    orte_proc_t *pdata;
-    orte_app_context_t *app=NULL;
-    orte_node_t *node, *newnode;
-    orte_proc_t *daemon, *nodeproc;
-    opal_value_array_t jobs;
-    bool found;
-    int i;
-    size_t j;
-
-    /* get the job object */
-    if (NULL == (jdata = orte_get_job_data_object(job))) {
-        ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
-        return ORTE_ERR_NOT_FOUND;
-    }
-
-    OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
-                         "errmgr:orcm:process_fault() "
-                         "------- %s fault reported! proc %s %s",
-                         (proc->jobid == ORTE_PROC_MY_NAME->jobid ? "Daemon" : "App. Process"),
-                         ORTE_NAME_PRINT(proc),
-                         orte_proc_state_to_str(state)));
-    /* get the app - just for output purposes in case of error */
-    app = opal_pointer_array_get_item(jdata->apps, 0);
-
-    /* Remove the route to this process since it is dead */
-    orte_routed.delete_route(proc);
-
-    /****    NON-DAEMON PROC FAILED    ****/
-    if (proc->jobid != ORTE_PROC_MY_NAME->jobid) {
-        /* if the proc failed to start or we killed it by cmd,
-         * don't attempt to restart it as this can lead to an
-         * infinite loop
-         */
-        if (ORTE_PROC_STATE_FAILED_TO_START == state) {
-            opal_output(0, "APPLICATION %s FAILED TO START", app->app);
-            return ORTE_SUCCESS;
-        }
-        
-        /* if the proc was terminated by cmd, then do nothing */
-        if (ORTE_PROC_STATE_KILLED_BY_CMD == state) {
-            opal_output(0, "APPLICATION %s KILLED BY COMMAND", app->app);
-            return ORTE_SUCCESS;
-        }
-        
-        /* get the proc_t object for this process */
-        pdata = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, proc->vpid);
-        if (NULL == pdata) {
-            opal_output(0, "Data for proc %s could not be found", ORTE_NAME_PRINT(proc));
-            return ORTE_ERR_NOT_FOUND;
-        }
-        /* proc just died - save the node where this proc was located */
-        node = pdata->node;
-        /* increment restarts */
-        pdata->restarts++;
-        /* have we exceeded #restarts? */
-        if (app->max_local_restarts < pdata->restarts) {
-            opal_output(0, "Max restarts for proc %s of app %s has been exceeded - process will not be restarted",
-                        ORTE_NAME_PRINT(proc), app->app);
-            return ORTE_SUCCESS;
-        }
-        /* reset the job params for restart */
-        orte_plm_base_reset_job(jdata);
-        
-        /* restart the job - the spawn function will remap and
-         * launch the replacement proc(s)
-         */
-        OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
-                             "%s RESTARTING APP: %s",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             ORTE_NAME_PRINT(proc)));
-        
-        if (ORTE_SUCCESS != orte_plm.spawn(jdata)) {
-            opal_output(0, "FAILED TO RESTART APP %s", app->app);
-            orte_quit();
-            return ORTE_ERROR;
-        }
-        /* get the new node */
-        newnode = pdata->node;
-        /* report what we did */
-        opal_output(0, "Proc %s:%s aborted on node %s and was restarted on node %s\n\n",
-                    app->app, ORTE_NAME_PRINT(proc), node->name, newnode->name);
-        
-        
-        return ORTE_SUCCESS;
-    }
-    
-    /* if it was a daemon that failed, then we have to
-     * treat it differently
-     */
-    if (ORTE_PROC_MY_NAME->jobid == proc->jobid) {
-        OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
-                             "%s Daemon %s failed",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             ORTE_VPID_PRINT(proc->vpid)));
-        /* need to relaunch all the apps that were on
-         * the node where this daemon was running as
-         * they either died along with the node, or will
-         * have self-terminated when the daemon died
-         */
-        if (NULL == (daemon = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, proc->vpid))) {
-            /* nothing we can do - abort things */
-            opal_output(0, "FAILED TO GET DAEMON OBJECT");
-            return ORTE_ERROR;
-        }
-        /* flag the daemon state to indicate it terminated - this will
-         * cause the daemon to be restarted IF required for starting
-         * procs on that node
-         */
-        daemon->state = ORTE_PROC_STATE_ABORTED;
-        /* identify the node where the daemon was running */
-        node = daemon->node;
-        /* release the contact info, if not already done */
-        if (NULL != daemon->rml_uri) {
-            free(daemon->rml_uri);
-            daemon->rml_uri = NULL;
-        }
-        /* setup to track the jobs on this node */
-        OBJ_CONSTRUCT(&jobs, opal_value_array_t);
-        opal_value_array_init(&jobs, sizeof(orte_jobid_t));
-        /* cycle through the node's procs */
-        for (i=0; i < node->procs->size; i++) {
-            if (NULL == (nodeproc = (orte_proc_t*)opal_pointer_array_get_item(node->procs, i))) {
-                continue;
-            }
-            /* set the proc to abnormally terminated */
-            nodeproc->state = ORTE_PROC_STATE_ABORTED;
-            /* increment restarts */
-            nodeproc->restarts++;
-            /* check if this proc's jobid is already in array */
-            found = false;
-            for (j=0; j < opal_value_array_get_size(&jobs); j++) {
-                if (nodeproc->name.jobid == OPAL_VALUE_ARRAY_GET_ITEM(&jobs, orte_jobid_t, j)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                /* add it */
-                opal_value_array_append_item(&jobs, &nodeproc->name.jobid);
-            }
-        }
-        OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
-                             "%s RESTARTING APPS FROM NODE: %s",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             node->name));
-        for (j=0; j < opal_value_array_get_size(&jobs); j++) {
-            if (NULL == (jnew = orte_get_job_data_object(OPAL_VALUE_ARRAY_GET_ITEM(&jobs, orte_jobid_t, j)))) {
-                /* nothing we can do - abort things */
-                opal_output(0, "FAILED TO GET JOB OBJECT TO BE RESTARTED");
-                return ORTE_ERROR;
-            }
-            /* reset the job params for restart */
-            orte_plm_base_reset_job(jnew);
-            /* restart the job - the spawn function will remap and
-             * launch the replacement proc(s)
-             */
-            OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
-                                 "%s RESTARTING JOB %s",
-                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                 ORTE_JOBID_PRINT(jnew->jobid)));
-            if (ORTE_SUCCESS != orte_plm.spawn(jnew)) {
-                opal_output(0, "FAILED TO RESTART APPS FROM NODE: %s", node->name);
-                return ORTE_ERROR;
-            }    
-        }
-        opal_output(0, "Daemon %s on node %s aborted - procs were restarted elsewhere\n\n",
-                    ORTE_NAME_PRINT(proc), node->name);
-        /* all done - cleanup and leave */
-        OBJ_DESTRUCT(&jobs);
-        return ORTE_ERROR;
-    }
-    
-    /* save */
     return ORTE_SUCCESS;
 }
 
@@ -311,7 +141,3 @@ int ft_event(int state)
 {
     return ORTE_SUCCESS;
 }
-
-/*****************
- * Local Functions
- *****************/

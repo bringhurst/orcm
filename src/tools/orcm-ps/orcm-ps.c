@@ -30,7 +30,7 @@
 #include <string.h>
 #endif  /* HAVE_STRING_H */
 
-#include "opal/mca/event/event.h"
+#include "opal/event/event.h"
 #include "opal/util/cmd_line.h"
 #include "opal/util/argv.h"
 #include "opal/runtime/opal.h"
@@ -161,7 +161,7 @@ cleanup:
         tmp = (opal_event_t*)arg;
         now.tv_sec = my_globals.update_rate;
         now.tv_usec = 0;
-        opal_event_evtimer_add(tmp, &now);
+        opal_evtimer_add(tmp, &now);
     }
 }
 
@@ -296,7 +296,7 @@ int main(int argc, char *argv[])
         goto cleanup;
     }
     
-    opal_event_dispatch(opal_event_base);
+    opal_event_dispatch();
     
     /***************
      * Cleanup

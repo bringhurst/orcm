@@ -12,7 +12,7 @@
 #include <sys/time.h>
 
 #include "opal/dss/dss.h"
-#include "opal/mca/event/event.h"
+#include "opal/event/event.h"
 #include "opal/util/output.h"
 
 #include "orte/mca/errmgr/errmgr.h"
@@ -43,6 +43,7 @@ static void proc_failed(const char *stringid,
 
 static int msg_num=0;
 static struct timeval tp;
+static int report_rate;
 
 int main(int argc, char* argv[])
 {
@@ -59,6 +60,14 @@ int main(int argc, char* argv[])
         tp.tv_usec = strtol(argv[2], NULL, 10);
     } else {
         tp.tv_usec = 10000;
+    }
+
+    if (tp.tv_usec <= 100) {
+        report_rate = 10000;
+    } else if (tp.tv_usec <= 1000) {
+        report_rate = 1000;
+    } else {
+        report_rate = 100;
     }
 
     /* init the ORCM library - this includes registering
@@ -98,7 +107,7 @@ int main(int argc, char* argv[])
     ORTE_TIMER_EVENT(tp.tv_sec, tp.tv_usec, send_data);
 
     /* just sit here */
-    opal_event_dispatch(opal_event_base);
+    opal_event_dispatch();
     
 cleanup:
 
@@ -146,16 +155,16 @@ static void recv_input(int status,
                 return;
             }
         }
-    }
+   }
     
-    if (0 == (data[0] % 100)) {
-        opal_output(0, "%s recvd mcast data sender %s msg number %d",
+    if (0 == (data[0] % report_rate)) {
+        opal_output(0, "%s recvd data sender %s msg number %d",
                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                     ORTE_NAME_PRINT(sender), data[0]);
     }
 
+    /* see if we want to respond directly to the client */
     if (0 == (data[0] % 300)) {
-        /* respond directly to the client */
         response = (struct iovec*)malloc(count * sizeof(struct iovec));
         for (j=0; j < count; j++) {
             response[j].iov_base = (void*)malloc(5 * sizeof(int32_t));
@@ -219,7 +228,7 @@ static void send_data(int fd, short flags, void *arg)
     }
     
     /* output the values */
-    if (0 == (msg_num % 100)) {
+    if (0 == (msg_num % report_rate)) {
         opal_output(0, "%s mcasting data for msg number %d",
                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
     }
@@ -233,7 +242,7 @@ static void send_data(int fd, short flags, void *arg)
     msg_num++;
     
     /* reset the timer */
-    opal_event_evtimer_add(tmp, &tp);
+    opal_evtimer_add(tmp, &tp);
     
 }
 

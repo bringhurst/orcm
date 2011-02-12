@@ -59,7 +59,7 @@
 #include "opal/mca/installdirs/installdirs.h"
 #include "opal/mca/base/mca_base_param.h"
 #include "opal/util/output.h"
-#include "opal/mca/event/event.h"
+#include "opal/event/event.h"
 #include "opal/util/argv.h"
 #include "opal/util/path.h"
 #include "opal/util/opal_environ.h"
@@ -81,7 +81,7 @@
 #include "orte/mca/ess/ess.h"
 #include "orte/mca/ess/base/base.h"
 #include "orte/mca/errmgr/errmgr.h"
-#include "orte/mca/rmaps/rmaps.h"
+#include "orte/mca/ras/ras.h"
 #include "orte/mca/routed/routed.h"
 #include "orte/mca/rml/base/rml_contact.h"
 
@@ -218,7 +218,7 @@ static int setup_launch(int *argcptr, char ***argvptr,
     char *opal_destdir = getenv("OPAL_DESTDIR");
     char *orcm_destdir = getenv("ORCM_DESTDIR");
     char *tmp_path=NULL, *tmp_lib=NULL;
-    int i;
+    int i, cnt;
 
     /* Figure out the basenames for the libdir and bindir.  This
        requires some explanation:
@@ -352,6 +352,7 @@ static int setup_launch(int *argcptr, char ***argvptr,
         asprintf(&tmp_lib, "%s/%s", prefix_dir, lib_base);
     }
 
+
     if (ORTE_PLM_RSH_SHELL_SH == remote_shell ||
         ORTE_PLM_RSH_SHELL_KSH == remote_shell ||
         ORTE_PLM_RSH_SHELL_ZSH == remote_shell ||
@@ -450,35 +451,27 @@ static int setup_launch(int *argcptr, char ***argvptr,
      * all debug options
      */
     orte_plm_base_orted_append_basic_args(&argc, &argv,
-                                          "orcm",
+                                          "orcmd",
                                           proc_vpid_index,
                                           NULL);
-    
-    /* ensure that only the orcm plm is selected on the remote daemon */
-    opal_argv_append_nosize(&argv, "-mca");
-    opal_argv_append_nosize(&argv, "plm");
-    opal_argv_append_nosize(&argv, "orcm");
     
     /* in the rsh environment, we can append multi-word arguments
      * by enclosing them in quotes. Check for any multi-word
      * mca params and include them
      */
-    if (ORTE_PROC_IS_HNP || ORTE_PROC_IS_DAEMON) {
-        int cnt, i;
-        cnt = opal_argv_count(orted_cmd_line);    
-        for (i=0; i < cnt; i+=3) {
-            /* check if the specified option is more than one word - all
-             * others have already been passed
-             */
-            if (NULL != strchr(orted_cmd_line[i+2], ' ')) {
-                /* must add quotes around it */
-                asprintf(&param, "\"%s\"", orted_cmd_line[i+2]);
-                /* now pass it along */
-                opal_argv_append(&argc, &argv, orted_cmd_line[i]);
-                opal_argv_append(&argc, &argv, orted_cmd_line[i+1]);
-                opal_argv_append(&argc, &argv, param);
-                free(param);
-            }
+    cnt = opal_argv_count(orted_cmd_line);    
+    for (i=0; i < cnt; i+=3) {
+        /* check if the specified option is more than one word - all
+         * others have already been passed
+         */
+        if (NULL != strchr(orted_cmd_line[i+2], ' ')) {
+            /* must add quotes around it */
+            asprintf(&param, "\"%s\"", orted_cmd_line[i+2]);
+            /* now pass it along */
+            opal_argv_append(&argc, &argv, orted_cmd_line[i]);
+            opal_argv_append(&argc, &argv, orted_cmd_line[i+1]);
+            opal_argv_append(&argc, &argv, param);
+            free(param);
         }
     }
 
@@ -616,13 +609,23 @@ static void ssh_child(int argc, char **argv, orte_vpid_t vpid,
  * for launching the application.
  */
 
+static void cbfunc(int status,
+                   orte_process_name_t *sender,
+                   orcm_pnp_tag_t tag,
+                   struct iovec *msg,
+                   int count,
+                   opal_buffer_t *buffer,
+                   void *cbdata)
+{
+    OBJ_RELEASE(buffer);
+}
+
 /* When working in this function, ALWAYS jump to "cleanup" if
  * you encounter an error so that orterun will be woken up and
  * the job can cleanly terminate
  */
 static int launch(orte_job_t *jdata)
 {
-    orte_job_map_t *map = NULL;
     int node_name_index1;
     int proc_vpid_index;
     char **argv = NULL;
@@ -632,13 +635,14 @@ static int launch(orte_job_t *jdata)
     bool failed_launch = true;
     orte_app_context_t *app;
     orte_node_t *node;
-    orte_std_cntr_t nnode;
     orte_jobid_t failed_job;
     orte_job_state_t job_state = ORTE_JOB_STATE_NEVER_LAUNCHED;
-    orte_daemon_cmd_flag_t command;
-    opal_buffer_t *buffer;
-    uint16_t jfam;
     int orted_cmd_index;
+    opal_list_t nodes;
+    orte_std_cntr_t slots;
+    orte_mapping_policy_t policy=ORTE_MAPPING_BYNODE;
+    orte_vpid_t vpid;
+    orte_proc_t *proc;
 
     /* wait for the launch to complete */
     OPAL_ACQUIRE_THREAD(&orte_plm_globals.spawn_lock,
@@ -647,69 +651,14 @@ static int launch(orte_job_t *jdata)
     OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output, "released to spawn"));
     orte_plm_globals.spawn_in_progress = true;
     OPAL_THREAD_UNLOCK(&orte_plm_globals.spawn_lock);
-
-    orcm_vm_launch.active = true;
-
-    /* if we are launching an app instead of daemons, then
-     * construct the launch msg and send it out
-     */
-    if (ORTE_PROC_MY_NAME->jobid != jdata->jobid) {
-        /* setup the job */
-        if (ORTE_SUCCESS != (rc = orte_plm_base_setup_job(jdata))) {
-            ORTE_ERROR_LOG(rc);
-            goto cleanup;
-        }
-        /* setup the buffer */
-        buffer = OBJ_NEW(opal_buffer_t);
-        /* pack our job family */
-        jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
-        if (ORTE_SUCCESS != (rc = opal_dss.pack(buffer, &jfam, 1, OPAL_UINT16))) {
-            ORTE_ERROR_LOG(rc);
-            OBJ_RELEASE(buffer);
-            goto cleanup;
-        }
-        
-        /* get the local launcher's required data */
-        if (ORTE_SUCCESS != (rc = orte_odls.get_add_procs_data(buffer, jdata->jobid))) {
-            ORTE_ERROR_LOG(rc);
-            OBJ_RELEASE(buffer);
-            goto cleanup;
-        }
-        /* send it */
-        if (ORTE_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL, NULL,
-                                                  ORCM_PNP_TAG_COMMAND, NULL, 0, buffer))) {
-            ORTE_ERROR_LOG(rc);
-        }
-        OBJ_RELEASE(buffer);
-        /* wait for the procs to report back in the announce callback */
-#if 0
-        OPAL_ACQUIRE_THREAD(&orte_plm_globals.spawn_lock,
-                            &orte_plm_globals.spawn_in_progress_cond,
-                            &orte_plm_globals.spawn_in_progress);
-#endif
-        OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output,
-                             "completed spawn for job %s", ORTE_JOBID_PRINT(jdata->jobid)));
-        goto cleanup;
-    }
     
-    /* if we are timing, record the start time */
-    if (orte_timing) {
-        gettimeofday(&orte_plm_globals.daemonlaunchstart, NULL);
-    }
-
     /* default to declaring the daemon launch as having failed */
     failed_job = ORTE_PROC_MY_NAME->jobid;
     
-    if (orte_timing) {
-        if (0 != gettimeofday(&joblaunchstart, NULL)) {
-            opal_output(0, "plm_orcm: could not obtain start time");
-            joblaunchstart.tv_sec = 0;
-            joblaunchstart.tv_usec = 0;
-        }        
-    }
-    
-    /* setup the job */
-    if (ORTE_SUCCESS != (rc = orte_plm_base_setup_job(jdata))) {
+    OBJ_CONSTRUCT(&nodes, opal_list_t);
+
+    /* get the allocation */
+    if (ORTE_SUCCESS != (rc = orte_ras.allocate(jdata))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -722,41 +671,16 @@ static int launch(orte_job_t *jdata)
     /* set the active jobid */
     active_job = jdata->jobid;
 
-    /* Get the map for this job */
-    if (NULL == (map = orte_rmaps.get_job_map(active_job))) {
-        ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
-        rc = ORTE_ERR_NOT_FOUND;
+    /* get the daemon app */
+    if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, 0))) {
+        ORTE_ERROR_LOG(ORTE_ERR_BAD_PARAM);
+        rc = ORTE_ERR_BAD_PARAM;
         goto cleanup;
     }
-    
-    if (0 == map->num_new_daemons) {
-        /* have all the daemons we need - launch app */
-        OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output,
-                             "%s plm:orcm: no new daemons to launch",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        failed_launch = false;
-        goto cleanup;
-    }
-    
-    if ((0 < opal_output_get_verbosity(orte_plm_globals.output) ||
-         orte_leave_session_attached) &&
-        mca_plm_orcm_component.num_concurrent < map->num_new_daemons) {
-        /**
-        * If we are in '--debug-daemons' we keep the ssh connection 
-         * alive for the span of the run. If we use this option 
-         * AND we launch on more than "num_concurrent" machines
-         * then we will deadlock. No connections are terminated 
-         * until the job is complete, no job is started
-         * since all the orteds are waiting for all the others
-         * to come online, and the others ore not launched because
-         * we are waiting on those that have started to terminate
-         * their ssh tunnels. :(
-         * As we cannot run in this situation, pretty print the error
-         * and return an error code.
-         */
-        orte_show_help("help-plm-orcm.txt", "deadlock-params",
-                       true, mca_plm_orcm_component.num_concurrent, map->num_new_daemons);
-        rc = ORTE_ERR_FATAL;
+
+    /* Get the list of available nodes */
+    if (ORTE_SUCCESS != (rc = orte_rmaps_base_get_target_nodes(&nodes, &slots, app, policy))) {
+        ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
     
@@ -781,12 +705,7 @@ static int launch(orte_job_t *jdata)
     /* we also need at least one node name so we can check what shell is
      * being used, if we have to
      */
-    node = NULL;
-    for (nnode = 0; nnode < map->nodes->size; nnode++) {
-        if (NULL != (node = (orte_node_t*)opal_pointer_array_get_item(map->nodes, nnode))) {
-            break;
-        }
-    }
+    node = (orte_node_t*)opal_list_get_first(&nodes);
     if (NULL == node) {
         /* well, if there isn't even one node in the map, then we are hammered */
         rc = ORTE_ERR_FATAL;
@@ -807,34 +726,35 @@ static int launch(orte_job_t *jdata)
     /*
      * Iterate through each of the nodes
      */
-    for (nnode=0; nnode < map->nodes->size; nnode++) {
-        pid_t pid;
-        opal_list_item_t *item;
-        
-        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(map->nodes, nnode))) {
-            continue;
-        }
+    vpid=2;  /* start at two to leave room for orcm and orcm-sched */
+    /* set the total number of procs to expect - count myself as part of the daemon job */
+    orte_process_info.num_procs = opal_list_get_size(&nodes) + 1;
+    jdata->num_reported = 1; /* obviously, I have reported */
+    jdata->num_launched = 0;
 
+    while (NULL != (node = (orte_node_t*)opal_list_remove_first(&nodes))) {
+        pid_t pid;
+        
         /* if this daemon already exists, don't launch it! */
         if (node->daemon_launched) {
             OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output,
-                                 "%s plm:orcm:launch daemon already exists on node %s",
+                                 "%s plm:orcm:launch daemon %s already exists on node %s",
                                  ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                 (NULL == node->daemon) ? "NULL" : ORTE_NAME_PRINT(&(node->daemon->name)),
                                  node->name));
             continue;
         }
         
-        /* if the node's daemon has not been defined, then we
-         * have an error!
-         */
+        /* if the node's daemon has not been defined, then do so */
         if (NULL == node->daemon) {
-            ORTE_ERROR_LOG(ORTE_ERR_FATAL);
-            OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output,
-                                 "%s plm:orcm:launch daemon failed to be defined on node %s",
-                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                 node->name));
-            rc = ORTE_ERR_FATAL;
-            goto cleanup;
+            proc = OBJ_NEW(orte_proc_t);
+            proc->name.jobid = ORTE_PROC_MY_NAME->jobid;
+            proc->name.vpid = vpid;
+            opal_pointer_array_set_item(jdata->procs, vpid, proc);
+            jdata->num_procs++;
+            OBJ_RETAIN(proc);
+            node->daemon = proc;
+            vpid++;
         }
         
         /* setup node name */
@@ -872,11 +792,11 @@ static int launch(orte_job_t *jdata)
             node->daemon->state = ORTE_PROC_STATE_LAUNCHED;
             /* record the pid */
             node->daemon->pid = pid;
-            
+
             OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output,
                                  "%s plm:orcm: recording launch of daemon %s",
                                  ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                ORTE_NAME_PRINT(&node->daemon->name)));
+                                 ORTE_NAME_PRINT(&node->daemon->name)));
 
             /* setup callback on sigchild - wait until setup above is complete
              * as the callback can occur in the call to orte_wait_cb
@@ -900,13 +820,19 @@ static int launch(orte_job_t *jdata)
                 sleep(mca_plm_orcm_component.delay);
             }
         }
+        /* maintain acctg */
+        OBJ_RELEASE(node);
     }
 
-    /* wait for the daemons to report back in the announce callback */
-    ORTE_ACQUIRE_THREAD(&orcm_vm_launch);
-    OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output,
-                         "completed spawn for job %s", ORTE_JOBID_PRINT(jdata->jobid)));
-    
+    if (0 < jdata->num_launched) {
+        /* wait for the daemons to report back in the announce callback */
+        OPAL_ACQUIRE_THREAD(&orte_plm_globals.spawn_lock,
+                            &orte_plm_globals.spawn_in_progress_cond,
+                            &orte_plm_globals.spawn_in_progress);
+        OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output,
+                             "completed spawn for job %s", ORTE_JOBID_PRINT(jdata->jobid)));
+    }
+
     /* get here if launch went okay */
     failed_launch = false;
     
@@ -924,12 +850,12 @@ static int launch(orte_job_t *jdata)
     if (NULL != argv) {
         opal_argv_free(argv);
     }
+    OBJ_DESTRUCT(&nodes);
 
     /* RELEASE THE THREAD */
-#if 0
     orte_plm_globals.spawn_in_progress = false;
     OPAL_THREAD_UNLOCK(&orte_plm_globals.spawn_lock);
-#endif
+
     return rc;
 }
 
@@ -940,23 +866,21 @@ static int launch(orte_job_t *jdata)
 static int terminate_orteds(void)
 {
     int rc;
-    opal_buffer_t buf;
-    orte_daemon_cmd_flag_t cmd = ORTE_DAEMON_HALT_VM_CMD;
+    opal_buffer_t *buf;
     uint16_t jfam;
     
-    OBJ_CONSTRUCT(&buf, opal_buffer_t);
+    buf = OBJ_NEW(opal_buffer_t);
     /* pack our job family */
     jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
-    opal_dss.pack(&buf, &jfam, 1, OPAL_UINT16);
-    /* pack the terminate command */
-    opal_dss.pack(&buf, &cmd, 1, ORTE_DAEMON_CMD);
+    opal_dss.pack(buf, &jfam, 1, OPAL_UINT16);
     
     OPAL_OUTPUT_VERBOSE((2, orte_plm_globals.output,
                          "%s plm:orcm: sending terminate command",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
 
-    if (ORTE_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL, NULL,
-                                              ORCM_PNP_TAG_COMMAND, NULL, 0, &buf))) {
+    if (ORTE_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL, NULL,
+                                                 ORCM_PNP_TAG_TERMINATE, NULL,
+                                                 0, buf, cbfunc, NULL))) {
         ORTE_ERROR_LOG(rc);
     }
     
@@ -966,20 +890,26 @@ static int terminate_orteds(void)
 static int signal_job(orte_jobid_t jobid, int32_t signal)
 {
     int rc;
-    opal_buffer_t buf;
+    opal_buffer_t *buf;
     orte_daemon_cmd_flag_t cmd = ORTE_DAEMON_SIGNAL_LOCAL_PROCS;
-    
-    OBJ_CONSTRUCT(&buf, opal_buffer_t);
-    opal_dss.pack(&buf, &cmd, 1, ORTE_DAEMON_CMD_T);
-    opal_dss.pack(&buf, &jobid, 1, ORTE_JOBID);
-    opal_dss.pack(&buf, &signal, 1, OPAL_INT32);
+    uint16_t jfam;
+
+    buf = OBJ_NEW(opal_buffer_t);
+    /* indicate the target DVM */
+    jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
+    opal_dss.pack(buf, &jfam, 1, OPAL_UINT16);
+
+    opal_dss.pack(buf, &cmd, 1, ORTE_DAEMON_CMD_T);
+    opal_dss.pack(buf, &jobid, 1, ORTE_JOBID);
+    opal_dss.pack(buf, &signal, 1, OPAL_INT32);
     
     OPAL_OUTPUT_VERBOSE((2, orte_plm_globals.output,
                          "%s plm:orcm sending signal %d command",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), signal));
 
-    if (ORTE_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL, NULL,
-                                              ORCM_PNP_TAG_COMMAND, NULL, 0, &buf))) {
+    if (ORTE_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL, NULL,
+                                                 ORCM_PNP_TAG_COMMAND, NULL,
+                                                 0, buf, cbfunc, NULL))) {
         ORTE_ERROR_LOG(rc);
     }
     

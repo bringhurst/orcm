@@ -43,7 +43,7 @@
 #include <dirent.h>
 #endif  /* HAVE_DIRENT_H */
 
-#include "opal/mca/event/event.h"
+#include "opal/event/event.h"
 #include "opal/util/cmd_line.h"
 #include "opal/util/argv.h"
 #include "opal/util/opal_environ.h"
@@ -74,10 +74,8 @@ static struct {
     char *wdir;
     char *path;
     char *hosts;
-    bool constrained;
     bool gdb;
-    int local_restarts;
-    int global_restarts;
+    int restarts;
     char *sched;
     char *hnp_uri;
     bool continuous;
@@ -125,17 +123,9 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       &my_globals.hosts, OPAL_CMD_LINE_TYPE_STRING,
       "Comma-delimited list of hosts upon which procs are to be initially started" },
 
-    { NULL, NULL, NULL, '\0', "constrain", "constrain", 0,
-      &my_globals.constrained, OPAL_CMD_LINE_TYPE_BOOL,
-      "Constrain processes to run solely on the specified hosts, even upon restart from failure" },
-
-    { NULL, NULL, NULL, '\0', "max-local-restarts", "max-local-restarts", 1,
-      &my_globals.local_restarts, OPAL_CMD_LINE_TYPE_INT,
-      "Maximum number of times a process in this job can be restarted on the same node (default: unbounded)" },
-
-    { NULL, NULL, NULL, '\0', "max-global-restarts", "max-global-restarts", 1,
-      &my_globals.global_restarts, OPAL_CMD_LINE_TYPE_INT,
-      "Maximum number of times a process in this job can be relocated to another node (default: unbounded)" },
+    { NULL, NULL, NULL, '\0', "max-restarts", "max-restarts", 1,
+      &my_globals.restarts, OPAL_CMD_LINE_TYPE_INT,
+      "Maximum number of times a process in this job can be restarted (default: 0)" },
 
     { NULL, NULL, NULL, 'c', "continuous", "continuous", 0,
       &my_globals.continuous, OPAL_CMD_LINE_TYPE_BOOL,
@@ -173,15 +163,25 @@ static int create_app(int argc, char* argv[], orte_app_context_t **app,
 static int parse_appfile(opal_buffer_t *buf);
 static int capture_cmd_line_params(int argc, int start, char **argv, char***app_env);
 
+static void cbfunc(int status,
+                   orte_process_name_t *sender,
+                   orcm_pnp_tag_t tag,
+                   struct iovec *msg,
+                   int count,
+                   opal_buffer_t *buffer,
+                   void *cbdata)
+{
+    OBJ_RELEASE(buffer);
+}
 
 int main(int argc, char *argv[])
 {
     int32_t ret, i;
     opal_cmd_line_t cmd_line;
     FILE *fp;
-    char *cmd, *mstr;
+    char *cmd, *mstr, *param;
     char **inpt;
-    opal_buffer_t buf;
+    opal_buffer_t *buf;
     int count;
     char cwd[OPAL_PATH_MAX];
     orcm_tool_cmd_t flag = ORCM_TOOL_START_CMD;
@@ -209,18 +209,11 @@ int main(int argc, char *argv[])
     my_globals.appfile = NULL;
     my_globals.name = NULL;
     my_globals.instance = NULL;
-    my_globals.num_procs = 0;
-    my_globals.wdir = NULL;
-    my_globals.path = NULL;
-    my_globals.hosts = NULL;
-    my_globals.constrained = false;
-    my_globals.gdb = false;
-    my_globals.local_restarts = -1;
-    my_globals.global_restarts = -1;
     my_globals.sched = NULL;
     my_globals.hnp_uri = NULL;
     my_globals.continuous = false;
-    
+    my_globals.gdb = false;
+
     /* Parse the command line options */
     opal_cmd_line_create(&cmd_line, cmd_line_opts);
     
@@ -242,11 +235,6 @@ int main(int argc, char *argv[])
         return ORTE_ERROR;
     }
     
-    /* need to specify scheduler */
-    if (NULL == my_globals.sched && NULL == my_globals.hnp_uri) {
-        opal_output(0, "Must specify ORCM DVM to be contacted");
-        return ORTE_ERROR;
-    }
     if (NULL != my_globals.sched) {
         if (0 == strncmp(my_globals.sched, "file", strlen("file")) ||
             0 == strncmp(my_globals.sched, "FILE", strlen("FILE"))) {
@@ -288,6 +276,8 @@ int main(int argc, char *argv[])
             /* should just be the scheduler itself */
             master = strtoul(my_globals.sched, NULL, 10);
         }
+    } else {
+        master = 0;
     }
     
     /* if we were given HNP contact info, parse it and
@@ -374,18 +364,18 @@ int main(int argc, char *argv[])
     }
     
     /* setup the buffer to send our cmd */
-    OBJ_CONSTRUCT(&buf, opal_buffer_t);
+    buf = OBJ_NEW(opal_buffer_t);
 
     /* indicate the scheduler to be used */
     jfam = master & 0x0000ffff;
     
-    opal_dss.pack(&buf, &jfam, 1, OPAL_UINT16);
+    opal_dss.pack(buf, &jfam, 1, OPAL_UINT16);
     
     /* load the start cmd */
-    opal_dss.pack(&buf, &flag, 1, ORCM_TOOL_CMD_T);
+    opal_dss.pack(buf, &flag, 1, ORCM_TOOL_CMD_T);
     
     if (NULL != my_globals.appfile) {
-        if (ORCM_SUCCESS != parse_appfile(&buf)) {
+        if (ORCM_SUCCESS != parse_appfile(buf)) {
             goto cleanup;
         }
     } else {
@@ -422,30 +412,46 @@ int main(int argc, char *argv[])
             app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, 0);
             jdata->name = strdup(app->app);
         }
+
+        /* if it wasn't given, set the instance to the app name */
+        if (NULL == jdata->instance) {
+            jdata->instance = strdup(jdata->name);
+        }
+
         /* save the job's name */
         app_launched = strdup(jdata->name);
 
+        /* cycle thru the apps to set the recovery flags */
+        for (i=0; i < jdata->apps->size; i++) {
+            if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, i))) {
+                continue;
+            }
+            if (0 <= app->max_restarts || -1 == app->max_restarts || my_globals.continuous) {
+                app->recovery_defined = true;
+                jdata->enable_recovery = true;
+                jdata->recovery_defined = true;
+            }
+        }
+
         /* pack the job object */
-        if (ORTE_SUCCESS != (ret = opal_dss.pack(&buf, &jdata, 1, ORTE_JOB))) {
+        if (ORTE_SUCCESS != (ret = opal_dss.pack(buf, &jdata, 1, ORTE_JOB))) {
             ORTE_ERROR_LOG(ret);
             OBJ_RELEASE(jdata);
-            OBJ_DESTRUCT(&buf);
+            OBJ_RELEASE(buf);
             goto cleanup;
         }
         /* done with this */
         OBJ_RELEASE(jdata);
     }
 
-    if (ORCM_SUCCESS != (ret = orcm_pnp.output(ORCM_PNP_GROUP_OUTPUT_CHANNEL,
-                                               NULL, ORCM_PNP_TAG_TOOL,
-                                               NULL, 0, &buf))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL,
+                                                  NULL, ORCM_PNP_TAG_TOOL,
+                                                  NULL, 0, buf, cbfunc, NULL))) {
         ORTE_ERROR_LOG(ret);
     }
     
-    OBJ_DESTRUCT(&buf);
-    
     /* now wait for ack */
-    opal_event_dispatch(opal_event_base);
+    opal_event_dispatch();
     
     /***************
      * Cleanup
@@ -482,7 +488,7 @@ static void ack_recv(int status,
     if (0 == rc) {
         opal_output(orte_clean_output, "Job %s started", app_launched);
     } else {
-        opal_output(orte_clean_output, "Job %s failed to start with error %s", app_launched, ORTE_ERROR_NAME(rc));
+        opal_output(orte_clean_output, "Job \"%s\" failed to start with error: %s", app_launched, ORTE_ERROR_NAME(rc));
     }
     free(app_launched);
 
@@ -617,6 +623,12 @@ static int create_app(int argc, char* argv[], orte_app_context_t **app_ptr,
 
     /* Parse application command line options. */
 
+    my_globals.num_procs = 0;
+    my_globals.wdir = NULL;
+    my_globals.path = NULL;
+    my_globals.hosts = NULL;
+    my_globals.restarts = 0;  /* default to no restarts */
+
     opal_cmd_line_create(&cmd_line, cmd_line_opts);
     mca_base_cmd_line_setup(&cmd_line);
     cmd_line_made = true;
@@ -639,26 +651,12 @@ static int create_app(int argc, char* argv[], orte_app_context_t **app_ptr,
         goto cleanup;
     }
 
-    /* set the max local restarts value */
-    app->max_local_restarts = my_globals.local_restarts;
-    
-    /* set the max global restarts value */
-    app->max_global_restarts = my_globals.global_restarts;
-
-    if (0 < app->max_local_restarts ||
-        0 < app->max_global_restarts) {
-        jdata->enable_recovery = true;
+    /* set the restarts */
+    if (my_globals.continuous) {
+        app->max_restarts = -1;
+    } else {
+        app->max_restarts = my_globals.restarts;
     }
-
-    /* set the starting hosts */
-    if (NULL != my_globals.hosts) {
-        app->dash_host = opal_argv_split(my_globals.hosts, ',');
-    }
-    
-    /* set the constraining flag */
-    if (my_globals.constrained) {
-        app->constrain = true;
-    }    
 
     /* Grab all OMPI_* environment variables */
 
@@ -680,20 +678,6 @@ static int create_app(int argc, char* argv[], orte_app_context_t **app_ptr,
         }
     }
     
-#if 0
-    /*
-     * Get mca parameters so we can pass them to the app.
-     * Use the count determined above to make sure we do not go past
-     * the executable name. Example:
-     *   mpirun -np 2 -mca foo bar ./my-app -mca bip bop
-     * We want to pick up '-mca foo bar' but not '-mca bip bop'
-     */
-    if (ORTE_SUCCESS != (rc = capture_cmd_line_params(argc, count, argv, &app->env))) {
-        ORTE_ERROR_LOG(rc);
-        goto cleanup;
-    }
-#endif
-
     /* tell the app to use the right ess module */
     opal_setenv("OMPI_MCA_ess", "orcmapp", true, &app->env);
 
@@ -836,6 +820,8 @@ static int create_app(int argc, char* argv[], orte_app_context_t **app_ptr,
         rc = ORTE_ERR_NOT_FOUND;
         goto cleanup;
     }
+    /* set the app name */
+    app->name = strdup(app->app);
 
     *app_ptr = app;
     app = NULL;

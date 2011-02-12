@@ -1,9 +1,9 @@
 /*
  * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
  * $COPYRIGHT$
- * 
+ *
  * Additional copyrights may follow
- * 
+ *
  * $HEADER$
  */
 
@@ -16,632 +16,257 @@
 #include "orte_config.h"
 #include "orte/constants.h"
 
-#include <stdio.h>
-#include <errno.h>
-#ifdef HAVE_UNISTD_H
-#include <unistd.h>
-#endif  /* HAVE_UNISTD_H */
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif  /*  HAVE_STDLIB_H */
-#ifdef HAVE_SIGNAL_H
-#include <signal.h>
-#endif  /*  HAVE_SIGNAL_H */
-#ifdef HAVE_SYS_STAT_H
-#include <sys/stat.h>
-#endif  /* HAVE_SYS_STAT_H */
-#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif  /* HAVE_SYS_TYPES_H */
-#ifdef HAVE_SYS_WAIT_H
-#include <sys/wait.h>
-#endif  /* HAVE_SYS_WAIT_H */
 #ifdef HAVE_STRING_H
 #include <string.h>
-#endif  /* HAVE_STRING_H */
-#ifdef HAVE_DIRENT_H
-#include <dirent.h>
-#endif  /* HAVE_DIRENT_H */
-#ifdef HAVE_PWD_H
-#include <pwd.h>
-#endif  /* HAVE_PWD_H */
+#endif
 
-#include "opal/dss/dss.h"
-#include "opal/class/opal_pointer_array.h"
-#include "opal/mca/event/event.h"
-#include "opal/util/cmd_line.h"
-#include "opal/util/argv.h"
-#include "opal/util/opal_environ.h"
-#include "opal/util/path.h"
+#include <stdio.h>
+#include <stddef.h>
+#include <ctype.h>
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+#ifdef HAVE_NETDB_H
+#include <netdb.h>
+#endif
+#ifdef HAVE_SYS_PARAM_H
+#include <sys/param.h>
+#endif
+#include <fcntl.h>
+#include <errno.h>
+#include <signal.h>
+#ifdef HAVE_SYS_TIME_H
+#include <sys/time.h>
+#endif  /* HAVE_SYS_TIME_H */
+
+
+#include "opal/event/event.h"
 #include "opal/mca/base/base.h"
+#include "opal/util/output.h"
+#include "opal/util/cmd_line.h"
+#include "opal/util/opal_environ.h"
+#include "opal/util/os_path.h"
+#include "opal/util/printf.h"
+#include "opal/util/argv.h"
+#include "opal/runtime/opal.h"
 #include "opal/mca/base/mca_base_param.h"
-#include "opal/mca/sysinfo/base/base.h"
-#include "opal/util/basename.h"
-#include "opal/mca/installdirs/installdirs.h"
+#include "opal/util/daemon_init.h"
+#include "opal/dss/dss.h"
+#include "opal/mca/sysinfo/sysinfo.h"
 
+#include "orte/constants.h"
 #include "orte/util/show_help.h"
-#include "orte/util/parse_options.h"
+#include "orte/util/proc_info.h"
+#include "orte/util/session_dir.h"
+#include "orte/util/name_fns.h"
+#include "orte/util/nidmap.h"
+#include "orte/runtime/orte_locks.h"
+#include "orte/runtime/orte_quit.h"
+#include "orte/mca/rml/base/rml_contact.h"
+
 #include "orte/mca/errmgr/errmgr.h"
-#include "orte/mca/iof/iof.h"
-#include "orte/mca/iof/base/base.h"
+#include "orte/mca/rml/rml.h"
 #include "orte/mca/odls/odls.h"
 #include "orte/mca/odls/base/base.h"
-#include "orte/mca/ras/ras.h"
-#include "orte/mca/ras/base/base.h"
-#include "orte/mca/rmaps/rmaps.h"
-#include "orte/mca/rmaps/base/base.h"
-#include "orte/mca/odls/odls.h"
+#include "orte/mca/plm/plm.h"
 #include "orte/mca/plm/base/plm_private.h"
-#include "orte/runtime/orte_globals.h"
+#include "orte/mca/ras/ras.h"
+#include "orte/mca/routed/routed.h"
 
 #include "mca/pnp/pnp.h"
+#include "mca/pnp/base/public.h"
+#include "runtime/runtime.h"
+/*
+ * Globals
+ */
+static bool orcmd_spin_flag=false;
 
-/*****************************************
- * Global Vars for Command line Arguments
- *****************************************/
+static int orcmd_comm(orte_process_name_t *recipient,
+                      opal_buffer_t *buf, orte_rml_tag_t tag,
+                      orte_default_cbfunc_t cbfunc);
+
 static struct {
     bool help;
-    int verbosity;
-    char *vm;
+    bool daemonize;
+    char *hnp_uri;
 } my_globals;
 
-opal_cmd_line_init_t cmd_line_opts[] = {
-    { NULL, NULL, NULL, 
-      'h', NULL, "help", 
-      0,
+/*
+ * define the orcmd context table for obtaining parameters
+ */
+opal_cmd_line_init_t orte_cmd_line_opts[] = {
+    /* Various "obvious" options */
+    { NULL, NULL, NULL, 'h', NULL, "help", 0,
       &my_globals.help, OPAL_CMD_LINE_TYPE_BOOL,
-      "Print help message" },
+      "This help message" },
 
-    { NULL, NULL, NULL, 'd', "debug", "debug", 1,
-      &my_globals.verbosity, OPAL_CMD_LINE_TYPE_INT,
-      "Debug verbosity (default: 0)" },
-    
-    { "rmaps", "base", "no_schedule_local", '\0', "nolocal", "nolocal", 0,
+    { "orte", "daemon_spin", NULL, 's', NULL, "spin", 0,
+      &orcmd_spin_flag, OPAL_CMD_LINE_TYPE_BOOL,
+      "Have the scheduler spin until we can connect a debugger to it" },
+
+    { "orte", "debug", NULL, 'd', NULL, "debug", 0,
       NULL, OPAL_CMD_LINE_TYPE_BOOL,
-      "Do not schedule any applications on the local node" },
+      "Debug the OpenRTE" },
+        
+    { "orte", "daemonize", NULL, '\0', NULL, "daemonize", 0,
+      &my_globals.daemonize, OPAL_CMD_LINE_TYPE_BOOL,
+      "Daemonize the scheduler into the background" },
 
-    { NULL, NULL, NULL, 'm', "dvm", "dvm", 1,
-      &my_globals.vm, OPAL_CMD_LINE_TYPE_STRING,
-      "ID of virtual machine to be used [number or file:name of file containing it" },
-    
-    { "orte", "default", "hostfile", 'h', "hostfile", "hostfile", 1,
+    { "tmpdir", "base", NULL, '\0', NULL, "tmpdir", 1,
       NULL, OPAL_CMD_LINE_TYPE_STRING,
-      "Provide a default hostfile" },
-   
-    { "opal", "if", "do_not_resolve", '\0', "do-not-resolve", "do-not-resolve", 0,
-      NULL, OPAL_CMD_LINE_TYPE_BOOL,
-      "Do not attempt to resolve interfaces" },
-    
-    { "rmaps", "base", "display_map", '\0', "display-map", "display-map", 0,
-      NULL, OPAL_CMD_LINE_TYPE_BOOL,
-      "Display the process map just before launch"},
-    { "rmaps", "base", "display_devel_map", '\0', "display-devel-map", "display-devel-map", 0,
-      NULL, OPAL_CMD_LINE_TYPE_BOOL,
-      "Display a detailed process map (mostly intended for developers) just before launch"},
+      "Set the root for the session directory tree" },
 
-    { "orte", "debug", NULL, 'd', "debug-devel", "debug-devel", 0,
-      NULL, OPAL_CMD_LINE_TYPE_BOOL,
-      "Enable debugging of OpenRTE" },
-
-    { "orte", "do_not", "launch", '\0', "do-not-launch", "do-not-launch", 0,
-      NULL, OPAL_CMD_LINE_TYPE_BOOL,
-     "Perform all necessary operations to prepare to launch the application, but do not actually launch it" },
+    { NULL, NULL, NULL, '\0', "uri", "uri", 1,
+      &my_globals.hnp_uri, OPAL_CMD_LINE_TYPE_STRING,
+      "The uri of the ORCM DVM [uri or file:name of file containing it" },
     
     /* End of list */
     { NULL, NULL, NULL, '\0', NULL, NULL, 0,
-      NULL, OPAL_CMD_LINE_TYPE_NULL,
-      NULL }
+      NULL, OPAL_CMD_LINE_TYPE_NULL, NULL }
 };
-
-/*
- * Local variables & functions
- */
-static orte_job_t *daemons;
-
-static void vm_commands(int status,
-                        orte_process_name_t *sender,
-                        orcm_pnp_tag_t tag,
-                        struct iovec *msg, int count,
-                        opal_buffer_t *buffer,
-                        void *cbdata);
-
-static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *node,
-                       char *rml_uri, uint32_t uid);
-
-static void ps_request(int status,
-                       orte_process_name_t *sender,
-                       orcm_pnp_tag_t tag,
-                       struct iovec *msg, int count,
-                       opal_buffer_t *buffer,
-                       void *cbdata);
 
 int main(int argc, char *argv[])
 {
-    int ret, i;
-    opal_cmd_line_t cmd_line;
-    char *cmd;
-    int32_t vm, jfam;
-    orte_node_t *node;
-    orte_job_t *job;
-    orte_process_name_t name;
-    
-    /***************
-     * Initialize
-     ***************/
-    
-    /* initialize the globals */
-    my_globals.help = false;
-    my_globals.verbosity = 0;
-    my_globals.vm = NULL;
-    
-    /* Parse the command line options */
-    opal_cmd_line_create(&cmd_line, cmd_line_opts);
-    mca_base_cmd_line_setup(&cmd_line);
-    ret = opal_cmd_line_parse(&cmd_line, false, argc, argv);
-    
-    /* extract the MCA/GMCA params */
-    mca_base_cmd_line_process_args(&cmd_line, &environ, &environ);
+    int ret = 0;
+    opal_cmd_line_t *cmd_line = NULL;
+    int i;
+    opal_buffer_t *buffer;
+    char *tmp_env_var = NULL;
+    char hostname[ORTE_MAX_HOSTNAME_SIZE];
+    char *uri;
+    struct hostent *h;
+    char *haddr=NULL;
 
-    /* Ensure that enough of OPAL etc. is setup for us to be able to run */
-    if( ORTE_SUCCESS != (ret = orcm_init_util()) ) {
+    /* initialize the globals */
+    memset(&my_globals, 0, sizeof(my_globals));
+    
+    /* setup to check common command line options that just report and die */
+    cmd_line = OBJ_NEW(opal_cmd_line_t);
+    opal_cmd_line_create(cmd_line, orte_cmd_line_opts);
+    mca_base_cmd_line_setup(cmd_line);
+    if (ORTE_SUCCESS != (ret = opal_cmd_line_parse(cmd_line, false,
+                                                   argc, argv))) {
+        fprintf(stderr, "Cannot process cmd line - use --help for assistance\n");
         return ret;
     }
 
-    /**
-     * Now start parsing our specific arguments
+    /*
+     * Since this process can now handle MCA/GMCA parameters, make sure to
+     * process them.
      */
-    if (OPAL_SUCCESS != ret || my_globals.help) {
+    mca_base_cmd_line_process_args(cmd_line, &environ, &environ);
+    
+    /*
+     * NOTE: (JJH)
+     *  We need to allow 'mca_base_cmd_line_process_args()' to process command
+     *  line arguments *before* calling opal_init_util() since the command
+     *  line could contain MCA parameters that affect the way opal_init_util()
+     *  functions. AMCA parameters are one such option normally received on the
+     *  command line that affect the way opal_init_util() behaves.
+     *  It is "safe" to call mca_base_cmd_line_process_args() before 
+     *  opal_init_util() since mca_base_cmd_line_process_args() does *not*
+     *  depend upon opal_init_util() functionality.
+     */
+    if (OPAL_SUCCESS != orcm_init_util()) {
+        fprintf(stderr, "ORCM failed to initialize -- orcmd aborting\n");
+        exit(1);
+    }
+    
+    /* check for help request */
+    if (my_globals.help) {
         char *args = NULL;
-        args = opal_cmd_line_get_usage_msg(&cmd_line);
-        orte_show_help("help-orcm-sched.txt", "usage", true, args);
+        args = opal_cmd_line_get_usage_msg(cmd_line);
+        orte_show_help("help-orcmd.txt", "usage", true, args);
         free(args);
-        return ORTE_ERROR;
-    }
-    
-    /* check for bozo case */
-    if (NULL == my_globals.vm) {
-        fprintf(stderr, "Must specify ORCM DVM to be used\n");
-        return ORTE_ERROR;
-    }
-
-    if (0 == strncmp(my_globals.vm, "file", strlen("file")) ||
-        0 == strncmp(my_globals.vm, "FILE", strlen("FILE"))) {
-        char input[1024], *filename;
-        FILE *fp;
-        
-        /* it is a file - get the filename */
-        filename = strchr(my_globals.vm, ':');
-        if (NULL == filename) {
-            /* filename is not correctly formatted */
-            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "DVM", my_globals.vm);
-            return ORTE_ERROR;
-        }
-        ++filename; /* space past the : */
-        
-        if (0 >= strlen(filename)) {
-            /* they forgot to give us the name! */
-            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "virtual machine", my_globals.vm);
-            return ORTE_ERROR;
-        }
-        
-        /* open the file and extract the pid */
-        fp = fopen(filename, "r");
-        if (NULL == fp) { /* can't find or read file! */
-            orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, "virtual machine", filename);
-            return ORTE_ERROR;
-        }
-        if (NULL == fgets(input, 1024, fp)) {
-            /* something malformed about file */
-            fclose(fp);
-            orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", "virtual machine", true, filename);
-            return ORTE_ERROR;
-        }
-        fclose(fp);
-        input[strlen(input)-1] = '\0';  /* remove newline */
-        /* convert the id */
-        vm = strtoul(input, NULL, 10);
-    } else {
-        /* should just be the master itself */
-        vm = strtoul(my_globals.vm, NULL, 10);
-    }
-
-    /* open a debug channel and set the verbosity */
-    orcm_debug_output = opal_output_open(NULL);
-    opal_output_set_verbosity(orcm_debug_output, my_globals.verbosity);
-    
-
-    /***************************
-     * Init as an ORCM_TOOL so we properly connect to an existing VM
-     * We are also an IOF endpt
-     ***************************/
-    if (ORTE_SUCCESS != orcm_init(ORCM_TOOL | ORCM_IOF_ENDPT)) {
-        orcm_finalize();
         return 1;
     }
 
-    /* there are some additional frameworks we need */
-    if (ORTE_SUCCESS != (ret = opal_sysinfo_base_open())) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
+    /* see if they want us to spin until they can connect a debugger to us */
+    i=0;
+    while (orcmd_spin_flag) {
+        i++;
+        if (1000 < i) i=0;        
     }
     
-    if (ORTE_SUCCESS != (ret = opal_sysinfo_base_select())) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
-    }
-
-    if (ORTE_SUCCESS != (ret = orte_ras_base_open())) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
-    }
-    
-    if (ORTE_SUCCESS != (ret = orte_ras_base_select())) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
-    }
-    
-    if (ORTE_SUCCESS != (ret = orte_rmaps_base_open())) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
-    }
-    
-    if (ORTE_SUCCESS != (ret = orte_rmaps_base_select())) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
-    }
-    
-    if (ORTE_SUCCESS != (ret = orte_odls_base_open())) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
-    }
-    
-    if (ORTE_SUCCESS != (ret = orte_odls_base_select())) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
-    }
-#if 0
-    if (ORTE_SUCCESS != (ret = orte_iof_base_open())) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
-    }
-    
-    if (ORTE_SUCCESS != (ret = orte_iof_base_select())) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
-    }
-#endif
-    if (ORTE_SUCCESS != (ret = orcm_cfgi_base_open())) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
-    }
-    
-    if (ORTE_SUCCESS != (ret = orcm_cfgi_base_select())) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
-    }
-#if 0
-    /* do a "push" on the iof to ensure the recv gets issued - doesn't
-     * matter what values we supply
+    /* if we were given HNP contact info, parse it and
+     * setup the process_info struct with that info
      */
-    if (ORTE_SUCCESS != (ret = orte_iof.push(NULL, ORTE_IOF_STDOUT, -1))) {
-        ORTE_ERROR_LOG(ret);
-        goto cleanup;
+    if (NULL != my_globals.hnp_uri) {
+        if (0 == strncmp(my_globals.hnp_uri, "file", strlen("file")) ||
+            0 == strncmp(my_globals.hnp_uri, "FILE", strlen("FILE"))) {
+            char input[1024], *filename;
+            FILE *fp;
+            
+            /* it is a file - get the filename */
+            filename = strchr(my_globals.hnp_uri, ':');
+            if (NULL == filename) {
+                /* filename is not correctly formatted */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "uri", my_globals.hnp_uri);
+                goto DONE;
+            }
+            ++filename; /* space past the : */
+            
+            if (0 >= strlen(filename)) {
+                /* they forgot to give us the name! */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "uri", my_globals.hnp_uri);
+                goto DONE;
+            }
+            
+            /* open the file and extract the uri */
+            fp = fopen(filename, "r");
+            if (NULL == fp) { /* can't find or read file! */
+                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, filename);
+                goto DONE;
+            }
+            if (NULL == fgets(input, 1024, fp)) {
+                /* something malformed about file */
+                fclose(fp);
+                orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", true, filename);
+                goto DONE;
+            }
+            input[strlen(input)-1] = '\0';  /* remove newline */
+            /* put into the process info struct */
+            orte_process_info.my_hnp_uri = strdup(input);
+        } else {
+            /* should just be the uri itself */
+            orte_process_info.my_hnp_uri = strdup(my_globals.hnp_uri);
+        }
     }
-#endif
-    /* setup the global job and node arrays */
-    orte_job_data = OBJ_NEW(opal_pointer_array_t);
-    if (ORTE_SUCCESS != (ret = opal_pointer_array_init(orte_job_data,
-                                                       1,
-                                                       ORTE_GLOBAL_ARRAY_MAX_SIZE,
-                                                       1))) {
-        ORTE_ERROR_LOG(ret);
-        goto xtra_cleanup;
+
+    /* init the ORCM library */
+    if (ORCM_SUCCESS != (ret = orcm_init(ORCM_SCHEDULER))) {
+        fprintf(stderr, "Failed to init: error %d\n", ret);
+        exit(1);
     }
     
-    orte_node_pool = OBJ_NEW(opal_pointer_array_t);
-    if (ORTE_SUCCESS != (ret = opal_pointer_array_init(orte_node_pool,
-                                                       ORTE_GLOBAL_ARRAY_BLOCK_SIZE,
-                                                       ORTE_GLOBAL_ARRAY_MAX_SIZE,
-                                                       ORTE_GLOBAL_ARRAY_BLOCK_SIZE))) {
-        ORTE_ERROR_LOG(ret);
-        goto xtra_cleanup;
-    }
- 
-    /* Setup the job data object for the daemons */        
-    daemons = OBJ_NEW(orte_job_t);
-    /* the daemons are in the VM job */
-    jfam = ORTE_CONSTRUCT_JOB_FAMILY(vm);
-    daemons->jobid = ORTE_CONSTRUCT_LOCAL_JOBID(jfam, 0);
-    daemons->state = ORTE_JOB_STATE_RUNNING;
-    opal_pointer_array_set_item(orte_job_data, 0, daemons);
-    
-    /* add our node to the pool - may not be used depending upon
-     * mapping options, but needs to be there to avoid segfaults
-     * when no other nodes are available
+    /* detach from controlling terminal
+     * otherwise, remain attached so output can get to us
      */
-    node = OBJ_NEW(orte_node_t);
-    node->name = strdup(orte_process_info.nodename);
-    node->state = ORTE_NODE_STATE_UP;
-    node->index = opal_pointer_array_add(orte_node_pool, node);
-    
-    /* set our mapping policy to use the VM to get nodes */
-    ORTE_SET_MAPPING_POLICY(ORTE_MAPPING_USE_VM);
-    /* use byslot mapping by default */
-    ORTE_ADD_MAPPING_POLICY(ORTE_MAPPING_BYSLOT);
-    
-    /* index us to the correct jobid */
-    orte_plm_globals.next_jobid = ORTE_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid)+1;
-    
-    /* listen for DVM commands */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm", "0.1", "alpha",
-                                                         ORCM_PNP_SYS_CHANNEL,
-                                                         ORCM_PNP_TAG_COMMAND,
-                                                         vm_commands, NULL))) {
-        ORTE_ERROR_LOG(ret);
-        goto xtra_cleanup;
-    }
-    
-    /* listen for PS requests */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-ps", "0.1", "alpha",
-                                                         ORCM_PNP_SYS_CHANNEL,
-                                                         ORCM_PNP_TAG_PS,
-                                                         ps_request, NULL))) {
-        ORTE_ERROR_LOG(ret);
-        goto xtra_cleanup;
+    if (my_globals.daemonize) {
+        opal_daemon_init(NULL);
+    } else {
+        /* set the local debug verbosity */
+        orcm_debug_output = 5;
     }
 
-    /* announce my existence */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.announce("ORCM-SCHED", "0.1", "alpha", vm_tracker))) {
-        ORTE_ERROR_LOG(ret);
-        goto xtra_cleanup;
-    }
-    
-    /* just wait until the abort is fired */
-    opal_event_dispatch(opal_event_base);
+    /* wait to hear we are done */
+    opal_event_dispatch();
+    return ret;
 
-    /***************
-     * Cleanup
-     ***************/
-xtra_cleanup:
-    /* close the extra frameworks */
-    orcm_cfgi_base_close();
-#if 0
-    orte_iof_base_close();
-#endif
-    orte_ras_base_close();
-    orte_rmaps_base_close();
-    orte_odls_base_close();
-    opal_sysinfo_base_close();
-    
-cleanup:
-    ORTE_UPDATE_EXIT_STATUS(orte_exit_status);
-    
-    /* Remove the signal handlers */
-    orcm_remove_signal_handlers();
-    
-    /* cleanup the job and node info arrays */
-    if (NULL != orte_node_pool) {
-        for (i=0; i < orte_node_pool->size; i++) {
-            if (NULL != (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool,i))) {
-                OBJ_RELEASE(node);
-            }
-        }
-        OBJ_RELEASE(orte_node_pool);
-    }
-    if (NULL != orte_job_data) {
-        for (i=0; i < orte_job_data->size; i++) {
-            if (NULL != (job = (orte_job_t*)opal_pointer_array_get_item(orte_job_data,i))) {
-                OBJ_RELEASE(job);
-            }
-        }
-        OBJ_RELEASE(orte_job_data);
-    }
-
-    /* whack any lingering session directory files from our jobs */
+    /* should never get here, but if we do... */
+ DONE:
+    /* cleanup any lingering session directories */
     orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
     
-    /* cleanup and leave */
+    /* Finalize and clean up ourselves */
     orcm_finalize();
-    
-    exit(orte_exit_status);
-    return orte_exit_status;
+    return ret;
 }
 
-static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *nodename,
-                       char *rml_uri, uint32_t uid)
+static int orcmd_comm(orte_process_name_t *recipient,
+                      opal_buffer_t *buf, orte_rml_tag_t tag,
+                      orte_default_cbfunc_t cbfunc)
 {
-    orte_proc_t *proc;
-    orte_node_t *node;
-    int i;
-    
-    /* if this isn't from my VM, ignore it */
-    if (ORTE_JOB_FAMILY(name->jobid) != ORTE_JOB_FAMILY(daemons->jobid)) {
-        return;
-    }
-    
-    /* if it is a daemon, record it */
-    if (ORTE_JOBID_IS_DAEMON(name->jobid)) {
-        if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(daemons->procs, name->vpid))) {
-            /* new daemon - add it */
-            proc = OBJ_NEW(orte_proc_t);
-            proc->name.jobid = name->jobid;
-            proc->name.vpid = name->vpid;
-            daemons->num_procs++;
-            opal_pointer_array_add(daemons->procs, proc);
-        }
-        /* ensure the state is set to running */
-        proc->state = ORTE_PROC_STATE_RUNNING;
-        /* if it is a restart, check the node against the
-         * new one to see if it changed location
-         */
-        if (NULL != proc->nodename) {
-            if (0 == strcmp(nodename, proc->nodename)) {
-                /* all done */
-                return;
-            }
-            /* must have moved */
-            OBJ_RELEASE(proc->node);  /* maintain accounting */
-            proc->nodename = NULL;
-        }
-        /* find this node in our array */
-        for (i=0; i < orte_node_pool->size; i++) {
-            if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, i))) {
-                continue;
-            }
-            if (0 == strcmp(node->name, nodename)) {
-                /* already have this node - could be a race condition
-                 * where the daemon died and has been replaced, so
-                 * just assume that is the case
-                 */
-                if (NULL != node->daemon) {
-                    OBJ_RELEASE(node->daemon);
-                }
-                goto complete;
-            }
-        }
-        /* if we get here, this is a new node */
-        node = OBJ_NEW(orte_node_t);
-        node->name = strdup(nodename);
-        node->state = ORTE_NODE_STATE_UP;
-        node->index = opal_pointer_array_add(orte_node_pool, node);
-    complete:
-        OBJ_RETAIN(node);  /* maintain accounting */
-        proc->node = node;
-        proc->nodename = node->name;
-        OBJ_RETAIN(proc);  /* maintain accounting */
-        node->daemon = proc;
-        node->daemon_launched = true;
-    }
-}
-
-static void vm_commands(int status,
-                        orte_process_name_t *sender,
-                        orcm_pnp_tag_t tag,
-                        struct iovec *msg, int count,
-                        opal_buffer_t *buffer,
-                        void *cbdata)
-{
-    int rc, n, i;
-    orte_daemon_cmd_flag_t command;
-    uint16_t jfam;
-    orte_job_t *job;
-    orte_node_t *node;
-    
-    
-    /* if this isn't intended for my DVM, ignore it */
-    n=1;
-    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &jfam, &n, OPAL_UINT16))) {
-        ORTE_ERROR_LOG(rc);
-        return;
-    }
-    if (jfam != ORTE_JOB_FAMILY(daemons->jobid)) {
-        opal_output(0, "%s GOT COMMAND FOR DVM %d - NOT FOR MINE(%s)!",
-                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), jfam,
-                    ORTE_JOB_FAMILY_PRINT(daemons->jobid));
-        return;
-    }
-    
-    n=1;
-    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &command, &n, ORTE_DAEMON_CMD))) {
-        ORTE_ERROR_LOG(rc);
-        return;
-    }
-    
-    if (ORTE_DAEMON_HALT_VM_CMD == command) {
-        /* Remove the signal handlers */
-        orcm_remove_signal_handlers();
-        
-        /* cleanup the job and node info arrays */
-        if (NULL != orte_node_pool) {
-            for (i=0; i < orte_node_pool->size; i++) {
-                if (NULL != (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool,i))) {
-                    OBJ_RELEASE(node);
-                }
-            }
-            OBJ_RELEASE(orte_node_pool);
-        }
-        if (NULL != orte_job_data) {
-            for (i=0; i < orte_job_data->size; i++) {
-                if (NULL != (job = (orte_job_t*)opal_pointer_array_get_item(orte_job_data,i))) {
-                    OBJ_RELEASE(job);
-                }
-            }
-            OBJ_RELEASE(orte_job_data);
-        }
-        
-        /* whack any lingering session directory files from our jobs */
-        orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
-        
-        /* cleanup and leave */
-        orcm_finalize();
-        
-        exit(orte_exit_status);
-    }        
-}
-
-static void ps_request(int status,
-                       orte_process_name_t *sender,
-                       orcm_pnp_tag_t tag,
-                       struct iovec *msg, int count,
-                       opal_buffer_t *buffer,
-                       void *cbdata)
-{
-    orte_process_name_t name;
-    int32_t n;
-    int rc;
-    opal_buffer_t ans;
-    
-    /* unpack the target name */
-    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &name, &n, ORTE_NAME))) {
-        ORTE_ERROR_LOG(rc);
-        return;
-    }
-    
-    /* construct the response */
-    OBJ_CONSTRUCT(&ans, opal_buffer_t);
-    
-    /* if the jobid is wildcard, they just want to know who is out there */
-    if (ORTE_JOBID_WILDCARD == name.jobid) {
-        goto respond;
-    }
-    
-    /* if the requested job family isn't mine, and isn't my DVM, then ignore it */
-    if (ORTE_JOB_FAMILY(name.jobid) != ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid) &&
-        ORTE_JOB_FAMILY(name.jobid) != ORTE_JOB_FAMILY(daemons->jobid)) {
-        OBJ_DESTRUCT(&ans);
-        return;
-    }
-    
-    /* if the request is for my job family... */
-    if (ORTE_JOB_FAMILY(name.jobid) == ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid)) {
-        /* if the vpid is wildcard, then the caller wants this info from everyone. */
-        if (ORTE_VPID_WILDCARD == name.vpid) {
-            /* pack the response */
-            goto pack;
-        }
-        /* otherwise, just ignore this */
-        OBJ_DESTRUCT(&ans);
-        return;
-    }
-    
-    /* the request must have been for my DVM - if they don't want everyone to
-     * respond, ignore it
-     */
-    if (ORTE_VPID_WILDCARD != name.vpid) {
-        OBJ_DESTRUCT(&ans);
-        return;
-    }
-    
-pack:
-    opal_dss.pack(&ans, ORTE_PROC_MY_NAME, 1, ORTE_NAME);
-
-respond:
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL,
-                                              NULL, ORCM_PNP_TAG_PS,
-                                              NULL, 0, &ans))) {
-        ORTE_ERROR_LOG(rc);
-    }
-    OBJ_DESTRUCT(&ans);
+    opal_output(0, "%s comm to %s tag %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_NAME_PRINT(recipient), tag);
+    return ORCM_SUCCESS;
 }

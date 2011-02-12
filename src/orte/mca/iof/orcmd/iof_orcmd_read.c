@@ -138,50 +138,23 @@ void orte_iof_orcmd_read_handler(int fd, short event, void *cbdata)
         goto RESTART;
     }
     
-    /* prep the buffer */
-    buf = OBJ_NEW(opal_buffer_t);
-    
-    /* pack our job family */
-    jfam  = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
-    opal_dss.pack(buf, &jfam, 1, OPAL_UINT16);
-    
-    /* pack the stream */
-    if (ORTE_SUCCESS != (rc = opal_dss.pack(buf, &rev->tag, 1, ORTE_IOF_TAG))) {
-        ORTE_ERROR_LOG(rc);
-        goto CLEAN_RETURN;
+    /* otherwise, just print it out locally - we don't send to anyone
+     * because there is no HNP to capture and display it
+     */
+    if (ORTE_IOF_STDOUT & rev->tag || orte_xml_output) {
+        orte_iof_base_write_output(&rev->name, rev->tag, data, numbytes, orte_iof_base.iof_write_stdout->wev);
+    } else {
+        orte_iof_base_write_output(&rev->name, rev->tag, data, numbytes, orte_iof_base.iof_write_stderr->wev);
     }
     
-    /* pack name of process that gave us this data */
-    if (ORTE_SUCCESS != (rc = opal_dss.pack(buf, &rev->name, 1, ORTE_NAME))) {
-        ORTE_ERROR_LOG(rc);
-        goto CLEAN_RETURN;
-    }
-    
-    /* pack the data - only pack the #bytes we read! */
-    if (ORTE_SUCCESS != (rc = opal_dss.pack(buf, &data, numbytes, OPAL_BYTE))) {
-        ORTE_ERROR_LOG(rc);
-        goto CLEAN_RETURN;
-    }
-
-    /* send the buffer */
-    OPAL_OUTPUT_VERBOSE((1, orte_iof_base.iof_output,
-                         "%s iof:orcmd:read handler sending %d bytes",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), numbytes));
-    
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL, NULL,
-                                                 ORCM_PNP_TAG_IOF, NULL, 0, buf,
-                                                 send_cb, NULL))) {
-        ORTE_ERROR_LOG(rc);
-    }
-    
-RESTART:
+ RESTART:
     /* re-add the event */
     opal_event_add(&rev->ev, 0);
 
     OPAL_THREAD_UNLOCK(&mca_iof_orcmd_component.lock);
     return;
    
-CLEAN_RETURN:
+ CLEAN_RETURN:
     /* must be an error, or zero bytes were read indicating that the
      * proc terminated this IOF channel - either way, find this proc
      * on our list and clean up

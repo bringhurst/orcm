@@ -32,7 +32,7 @@
 
 #include "opal/util/argv.h"
 
-#include "opal/mca/event/event.h"
+#include "opal/event/event.h"
 #include "opal/util/output.h"
 #include "opal/mca/base/base.h"
 #include "opal/mca/backtrace/backtrace.h"

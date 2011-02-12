@@ -78,7 +78,7 @@ static int errmgr_orcmd_close(void)
 
 static int errmgr_orcmd_component_query(mca_base_module_t **module, int *priority)
 {
-    /* we should be the default module */
+    /* if we are a daemon, this is the default module */
     if (ORCM_PROC_IS_DAEMON) {
         *priority = 1000;
         *module = (mca_base_module_t *)&orte_errmgr_orcmd_module;

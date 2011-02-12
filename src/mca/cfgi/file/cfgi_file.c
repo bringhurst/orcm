@@ -36,10 +36,8 @@ static struct {
     char *wdir;
     char *path;
     char *hosts;
-    bool constrained;
     bool gdb;
-    int local_restarts;
-    int global_restarts;
+    int restarts;
     bool continuous;
 } my_globals;
 
@@ -66,17 +64,9 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       &my_globals.hosts, OPAL_CMD_LINE_TYPE_STRING,
       "Comma-delimited list of hosts upon which procs are to be initially started" },
 
-    { NULL, NULL, NULL, '\0', "constrain", "constrain", 0,
-      &my_globals.constrained, OPAL_CMD_LINE_TYPE_BOOL,
-      "Constrain processes to run solely on the specified hosts, even upon restart from failure" },
-
-    { NULL, NULL, NULL, '\0', "max-local-restarts", "max-local-restarts", 1,
-      &my_globals.local_restarts, OPAL_CMD_LINE_TYPE_INT,
-      "Maximum number of times a process in this job can be restarted on the same node (default: unbounded)" },
-
-    { NULL, NULL, NULL, '\0', "max-global-restarts", "max-global-restarts", 1,
-      &my_globals.global_restarts, OPAL_CMD_LINE_TYPE_INT,
-      "Maximum number of times a process in this job can be relocated to another node (default: unbounded)" },
+    { NULL, NULL, NULL, '\0', "max-restarts", "max-restarts", 1,
+      &my_globals.restarts, OPAL_CMD_LINE_TYPE_INT,
+      "Maximum number of times a process in this job can be restarted (default: unbounded)" },
 
     { NULL, NULL, NULL, 'c', "continuous", "continuous", 0,
       &my_globals.continuous, OPAL_CMD_LINE_TYPE_BOOL,
@@ -94,12 +84,14 @@ opal_cmd_line_init_t cmd_line_opts[] = {
 
 static int file_init(void);
 static int file_finalize(void);
+static void activate(void);
 
 /* The module struct */
 
 orcm_cfgi_base_module_t orcm_cfgi_file_module = {
     file_init,
-    file_finalize
+    file_finalize,
+    activate
 };
 
 /* local functions */
@@ -110,6 +102,8 @@ static int capture_cmd_line_params(int argc, int start, char **argv, char***app_
 /* local globals */
 static bool have_zero_np = false;
 static int total_num_apps = 0;
+static bool initialized = false;
+static bool enabled = false;
 
 /* file will contain a set of key-value pairs:
  * app-grp: name instance
@@ -120,6 +114,28 @@ static int total_num_apps = 0;
  * a separate job
  */
 static int file_init(void)
+{
+    if (initialized) {
+        return ORCM_SUCCESS;
+    }
+    initialized = true;
+
+    /* initialize the globals */
+    my_globals.num_procs = 0;
+    my_globals.wdir = NULL;
+    my_globals.path = NULL;
+    my_globals.hosts = NULL;
+    my_globals.gdb = false;
+    my_globals.restarts = -1;
+    my_globals.continuous = false;
+    
+    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output, "cfgi:file initialized to read %s",
+                         mca_orcm_cfgi_file_component.file));
+    return ORCM_SUCCESS;
+}
+
+
+static void activate(void)
 {
     size_t i, len;
     FILE *fp;
@@ -132,25 +148,16 @@ static int file_init(void)
     char **tmp_env;
     orte_job_t *jdata=NULL;
 
-    /* initialize the globals */
-    my_globals.num_procs = 0;
-    my_globals.wdir = NULL;
-    my_globals.path = NULL;
-    my_globals.hosts = NULL;
-    my_globals.constrained = false;
-    my_globals.gdb = false;
-    my_globals.local_restarts = -1;
-    my_globals.global_restarts = -1;
-    my_globals.continuous = false;
-    
-    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output, "cfgi:file initialized to read %s",
-                         mca_orcm_cfgi_file_component.file));
+    if (enabled) {
+        return;
+    }
+    enabled = true;
 
     /* Try to open the file */
     fp = fopen(mca_orcm_cfgi_file_component.file, "r");
     if (NULL == fp) {
         ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
-        return ORTE_ERR_NOT_FOUND;
+        return;
     }
 
     /* wait for any existing action to complete */
@@ -221,10 +228,10 @@ static int file_init(void)
                  * it before creating the next
                  */
                 if (NULL != jdata) {
-                    if (ORCM_SUCCESS != (rc = orcm_cfgi_base_spawn_app(jdata))) {
+                    if (ORCM_SUCCESS != (rc = orcm_cfgi_base_spawn_app(jdata, false))) {
                         ORTE_ERROR_LOG(rc);
                         OBJ_RELEASE(jdata);
-                        return rc;
+                        return;
                     }
                     jdata = NULL;
                     app_num = 0;
@@ -248,7 +255,7 @@ static int file_init(void)
                     /* Assume that the error message has already been
                        printed; no need to cleanup -- we can just exit */
                     OBJ_RELEASE(jdata);
-                    return rc;
+                    return;
                 }
                 if (NULL != tmp_env) {
                     opal_argv_free(tmp_env);
@@ -265,15 +272,22 @@ static int file_init(void)
     fclose(fp);
 
     if (NULL != jdata) {
-        if (ORCM_SUCCESS != (rc = orcm_cfgi_base_spawn_app(jdata))) {
+        /* check the job */
+        if (ORCM_SUCCESS != (rc = orte_cfgi_base_check_job(jdata))) {
+            ORTE_ERROR_LOG(rc);
+            OBJ_RELEASE(jdata);
+            goto cleanup;
+        }
+        if (ORCM_SUCCESS != (rc = orcm_cfgi_base_spawn_app(jdata, false))) {
             ORTE_ERROR_LOG(rc);
             OBJ_RELEASE(jdata);
         }
     }
 
+ cleanup:
     /* release the thread */
     OPAL_RELEASE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
-    return rc;
+    return;
 }
 
 static int file_finalize(void)
@@ -318,22 +332,14 @@ static int create_app(int argc, char* argv[], orte_app_context_t **app_ptr,
         goto cleanup;
     }
 
-    /* set the max local restarts value */
-    app->max_local_restarts = my_globals.local_restarts;
+    /* set the max restarts value */
+    app->max_restarts = my_globals.restarts;
     
-    /* set the max global restarts value */
-    app->max_global_restarts = my_globals.global_restarts;
-
     /* set the starting hosts */
     if (NULL != my_globals.hosts) {
         app->dash_host = opal_argv_split(my_globals.hosts, ',');
     }
     
-    /* set the constraining flag */
-    if (my_globals.constrained) {
-        app->constrain = true;
-    }    
-
     /* Grab all OMPI_* environment variables */
 
     app->env = opal_argv_copy(*app_env);

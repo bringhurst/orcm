@@ -20,6 +20,11 @@
 typedef int (*orcm_cfgi_module_init_fn_t)(void);
 typedef int (*orcm_cfgi_module_finalize_fn_t)(void);
 
+/* activate the module - enable it to begin receiving
+ * configuration commands
+ */
+typedef void (*orcm_cfgi_module_activate_fn_t)(void);
+
 /* component struct */
 typedef struct {
     /** Base component description */
@@ -34,6 +39,7 @@ typedef orcm_cfgi_base_component_2_0_0_t orcm_cfgi_base_component_t;
 typedef struct {
     orcm_cfgi_module_init_fn_t        init;
     orcm_cfgi_module_finalize_fn_t    finalize;
+    orcm_cfgi_module_activate_fn_t    activate;
 } orcm_cfgi_base_module_t;
 
 /** Interface for LEADER selection */

@@ -1,9 +1,9 @@
 1. set environ to support confd by sourcing confdrc or confdrc.tcsh from the confd install dir
 
-2. build orcm. This will compile and install the yang code in $prefix/yang
+2. build orcm. This will compile and install the yang code in $prefix/etc/confd
 
 4. start the confd daemon
-    confd --addloadpath $prefix/yang
+    confd --addloadpath $prefix/etc/confd
 
 5. start the confd cli and enter config
 confd_cli -C

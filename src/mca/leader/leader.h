@@ -39,9 +39,7 @@ typedef void (*orcm_leader_module_finalize_fn_t)(void);
  * it wants to make this determination
  */
 typedef bool (*orcm_leader_module_deliver_msg_fn_t)(const char *stringid,
-                                                    const orte_process_name_t *src,
-                                                    const orte_rmcast_channel_t chan,
-                                                    const orte_rmcast_seq_t seq_num);
+                                                    const orte_process_name_t *src);
 
 /* Define the leader policy for a given application triplet. Understanding
  * how this API works requires a brief review of how applications can be
@@ -125,11 +123,11 @@ typedef bool (*orcm_leader_module_deliver_msg_fn_t)(const char *stringid,
  *     process was eligible for leadership
  */
 typedef int (*orcm_leader_module_set_policy_fn_t)(const char *app,
-                                                         const char *version,
-                                                         const char *release,
-                                                         const orte_process_name_t *policy,
-                                                         orcm_notify_t notify,
-                                                         orcm_leader_cbfunc_t cbfunc);
+                                                  const char *version,
+                                                  const char *release,
+                                                  const orte_process_name_t *policy,
+                                                  orcm_notify_t notify,
+                                                  orcm_leader_cbfunc_t cbfunc);
 
 /* Manually set the leader for a given application triplet. Overrides
  * any defined policy to set a specific leader.

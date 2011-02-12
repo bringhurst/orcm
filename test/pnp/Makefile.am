@@ -10,7 +10,8 @@ test_PROGRAMS =          \
         server          \
         talker          \
         talker_iovec    \
-        talker_iovec_nb         
+        talker_iovec_nb \
+        udp_size
 
 AM_LDFLAGS = @LIBS@
 

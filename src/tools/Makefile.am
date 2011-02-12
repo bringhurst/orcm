@@ -11,10 +11,10 @@
 SUBDIRS = \
 	orcm \
         orcm-info \
-        orcm-sched \
 	orcm-start \
 	orcm-stop \
-	orcm-ps \
         orcmd \
-        orcmrun \
-	wrappers
+	wrappers \
+        orcm-sched \
+        orcmrun
+

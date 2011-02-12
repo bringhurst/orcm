@@ -31,7 +31,6 @@
 #include <pthread.h>
 
 #include "opal/util/output.h"
-
 #include "mca/cfgi/base/public.h"
 
 // from types.h
@@ -54,7 +53,7 @@ static bool qc_debug = false;
 
 #include "q_confd.h"
 
-/*
+ /*
  * use CONFD_ADDR (format ip-address:port), or
  * default to 127.0.0.1:CONFD_PORT
  */
@@ -379,7 +378,6 @@ cc_init (qc_confd_t *cc)
     cc->cdbsock   = -1;
     cc->maapisock = -1;
 }
-
 
 /*
  * initialize confd & cdb connections and state
@@ -829,12 +827,18 @@ static int
 cc_trans_init (struct confd_trans_ctx *tctx)
 {
     qc_confd_t *cc;
+    int         retv;
 
     cc = tctx->dx->d_opaque;
+    retv = CONFD_OK;
+
+    if (cc->trans_cbs.init) {
+        retv = cc->trans_cbs.init(cc, tctx);
+    }
 
     confd_trans_set_fd(tctx, cc->wrksock[0]);
 
-    return CONFD_OK;
+    return retv;
 }
 
 /*
@@ -843,6 +847,13 @@ cc_trans_init (struct confd_trans_ctx *tctx)
 static int
 cc_trans_finish (struct confd_trans_ctx *tctx)
 {
+    qc_confd_t *cc;
+
+    cc = tctx->dx->d_opaque;
+    if (cc->trans_cbs.finish) {
+        return(cc->trans_cbs.finish(cc, tctx));
+    }
+
     return CONFD_OK;
 }
 
@@ -2123,6 +2134,20 @@ qc_reg_completion (qc_confd_t *cc,
     return TRUE;
 }
 
+/*
+ * register a set of transaction callbacks
+ */
+boolean
+qc_register_trans_cb (qc_confd_t *cc, struct qc_trans_cbs *trans_cbs)
+{
+    if (!trans_cbs) {
+        memset(&cc->trans_cbs, 0, sizeof(cc->trans_cbs));
+    } else {
+        memcpy(&cc->trans_cbs, trans_cbs, sizeof(cc->trans_cbs));
+    }
+
+    return TRUE;
+}
 
 /*
  * indicate to confd that all callback registrations are done

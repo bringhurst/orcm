@@ -50,14 +50,17 @@ enum {
     ORCM_PNP_TAG_CMD_ACK        = ORTE_RMCAST_TAG_CMD_ACK,
     ORCM_PNP_TAG_HEARTBEAT      = ORTE_RMCAST_TAG_HEARTBEAT,
     ORCM_PNP_TAG_COMMAND        = ORTE_RMCAST_TAG_COMMAND,
-    ORCM_PNP_TAG_ERRMGR         = ORTE_RMCAST_TAG_ERRMGR
+    ORCM_PNP_TAG_ERRMGR         = ORTE_RMCAST_TAG_ERRMGR,
+    ORCM_PNP_TAG_UPDATE_STATE   = ORTE_RMCAST_TAG_UPDATE_STATE,
+    ORCM_PNP_TAG_TERMINATE      = ORTE_RMCAST_TAG_TERMINATE
 };
 
-#define ORCM_PNP_TAG_DYNAMIC    100
+#define ORCM_PNP_TAG_DYNAMIC    ORTE_RMCAST_TAG_DYNAMIC
 
 /* inherited channels */
 enum {
     ORCM_PNP_GROUP_INPUT_CHANNEL    = ORTE_RMCAST_GROUP_INPUT_CHANNEL,
+    ORCM_PNP_DIRECT_CHANNEL         = ORTE_RMCAST_DIRECT_CHANNEL,
     ORCM_PNP_GROUP_OUTPUT_CHANNEL   = ORTE_RMCAST_GROUP_OUTPUT_CHANNEL,
     ORCM_PNP_WILDCARD_CHANNEL       = ORTE_RMCAST_WILDCARD_CHANNEL,
     ORCM_PNP_INVALID_CHANNEL        = ORTE_RMCAST_INVALID_CHANNEL,
@@ -69,10 +72,30 @@ enum {
 
 #define ORCM_PNP_DYNAMIC_CHANNELS   ORTE_RMCAST_DYNAMIC_CHANNELS
 
+typedef struct {
+    opal_object_t super;
+    orcm_pnp_channel_t channel;
+    opal_list_t recvs;
+} orcm_pnp_channel_obj_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_pnp_channel_obj_t);
+
 /* callback functions */
-typedef void (*orcm_pnp_announce_fn_t)(char *app, char *version, char *release,
-                                       orte_process_name_t *name, char *node,
-                                       char *rml_uri, uint32_t uid);
+typedef struct {
+    opal_object_t super;
+    char *app;
+    char *version;
+    char *release;
+    orte_process_name_t *name;
+    char *nodename;
+    char *rml_uri;
+    uint32_t uid;
+    pid_t pid;
+    int32_t incarnation;
+} orcm_info_t;
+ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_info_t);
+
+typedef void (*orcm_pnp_announce_fn_t)(orcm_info_t *info);
+
 
 typedef void (*orcm_pnp_callback_fn_t)(int status,
                                        orte_process_name_t *sender,

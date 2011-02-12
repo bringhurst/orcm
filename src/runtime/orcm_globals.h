@@ -24,13 +24,13 @@
 #include <sys/time.h>
 #endif
 
-#include "opal/mca/event/event.h"
+#include "opal/event/event.h"
 #include "opal/class/opal_ring_buffer.h"
 #include "opal/class/opal_pointer_array.h"
 
+#include "orte/threads/threads.h"
 #include "orte/util/proc_info.h"
 #include "orte/mca/rmcast/rmcast_types.h"
-#include "orte/threads/threads.h"
 
 BEGIN_C_DECLS
 
@@ -150,8 +150,6 @@ typedef struct {
     orte_process_name_t name;
     /* state */
     bool alive;
-    /* track message sequence on its output channel only */
-    orte_rmcast_seq_t seq_num;
 } orcm_source_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_source_t);
 
@@ -159,7 +157,7 @@ ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_source_t);
 ORCM_DECLSPEC extern const char openrcm_version_string[];
 
 /**
- * Whether ORCM is initialized or we are in orcm_finalize
+ * Whether ORCM is initialized or we are in openrcm_finalize
  */
 ORCM_DECLSPEC extern bool orcm_initialized;
 ORCM_DECLSPEC extern bool orcm_util_initialized;
@@ -173,9 +171,6 @@ ORCM_DECLSPEC extern int orcm_debug_verbosity;
 ORCM_DECLSPEC extern orcm_triplets_array_t *orcm_triplets;
 ORCM_DECLSPEC extern int orcm_max_msg_ring_size;
 ORCM_DECLSPEC extern orte_process_name_t orcm_default_leader_policy;
-
-/* thread ctl for vm launch */
-ORCM_DECLSPEC extern orte_thread_ctl_t orcm_vm_launch;
 
 #define ORCM_WILDCARD_STRING_ID "@:@:@"
 

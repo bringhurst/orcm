@@ -100,6 +100,14 @@ struct datacb {
 };
 
 /*
+ * transaction callbacks - called once per-session (not once per-command)
+ */
+struct qc_trans_cbs {
+    int         (*init) (qc_confd_t *, struct confd_trans_ctx *);
+    int         (*finish) (qc_confd_t *, struct confd_trans_ctx *);
+};
+
+/*
  * confd connection state
  */
 struct qc_confd {
@@ -149,6 +157,8 @@ struct qc_confd {
     void                   (*app_lock)(void);
     void                   (*app_unlock)(void);
 
+    struct qc_trans_cbs      trans_cbs;
+
     struct cdb_txid          txid;
     struct confd_daemon_ctx *dctx;
     char                     err[128];
@@ -185,6 +195,8 @@ extern confd_value_t *qc_find_key(confd_hkeypath_t *kp,
                                   enum confd_vtype  type);
 extern boolean qc_wait_start(qc_confd_t *cc);
 extern void    qc_close(qc_confd_t *cc);
+extern void qc_set_interfaces(char **interfaces);
+extern int qc_get_interface(void);
 extern boolean qc_confd_init(qc_confd_t           *cc,
                              char                  *log_pfx,
                              FILE                  *log_stream,
@@ -233,6 +245,7 @@ extern boolean qc_reg_data_cb_range(qc_confd_t            *cc,
                                     confd_value_t         *lower,
                                     confd_value_t         *upper,
                                     const char            *fmt, ...);
+extern boolean qc_register_trans_cb(qc_confd_t *cc, struct qc_trans_cbs *);
 extern boolean qc_callbacks_done(qc_confd_t *cc);
 extern int     qc_open_cdb(qc_confd_t     *cc,
                            enum cdb_db_type db,

@@ -12,14 +12,14 @@
 
 #include <stdio.h>
 
-#include "orte/util/name_fns.h"
 #include "orte/threads/threads.h"
+#include "orte/util/name_fns.h"
 #include "orte/runtime/orte_globals.h"
 
 #include "runtime/orcm_globals.h"
 #include "util/triplets.h"
 
-orcm_triplet_t* orcm_get_triplet_jobid(const orte_jobid_t jobid)
+orcm_triplet_t* orcm_get_triplet_process(const orte_process_name_t *name)
 {
     int i, j;
     orcm_triplet_t *triplet;
@@ -36,10 +36,19 @@ orcm_triplet_t* orcm_get_triplet_jobid(const orte_jobid_t jobid)
             if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&triplet->groups, j))) {
                 continue;
             }
-            if (grp->jobid == jobid) {
+            if (grp->jobid == name->jobid) {
                 OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
-                                     "%s pnp:default:get_triplet_jobid match found",
+                                     "%s pnp:default:get_triplet jobid match found",
                                      ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+
+                /* check the source for the given rank - if it is present, then
+                 * this is the right triplet. If it isn't present, then this triplet
+                 * isn't the right one
+                 */
+                if (NULL == opal_pointer_array_get_item(&grp->members, name->vpid)) {
+                    /* nope - wrong triplet */
+                    break;
+                }
                 /* lock the triplet for use - the caller is responsible for
                  * unlocking it!
                  */
@@ -324,7 +333,8 @@ bool orcm_triplet_cmp(const char *str1, const char *str2)
 {
     char *a1, *v1, *r1;
     char *a2, *v2, *r2;
-    
+    bool ret=false;
+
     ORCM_DECOMPOSE_STRING_ID(str1, a1, v1, r1);
     ORCM_DECOMPOSE_STRING_ID(str2, a2, v2, r2);
 
@@ -333,7 +343,8 @@ bool orcm_triplet_cmp(const char *str1, const char *str2)
         goto check_version;
     }
     if (0 != strcasecmp(a1, a2)) {
-        return false;
+        ret = false;
+        goto cleanup;
     }
     
  check_version:
@@ -342,17 +353,112 @@ bool orcm_triplet_cmp(const char *str1, const char *str2)
         goto check_release;
     }
     if (0 != strcasecmp(v1, v2)) {
-        return false;
+        ret = false;
+        goto cleanup;
     }
     
  check_release:
     if (NULL == r1 || NULL == r2) {
         /* we automatically match on this field */
-        return true;
+        ret = true;
+        goto cleanup;
     }
     if (0 == strcasecmp(r1, r2)) {
-        return true;
+        ret = true;
+        goto cleanup;
     }
-    return false;
+    ret = false;
+
+ cleanup:
+    if (NULL != a1) {
+        free(a1);
+    }
+    if (NULL != v1) {
+        free(v1);
+    }
+    if (NULL != r1) {
+        free(r1);
+    }
+    if (NULL != a2) {
+        free(a2);
+    }
+    if (NULL != v2) {
+        free(v2);
+    }
+    if (NULL != r2) {
+        free(r2);
+    }
+    return ret;
 }
 
+int orcm_triplet_get_process(const char *app, const char *version,
+                             const char *release, orte_process_name_t *name)
+{
+    int j;
+    orcm_source_t *src;
+    orcm_triplet_group_t *grp;
+    int i;
+    orcm_triplet_t *triplet;
+    char *string_id;
+    opal_pointer_array_t *array;
+
+    ORCM_CREATE_STRING_ID(&string_id, app, version, release);
+
+    /* lock the global array for our use */
+    ORTE_ACQUIRE_THREAD(&orcm_triplets->ctl);
+
+    /* if the string_id contains a wildcard, then we have to look
+     * in the wildcard array
+     */
+    if (NULL != strchr(string_id, '@')) {
+        array = &orcm_triplets->wildcards;
+    } else {
+        array = &orcm_triplets->array;
+    }
+
+    for (i=0; i < array->size; i++) {
+        if (NULL == (triplet = (orcm_triplet_t*)opal_pointer_array_get_item(array, i))) {
+            continue;
+        }
+        /* require an exact match */
+        if (0 == strcasecmp(string_id, triplet->string_id)) {
+            /* we have a match */
+            OPAL_OUTPUT_VERBOSE((2, orcm_debug_output,
+                                 "%s pnp:default:get_triplet_stringid match found",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+            goto process;
+        }
+    }
+    /* get here if triplet not found */
+    name->jobid = ORTE_JOBID_INVALID;
+    name->vpid = ORTE_VPID_INVALID;
+    /* release the global array lock */
+    ORTE_RELEASE_THREAD(&orcm_triplets->ctl);
+    return ORTE_ERR_NOT_FOUND;
+
+ process:
+    /* interate across the groups */
+    for (i=0; i < triplet->groups.size; i++) {
+        if (NULL == (grp = (orcm_triplet_group_t*)opal_pointer_array_get_item(&triplet->groups, i))) {
+            continue;
+        }
+        /* look for any source - we stop on the first source found */
+        for (j=0; j < grp->members.size; j++) {
+            if (NULL == (src = (orcm_source_t*)opal_pointer_array_get_item(&grp->members, j))) {
+                continue;
+            }
+            name->jobid = src->name.jobid;
+            name->vpid = src->name.vpid;
+            /* release the global array lock */
+            ORTE_RELEASE_THREAD(&orcm_triplets->ctl);
+            return ORCM_SUCCESS;
+        }
+    }
+
+    /* get here if nothing is found */
+    name->jobid = ORTE_JOBID_INVALID;
+    name->vpid = ORTE_VPID_INVALID;
+    /* release the global array lock */
+    ORTE_RELEASE_THREAD(&orcm_triplets->ctl);
+    return ORTE_ERR_NOT_FOUND;
+}

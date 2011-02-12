@@ -87,7 +87,6 @@ static int orte_iof_orcmd_close(void)
 
 static int orte_iof_orcmd_query(mca_base_module_t **module, int *priority)
 {
-#if 0
     /* if we are a daemon, then use this module */
     if (ORCM_PROC_IS_DAEMON) {        
         /* we must be selected */
@@ -95,7 +94,7 @@ static int orte_iof_orcmd_query(mca_base_module_t **module, int *priority)
         *module = (mca_base_module_t *) &orte_iof_orcmd_module;
         return ORTE_SUCCESS;
     }
-#endif
+
     *module = NULL;
     *priority = -1;
     return ORTE_ERROR;

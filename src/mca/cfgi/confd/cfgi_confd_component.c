@@ -62,32 +62,12 @@ int orcm_cfgi_confd_component_close(void)
 
 int orcm_cfgi_confd_component_query(mca_base_module_t **module, int *priority)
 {
-    char *comp, **values;
-    bool use;
-    int i;
-
-    if (ORCM_PROC_IS_DAEMON) {
-        /* if not specifically requested, don't use this module */
-        if (NULL == (comp = getenv("OMPI_MCA_orcm_cfgi"))) {
-            goto donotuse;
-        }
-        values = opal_argv_split(comp, ',');
-        use = false;
-        for (i=0; NULL != values[i]; i++) {
-            if (0 == strcmp("confd", values[i])) {
-                use = true;
-                break;
-            }
-        }
-        if (!use) {
-            goto donotuse;
-        }
+    if (ORCM_PROC_IS_SCHEDULER) {
         *module = (mca_base_module_t*)&orcm_cfgi_confd_module;
         *priority = 100;
         return ORCM_SUCCESS;
     }
 
- donotuse:
     /* otherwise, cannot use this module */
     *priority = 0;
     *module = NULL;

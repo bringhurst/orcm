@@ -29,7 +29,6 @@
 
 #include "opal/util/argv.h"
 #include "opal/util/if.h"
-#include "opal/util/opal_sos.h"
 #include "opal/mca/paffinity/paffinity.h"
 #include "opal/mca/sysinfo/sysinfo.h"
 #include "opal/mca/sysinfo/base/base.h"
@@ -43,7 +42,6 @@
 #include "orte/mca/rml/base/base.h"
 #include "orte/mca/rml/rml.h"
 #include "orte/mca/routed/routed.h"
-#include "orte/mca/grpcomm/grpcomm.h"
 #include "orte/util/show_help.h"
 #include "orte/util/proc_info.h"
 #include "orte/util/name_fns.h"
@@ -144,13 +142,6 @@ static int rte_init(void)
         goto error;
     }
 
-    /* if one was provided, build my nidmap */
-    if (ORTE_SUCCESS != (ret = orte_util_nidmap_init(orte_process_info.sync_buf))) {
-        ORTE_ERROR_LOG(ret);
-        error = "orte_util_nidmap_init";
-        goto error;
-    }
-    
     return ORTE_SUCCESS;
     
  error:
@@ -199,137 +190,49 @@ static void rte_abort(int status, bool report)
 
 static uint8_t proc_get_locality(orte_process_name_t *proc)
 {
-    orte_nid_t *nid;
-    
-    if (NULL == (nid = orte_util_lookup_nid(proc))) {
-        ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
-        return OPAL_PROC_NON_LOCAL;
-    }
-    
-    if (nid->daemon == ORTE_PROC_MY_DAEMON->vpid) {
-        OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
-                             "%s ess:orcmapp: proc %s on LOCAL NODE",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             ORTE_NAME_PRINT(proc)));
-        return (OPAL_PROC_ON_NODE | OPAL_PROC_ON_CU | OPAL_PROC_ON_CLUSTER);
-    }
-    
-    OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
-                         "%s ess:orcmapp: proc %s is REMOTE",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         ORTE_NAME_PRINT(proc)));
-    
+    opal_output(0, "CALLED GET LOCALITY");
+
     return OPAL_PROC_NON_LOCAL;
     
 }
 
 static orte_vpid_t proc_get_daemon(orte_process_name_t *proc)
 {
-    orte_nid_t *nid;
+    opal_output(0, "CALLED GET DAEMON");
     
-    if( ORTE_JOBID_IS_DAEMON(proc->jobid) ) {
-        return proc->vpid;
-    }
-    
-    if (NULL == (nid = orte_util_lookup_nid(proc))) {
-        return ORTE_VPID_INVALID;
-    }
-    
-    OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
-                         "%s ess:orcmapp: proc %s is hosted by daemon %s",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         ORTE_NAME_PRINT(proc),
-                         ORTE_VPID_PRINT(nid->daemon)));
-    
-    return nid->daemon;
+    return ORTE_VPID_INVALID;
 }
 
 static char* proc_get_hostname(orte_process_name_t *proc)
 {
-    orte_nid_t *nid;
+    opal_output(0, "CALLED GET HOSTNAME");
     
-    if (NULL == (nid = orte_util_lookup_nid(proc))) {
-        ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
-        return NULL;
-    }
-    
-    OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
-                         "%s ess:orcmapp: proc %s is on host %s",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         ORTE_NAME_PRINT(proc),
-                         nid->name));
-    
-    return nid->name;
+    return NULL;
 }
 
 static orte_local_rank_t proc_get_local_rank(orte_process_name_t *proc)
 {
-    orte_pmap_t *pmap;
+    opal_output(0, "CALLED GET LOCAL RANK");
     
-    if (NULL == (pmap = orte_util_lookup_pmap(proc))) {
-        ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
-        return ORTE_LOCAL_RANK_INVALID;
-    }    
-    
-    OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
-                         "%s ess:orcmapp: proc %s has local rank %d",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         ORTE_NAME_PRINT(proc),
-                         (int)pmap->local_rank));
-    
-    return pmap->local_rank;
+    return ORTE_LOCAL_RANK_INVALID;
 }
 
 static orte_node_rank_t proc_get_node_rank(orte_process_name_t *proc)
 {
-    orte_pmap_t *pmap;
+    opal_output(0, "CALLED GET NODE RANK");
     
-    /* is this me? */
-    if (proc->jobid == ORTE_PROC_MY_NAME->jobid &&
-        proc->vpid == ORTE_PROC_MY_NAME->vpid) {
-        /* yes it is - since I am a daemon, it can only
-         * be zero
-         */
-        return 0;
-    }
-    
-    if (NULL == (pmap = orte_util_lookup_pmap(proc))) {
-        return ORTE_NODE_RANK_INVALID;
-    }    
-    
-    OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
-                         "%s ess:orcmapp: proc %s has node rank %d",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                         ORTE_NAME_PRINT(proc),
-                         (int)pmap->node_rank));
-    
-    return pmap->node_rank;
+    return ORTE_NODE_RANK_INVALID;
 }
 
 static int update_pidmap(opal_byte_object_t *bo)
 {
-    int ret;
-    
-    OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
-                         "%s ess:orcmapp: updating pidmap",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-    
-    /* build the pmap */
-    if (ORTE_SUCCESS != (ret = orte_util_decode_pidmap(bo))) {
-        ORTE_ERROR_LOG(ret);
-    }
-    
-    return ret;
+    return ORTE_SUCCESS;
+
 }
 
 static int update_nidmap(opal_byte_object_t *bo)
 {
-    int rc;
-    /* decode the nidmap - the util will know what to do */
-    if (ORTE_SUCCESS != (rc = orte_util_decode_nodemap(bo))) {
-        ORTE_ERROR_LOG(rc);
-    }    
-    return rc;
+    return ORTE_SUCCESS;
 }
 
 static int local_setup(void)
@@ -406,20 +309,6 @@ static int local_setup(void)
         goto error;
     }
     
-    /*
-     * Group communications
-     */
-    if (ORTE_SUCCESS != (ret = orte_grpcomm_base_open())) {
-        ORTE_ERROR_LOG(ret);
-        error = "orte_grpcomm_base_open";
-        goto error;
-    }
-    if (ORTE_SUCCESS != (ret = orte_grpcomm_base_select())) {
-        ORTE_ERROR_LOG(ret);
-        error = "orte_grpcomm_base_select";
-        goto error;
-    }
-    
     /* non-daemon/HNP apps can only have the default proxy PLM
      * module open - provide a chance for it to initialize
      */
@@ -434,30 +323,6 @@ static int local_setup(void)
         ORTE_ERROR_LOG(ret);
         error = "orte_rml.enable_comm";
         goto error;
-    }
-    
-    /* setup my session directory */
-    if (orte_create_session_dirs) {
-        OPAL_OUTPUT_VERBOSE((2, orte_debug_output,
-                             "%s setting up session dir with\n\ttmpdir: %s\n\thost %s",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             (NULL == orte_process_info.tmpdir_base) ? "UNDEF" : orte_process_info.tmpdir_base,
-                             orte_process_info.nodename));
-        
-        if (ORTE_SUCCESS != (ret = orte_session_dir(true,
-                                                    orte_process_info.tmpdir_base,
-                                                    orte_process_info.nodename, NULL,
-                                                    ORTE_PROC_MY_NAME))) {
-            ORTE_ERROR_LOG(ret);
-            error = "orte_session_dir";
-            goto error;
-        }
-        
-        /* Once the session directory location has been established, set
-         the opal_output env file location to be in the
-         proc-specific session directory. */
-        opal_output_set_output_file_info(orte_process_info.proc_session_dir,
-                                         "output-", NULL, NULL);
     }
     
     /* setup the routed info - the selected routed component
@@ -483,39 +348,7 @@ static int local_setup(void)
         error = "orte_notifer_select";
         goto error;
     }
-    
-    /* setup the db system */
-    if (ORTE_SUCCESS != (ret = orte_db_base_open())) {
-        ORTE_ERROR_LOG(ret);
-        error = "orte_db_open";
-        goto error;
-    }
-    if (ORTE_SUCCESS != (ret = orte_db_base_select())) {
-        ORTE_ERROR_LOG(ret);
-        error = "orte_db_select";
-        goto error;
-    }
-    
-    /* if we are an ORTE app - and not an MPI app - then
-     * we need to barrier here. MPI_Init has its own barrier,
-     * so we don't need to do two of them. However, if we
-     * don't do a barrier at all, then one process could
-     * finalize before another one called orte_init. This
-     * causes ORTE to believe that the proc abnormally
-     * terminated
-     *
-     * NOTE: only do this when the process originally launches.
-     * Cannot do this on a restart as the rest of the processes
-     * in the job won't be executing this step, so we would hang
-     */
-    if (ORTE_PROC_IS_NON_MPI && !orte_do_not_barrier) {
-        if (ORTE_SUCCESS != (ret = orte_grpcomm.barrier())) {
-            ORTE_ERROR_LOG(ret);
-            error = "orte barrier";
-            goto error;
-        }
-    }
-    
+        
     return ORTE_SUCCESS;
     
 error:
@@ -539,8 +372,7 @@ static void local_fin(void)
     
     orte_wait_finalize();
     
-    /* now can close the rml and its friendly group comm */
-    orte_grpcomm_base_close();
+    /* now can close the rml */
     orte_errmgr_base_close();
 
     orcm_leader_base_close();

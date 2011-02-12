@@ -48,7 +48,7 @@
 
 #include "opal/dss/dss.h"
 #include "opal/class/opal_value_array.h"
-#include "opal/mca/event/event.h"
+#include "opal/event/event.h"
 #include "opal/util/cmd_line.h"
 #include "opal/util/argv.h"
 #include "opal/util/opal_environ.h"
@@ -62,6 +62,7 @@
 #include "opal/threads/threads.h"
 
 #include "orte/runtime/runtime.h"
+#include "orte/util/name_fns.h"
 #include "orte/util/show_help.h"
 #include "orte/util/parse_options.h"
 #include "orte/mca/errmgr/errmgr.h"
@@ -130,6 +131,7 @@ opal_cmd_line_init_t cmd_line_opts[] = {
  * Local variables & functions
  */
 static orte_job_t *daemons;
+static int capture_cmd_line_params(int argc, int start, char **argv);
 
 int main(int argc, char *argv[])
 {
@@ -143,7 +145,9 @@ int main(int argc, char *argv[])
     uint16_t jfam;
     char dir[MAXPATHLEN];
     char *dvm;
-    
+    FILE *fp;
+    char *rml_uri;
+
     /***************
      * Initialize
      ***************/
@@ -192,7 +196,7 @@ int main(int argc, char *argv[])
     
     /* set the launch agent to "orcmd" */
     putenv("OMPI_MCA_orte_launch_agent=orcmd");
-    
+
     /***************************
      * We need all of OPAL and ORTE
      ***************************/
@@ -201,11 +205,10 @@ int main(int argc, char *argv[])
         orcm_finalize();
         return 1;
     }
-    
+    opal_set_using_threads(false);  /* let it call progress in cond_wait */
+
     /* check for request to report uri */
     if (NULL != my_globals.report_uri) {
-        FILE *fp;
-        char *rml_uri;
         rml_uri = orte_rml.get_contact_info();
         if (0 == strcmp(my_globals.report_uri, "-")) {
             /* if '-', then output to stdout */
@@ -234,14 +237,12 @@ int main(int argc, char *argv[])
         opal_output(orte_clean_output, "COULD NOT GET DAEMON JOB OBJECT");
         goto cleanup;
     }
-    /* ensure the accounting starts correctly */
-    daemons->num_reported = 1;
-    app = (orte_app_context_t*)opal_pointer_array_get_item(daemons->apps, 0);
 
     /* if we were given hosts to startup, add them to the global
      * node array
      */
     if (NULL != my_globals.hosts || NULL != my_globals.hostfile) {
+        app = (orte_app_context_t*)opal_pointer_array_get_item(daemons->apps, 0);
         if (NULL != my_globals.hosts) {
             app->dash_host = opal_argv_split(my_globals.hosts, ',');
         }
@@ -250,32 +251,34 @@ int main(int argc, char *argv[])
         }
     }
     
-    /* ensure we always utilize the local node as well */
-    orte_hnp_is_allocated = true;
-    
-    /* set the number of daemons to launch to be the number
-     * of nodes known to the system
+    /* nodes are indexed by the eventual daemon vpid. Since
+     * we are vpid 0, a reserved value, then we don't want
+     * this node allocated - instead, we have a duplicate
+     * entry at vpid=2 for the first daemon
      */
-    app->num_procs = 0;
-    for (i=0; i < orte_node_pool->size; i++) {
-        if (NULL != opal_pointer_array_get_item(orte_node_pool, i)) {
-            app->num_procs++;
-        }
+    orte_hnp_is_allocated = false;
+    
+    /* capture any mca params in orted_cmd_line so they
+     * can later be passed along to the daemons
+     */
+    if (ORTE_SUCCESS != capture_cmd_line_params(argc, 0, argv)) {
+        goto cleanup;
     }
 
     /* launch the virtual machine - this will launch a daemon on
      * each node, including our own
      */
     if (ORTE_SUCCESS != orte_plm.spawn(daemons)) {
-        opal_output(orte_clean_output, "\nORCM DISTRIBUTED VIRTUAL MACHINE %s FAILED TO LAUNCH\n",
+        opal_output(orte_clean_output, "ORCM DISTRIBUTED VIRTUAL MACHINE %s FAILED TO LAUNCH\n",
                     ORTE_JOB_FAMILY_PRINT(ORTE_PROC_MY_NAME->jobid));
         goto cleanup;
     }
     
-    opal_output(orte_clean_output, "\nORCM DISTRIBUTED VIRTUAL MACHINE %s RUNNING...\n",
+    opal_output(orte_clean_output, "ORCM DISTRIBUTED VIRTUAL MACHINE %s RUNNING...\n",
                 ORTE_JOB_FAMILY_PRINT(ORTE_PROC_MY_NAME->jobid));
     
-    opal_event_dispatch(opal_event_base);
+    opal_set_using_threads(true);
+    opal_event_dispatch();
     
     /***************
      * Cleanup
@@ -294,3 +297,80 @@ int main(int argc, char *argv[])
     
     return orte_exit_status;
 }
+
+static int capture_cmd_line_params(int argc, int start, char **argv)
+{
+    int i, j, k;
+    bool ignore;
+    char *no_dups[] = {
+        "grpcomm",
+        "odls",
+        "rml",
+        "routed",
+        NULL
+    };
+    
+    for (i = 0; i < (argc-start); ++i) {
+        if (0 == strcmp("-mca",  argv[i]) ||
+            0 == strcmp("--mca", argv[i]) ) {
+            /* It would be nice to avoid increasing the length
+             * of the orted cmd line by removing any non-ORTE
+             * params. However, this raises a problem since
+             * there could be OPAL directives that we really
+             * -do- want the orted to see - it's only the OMPI
+             * related directives we could ignore. This becomes
+             * a very complicated procedure, however, since
+             * the OMPI mca params are not cleanly separated - so
+             * filtering them out is nearly impossible.
+             *
+             * see if this is already present so we at least can
+             * avoid growing the cmd line with duplicates
+             */
+            ignore = false;
+            if (NULL != orted_cmd_line) {
+                for (j=0; NULL != orted_cmd_line[j]; j++) {
+                    if (0 == strcmp(argv[i+1], orted_cmd_line[j])) {
+                        /* already here - if the value is the same,
+                         * we can quitely ignore the fact that they
+                         * provide it more than once. However, some
+                         * frameworks are known to have problems if the
+                         * value is different. We don't have a good way
+                         * to know this, but we at least make a crude
+                         * attempt here to protect ourselves.
+                         */
+                        if (0 == strcmp(argv[i+2], orted_cmd_line[j+1])) {
+                            /* values are the same */
+                            ignore = true;
+                            break;
+                        } else {
+                            /* values are different - see if this is a problem */
+                            for (k=0; NULL != no_dups[k]; k++) {
+                                if (0 == strcmp(no_dups[k], argv[i+1])) {
+                                    /* print help message
+                                     * and abort as we cannot know which one is correct
+                                     */
+                                    orte_show_help("help-orterun.txt", "orterun:conflicting-params",
+                                                   true, orte_basename, argv[i+1],
+                                                   argv[i+2], orted_cmd_line[j+1]);
+                                    return ORTE_ERR_BAD_PARAM;
+                                }
+                            }
+                            /* this passed muster - just ignore it */
+                            ignore = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!ignore) {
+                opal_argv_append_nosize(&orted_cmd_line, argv[i]);
+                opal_argv_append_nosize(&orted_cmd_line, argv[i+1]);
+                opal_argv_append_nosize(&orted_cmd_line, argv[i+2]);
+            }
+            i += 2;
+        }
+    }
+    
+    return ORTE_SUCCESS;
+}
+

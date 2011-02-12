@@ -109,6 +109,8 @@ AS_IF([test "x$CC" = "x" -a "$ORCM_WANT_DIST" != "yes"], [CC=ortecc])
 AC_PROG_CC
 CFLAGS="$CFLAGS_save"
 
+AC_CHECK_HEADERS([qinfo.h])
+
 dnl CXXFLAGS_save="$CXXFLAGS"
 dnl AS_IF([test "x$CXX" = "x" -a "$ORCM_WANT_DIST" != "yes"], [CXX=ortec++])
 dnl AC_PROG_CXX
@@ -250,19 +252,22 @@ AC_CONFIG_FILES([Makefile
                  src/tools/Makefile
 		 src/tools/orcm/Makefile
 		 src/tools/orcm-info/Makefile
-		 src/tools/orcm-sched/Makefile
 		 src/tools/orcm-start/Makefile
 		 src/tools/orcm-stop/Makefile
-		 src/tools/orcm-ps/Makefile
                  src/tools/orcmd/Makefile
-                 src/tools/orcmrun/Makefile
 		 src/tools/wrappers/Makefile
 		 src/tools/wrappers/orcmcc-wrapper-data.txt
 		 src/tools/wrappers/orcm_wrapper_script
+		 src/tools/orcm-sched/Makefile
+                 src/tools/orcmrun/Makefile
 
 		 test/pnp/Makefile
 		 test/spinners/Makefile
 ])
+
+# 		 src/tools/orcm-sched/Makefile
+#		 src/tools/orcm-ps/Makefile
+#                 src/tools/orcmrun/Makefile
 
 #
 # Party on

@@ -22,9 +22,9 @@
 
 BEGIN_C_DECLS
 
-ORCM_DECLSPEC int orcm_cfgi_base_spawn_app(orte_job_t *jdata);
+ORCM_DECLSPEC int orcm_cfgi_base_spawn_app(orte_job_t *jdata, bool overwrite);
 
-ORCM_DECLSPEC int orcm_cfgi_base_kill_app(opal_buffer_t *buffer);
+ORCM_DECLSPEC int orcm_cfgi_base_kill_app(orte_job_t *jdata);
 
 ORCM_DECLSPEC int orcm_cfgi_base_check_job(orte_job_t *jdat);
 

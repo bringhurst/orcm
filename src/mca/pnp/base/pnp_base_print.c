@@ -11,7 +11,6 @@
 #include "include/constants.h"
 
 #include "opal/util/printf.h"
-#include "opal/util/opal_sos.h"
 #include "opal/threads/tsd.h"
 
 #include "orte/mca/errmgr/errmgr.h"
@@ -30,6 +29,13 @@ typedef struct {
     char *buffers[ORCM_PRINT_NUM_BUFS];
     int cntr;
 } orcm_print_buffers_t;
+
+void orcm_pnp_print_buffer_finalize(void)
+{
+    if (fns_init) {
+        opal_tsd_key_delete(print_tsd_key);
+    }
+}
 
 static void buffer_cleanup(void *value)
 {
@@ -121,6 +127,9 @@ char* orcm_pnp_print_tag(orcm_pnp_tag_t tag)
         break;
     case ORCM_PNP_TAG_ERRMGR:
         ret = "ERRMGR";
+        break;
+    case ORCM_PNP_TAG_UPDATE_STATE:
+        ret = "UPDATE_STATE";
         break;
     default:
         /* not a system-defined tag - so print the value out */

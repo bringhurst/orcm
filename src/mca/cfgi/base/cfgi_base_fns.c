@@ -14,6 +14,7 @@
 #include "opal/class/opal_pointer_array.h"
 #include "opal/util/output.h"
 #include "opal/util/argv.h"
+#include "opal/util/basename.h"
 #include "opal/util/opal_environ.h"
 #include "opal/mca/installdirs/installdirs.h"
 
@@ -34,23 +35,37 @@
 #include "mca/cfgi/base/public.h"
 #include "mca/cfgi/base/private.h"
 
-int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
+static void cbfunc(int status,
+                   orte_process_name_t *sender,
+                   orcm_pnp_tag_t tag,
+                   struct iovec *msg,
+                   int count,
+                   opal_buffer_t *buffer,
+                   void *cbdata)
+{
+    OBJ_RELEASE(buffer);
+}
+
+int orcm_cfgi_base_spawn_app(orte_job_t *jdata, bool overwrite)
 {
     char *value;
-    int32_t rc=ORCM_SUCCESS, n, j;
-    opal_buffer_t *response, bfr;
+    int32_t rc=ORCM_SUCCESS, n, j, k, m, p;
+    opal_buffer_t *response, *bfr, *terms;
     orte_job_t *job, *jlaunch;
-    orte_app_context_t *app;
-    orte_proc_t *proc;
+    orte_proc_t *proc, *proctmp;
+    orte_node_t *node;
+    orte_app_context_t *app, *app2;
     orte_vpid_t vpid;
     char *replicas;
     int32_t ljob;
     uint16_t jfam;
-    char *cmd;
-    orte_proc_t *proctmp;
+    char *cmd, *cptr;
     orte_daemon_cmd_flag_t command;
     orte_rml_tag_t rmltag=ORTE_RML_TAG_INVALID;
     int base_channel;
+    bool newjob;
+    orte_process_name_t name;
+    bool apps_added=false;
 
     OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                          "%s spawn:app: %s:%s",
@@ -60,7 +75,8 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
     
     /* see if this is a pre-existing job */
     jlaunch = NULL;
-    if (NULL != jdata->name && NULL != jdata->instance) {
+    newjob = false;
+    if (NULL != jdata->instance) {
         for (j=0; j < orte_job_data->size; j++) {
             if (NULL == (job = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, j))) {
                 continue;
@@ -68,7 +84,7 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
             if (NULL == job->name || NULL == job->instance) {
                 continue;
             }
-            if (0 == strcasecmp(job->name, jdata->name) &&
+            if ((NULL == jdata->name || 0 == strcasecmp(job->name, jdata->name)) &&
                 0 == strcasecmp(job->instance, jdata->instance)) {
                 jlaunch = job;
                 break;
@@ -77,6 +93,7 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
     }
     if (NULL == jlaunch) {
         /* this is a new job */
+        newjob = true;
         jlaunch = jdata;
         /* assign a jobid to it - ensure that the algorithm
          * used here is consistent so that all orcmd's will return
@@ -89,6 +106,21 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
         /* store it on the global job data pool */
         ljob = ORTE_LOCAL_JOBID(jdata->jobid);
         opal_pointer_array_set_item(orte_job_data, ljob, jdata);
+        /* check and set recovery flags */
+        if (!jdata->recovery_defined) {
+            /* set to system defaults */
+            jdata->enable_recovery = orte_enable_recovery;
+        }
+        /* set apps to defaults */
+        for (j=0; j < jdata->apps->size; j++) {
+            if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, j))) {
+                continue;
+            }
+            if (!app->recovery_defined) {
+                app->max_restarts = orte_max_restarts;
+            }
+        }
+
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                              "%s spawn: new job %s created",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jdata->jobid)));
@@ -100,27 +132,179 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
          */
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                              "%s spawn: existing job %s modified",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jdata->jobid)));
-    }
-
-    /* assign each app_context a pair of input/output multicast
-     * groups. We do this regardless of whether or not any procs
-     * are local to us so that we keep the assignment consistent
-     * across orcmds
-     */
-    base_channel = (2*orcm_cfgi_base.num_active_apps) + ORTE_RMCAST_DYNAMIC_CHANNELS;
-    for (j=0; j < jlaunch->apps->size; j++) {
-        if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jlaunch->apps, j))) {
-            continue;
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jlaunch->jobid)));
+        newjob = false;
+        for (j=0; j < jdata->apps->size; j++) {
+            if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, j))) {
+                continue;
+            }
+            /* find the matching app in the existing job */
+            for (n=0; n < jlaunch->apps->size; n++) {
+                if (NULL == (app2 = (orte_app_context_t*)opal_pointer_array_get_item(jlaunch->apps, n))) {
+                    continue;
+                }
+                if (0 != strcmp(app2->app, app->app)) {
+                    continue;
+                }
+                /* update info */
+                if (overwrite) {
+                    /* the num_procs in the provided job is the actual number we want,
+                     * not an adjustment
+                     */
+                    if (app->num_procs == app2->num_procs) {
+                        /* nothing to change */
+                        continue;
+                    }
+                    if (app->num_procs > app2->num_procs) {
+                        /* we are adding procs - just add them to the end of the proc array */
+                        for (k=0; k < (app->num_procs - app2->num_procs); k++) {
+                            proc = OBJ_NEW(orte_proc_t);
+                            proc->name.jobid = jlaunch->jobid;
+                            proc->name.vpid = jlaunch->num_procs;
+                            proc->state = ORTE_PROC_STATE_RESTART;
+                            proc->app_idx = app2->idx;
+                            opal_pointer_array_set_item(jlaunch->procs, proc->name.vpid, proc);
+                            jlaunch->num_procs++;
+                        }
+                        app2->num_procs = app->num_procs;
+                        apps_added = true;
+                    } else {
+                        /* we are subtracting procs - cycle thru the proc array
+                         * and flag the reqd number for termination. We don't
+                         * care which ones, so take the highest ranking ones
+                         */
+                        terms = OBJ_NEW(opal_buffer_t);
+                        /* indicate the target DVM */
+                        jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
+                        opal_dss.pack(terms, &jfam, 1, OPAL_UINT16);
+                        /* pack the command */
+                        command = ORTE_DAEMON_KILL_LOCAL_PROCS;
+                        if (ORTE_SUCCESS != (rc = opal_dss.pack(terms, &command, 1, ORTE_DAEMON_CMD))) {
+                            ORTE_ERROR_LOG(rc);
+                            return rc;
+                        }
+                        for (k=jlaunch->procs->size-1, m=0; 0 <= k && m < (app2->num_procs - app->num_procs); k--) {
+                            if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jlaunch->procs, k))) {
+                                continue;
+                            }
+                            if (proc->app_idx == app2->idx) {
+                                /* flag it for termination - we can't remove it from the
+                                 * various tracking structures just yet because (a) the
+                                 * process is still alive, and (b) we need the info
+                                 * in those structures to kill it. Fortunately, when
+                                 * we do finally kill it, the errmgr will take care
+                                 * of cleaning up the tracking structures
+                                 */
+                                proc->state = ORTE_PROC_STATE_TERMINATE;
+                                if (ORTE_SUCCESS != (rc = opal_dss.pack(terms, &proc->name, 1, ORTE_NAME))) {
+                                    ORTE_ERROR_LOG(rc);
+                                    return rc;
+                                }
+                                m++;
+                            }
+                        }
+                        app2->num_procs = app->num_procs;
+                        /* send it to the daemons */
+                        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
+                                                                     NULL, ORCM_PNP_TAG_COMMAND,
+                                                                     NULL, 0, terms, cbfunc, NULL))) {
+                            ORTE_ERROR_LOG(rc);
+                        }
+                    }
+                } else {
+                    /* the num_procs in the provided job is an incremental adjustment */
+                    if (0 < app->num_procs) {
+                        /* we are adding procs - just add them to the end of the proc array */
+                        for (k=0; k < app->num_procs; k++) {
+                            proc = OBJ_NEW(orte_proc_t);
+                            proc->name.jobid = jlaunch->jobid;
+                            proc->name.vpid = jlaunch->num_procs;
+                            proc->state = ORTE_PROC_STATE_RESTART;
+                            proc->app_idx = app2->idx;
+                            opal_pointer_array_set_item(jlaunch->procs, proc->name.vpid, proc);
+                            jlaunch->num_procs++;
+                        }
+                        apps_added = true;
+                    } else {
+                        /* we are subtracting procs - cycle thru the proc array
+                         * and flag the reqd number for termination. We don't
+                         * care which ones
+                         */
+                        app->num_procs = -1*app->num_procs;
+                        terms = OBJ_NEW(opal_buffer_t);
+                        /* indicate the target DVM */
+                        jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
+                        opal_dss.pack(terms, &jfam, 1, OPAL_UINT16);
+                        /* pack the command */
+                        command = ORTE_DAEMON_KILL_LOCAL_PROCS;
+                        if (ORTE_SUCCESS != (rc = opal_dss.pack(terms, &command, 1, ORTE_DAEMON_CMD))) {
+                            ORTE_ERROR_LOG(rc);
+                            return rc;
+                        }
+                        for (k=jlaunch->procs->size-1, m=0; 0 <= k && m < app->num_procs; k--) {
+                            if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jlaunch->procs, k))) {
+                                continue;
+                            }
+                            if (proc->app_idx == app2->idx) {
+                                /* flag it for termination - we can't remove it from the
+                                 * various tracking structures just yet because (a) the
+                                 * process is still alive, and (b) we need the info
+                                 * in those structures to kill it. Fortunately, when
+                                 * we do finally kill it, the errmgr will take care
+                                 * of cleaning up the tracking structures
+                                 */
+                                proc->state = ORTE_PROC_STATE_TERMINATE;
+                                if (ORTE_SUCCESS != (rc = opal_dss.pack(terms, &proc->name, 1, ORTE_NAME))) {
+                                    ORTE_ERROR_LOG(rc);
+                                    return rc;
+                                }
+                                m++;
+                            }
+                        }
+                        app2->num_procs -= app->num_procs;
+                        /* send it to the daemons */
+                        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
+                                                                     NULL, ORCM_PNP_TAG_COMMAND,
+                                                                     NULL, 0, terms, cbfunc, NULL))) {
+                            ORTE_ERROR_LOG(rc);
+                        }
+                    }
+                }
+            }
         }
-        asprintf(&value, "%s:%d", app->app, ((2*orcm_cfgi_base.num_active_apps)+ORTE_RMCAST_DYNAMIC_CHANNELS));
-        opal_setenv("OMPI_MCA_rmcast_base_group", value, true, &app->env);
-        free(value);
-        orcm_cfgi_base.num_active_apps++;
+        /* if any apps were added, then we need to remap and launch
+         * the job so the daemons will know to start them
+         */
+        if (!apps_added) {
+            /* nothing added, so we are done! */
+            return rc;
+        }
+        /* flag that this is a "restart" so the map will be redone */
+        jlaunch->state = ORTE_JOB_STATE_RESTART;
     }
 
-    /* tell the app to use the right ess module */
-    opal_setenv("OMPI_MCA_ess", "orcmapp", true, &app->env);
+    if (newjob) {
+        /* assign each app_context a pair of input/output multicast
+         * groups. We do this regardless of whether or not any procs
+         * are local to us so that we keep the assignment consistent
+         * across orcmds
+         */
+        base_channel = (2*orcm_cfgi_base.num_active_apps) + ORTE_RMCAST_DYNAMIC_CHANNELS;
+        for (j=0; j < jlaunch->apps->size; j++) {
+            if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jlaunch->apps, j))) {
+                continue;
+            }
+            cptr = opal_basename(app->app);
+            asprintf(&value, "%s:%d", cptr, ((2*orcm_cfgi_base.num_active_apps)+ORTE_RMCAST_DYNAMIC_CHANNELS));
+            free(cptr);
+            opal_setenv("OMPI_MCA_rmcast_base_group", value, true, &app->env);
+            free(value);
+            orcm_cfgi_base.num_active_apps++;
+            /* tell the app to use the right ess module */
+            opal_setenv("OMPI_MCA_ess", "orcmapp", true, &app->env);
+        }
+    }
+
 
     /* setup the map */
     if (NULL == jlaunch->map) {
@@ -139,20 +323,27 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
     }         
 
     if (0 < opal_output_get_verbosity(orcm_cfgi_base.output)) {
-        opal_output(orcm_cfgi_base.output,
-                    "Launching app %s instance %s with jobid %s",
-                    (NULL == jdata->name) ? "UNNAMED" : jdata->name,
-                    (NULL == jdata->instance) ? " " : jdata->instance,
-                    ORTE_JOBID_PRINT(jdata->jobid));
-    
+        opal_output(orcm_cfgi_base.output, "Launching app %s instance %s with jobid %s",
+                    (NULL == jlaunch->name) ? "UNNAMED" : jlaunch->name,
+                    (NULL == jlaunch->instance) ? " " : jlaunch->instance,
+                    ORTE_JOBID_PRINT(jlaunch->jobid));
+
         for (j=0; j < jlaunch->apps->size; j++) {
             if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jlaunch->apps, j))) {
                 continue;
             }
-            opal_output(orcm_cfgi_base.output,
-                        "    exec %s on mcast channels %d (recv) %d (xmit)",
-                        app->app, base_channel, base_channel+1);
-            base_channel += 2;
+            if (newjob) {
+                opal_output(orcm_cfgi_base.output, "    exec %s on mcast channels %d (recv) %d (xmit)",
+                            app->app, base_channel, base_channel+1);
+                base_channel += 2;
+            } else {
+                opal_output(orcm_cfgi_base.output, "    exec %s with num_procs %d",
+                            app->app, app->num_procs);
+            }
+        }
+        if (4 <  opal_output_get_verbosity(orcm_cfgi_base.output)) {
+            orte_devel_level_output = true;
+            opal_dss.dump(orcm_cfgi_base.output, jlaunch, ORTE_JOB);
         }
     }
 
@@ -162,47 +353,26 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
      * just locally process it to launch our own procs,
      * if any
      */
-    OBJ_CONSTRUCT(&bfr, opal_buffer_t);
-    /* insert the process cmd */
-    command = ORTE_DAEMON_PROCESS_CMD;
-    if (ORTE_SUCCESS != (rc = opal_dss.pack(&bfr, &command, 1, ORTE_DAEMON_CMD))) {
-        ORTE_ERROR_LOG(rc);
-        OBJ_DESTRUCT(&bfr);
-        goto cleanup;
-    }
-    /* add the jobid and an arbitrary tag to maintain ordering */
-    if (ORTE_SUCCESS != (rc = opal_dss.pack(&bfr, &jlaunch->jobid, 1, ORTE_JOBID))) {
-        ORTE_ERROR_LOG(rc);
-        OBJ_DESTRUCT(&bfr);
-        goto cleanup;
-    }
-    if (ORTE_SUCCESS != (rc = opal_dss.pack(&bfr, &rmltag, 1, ORTE_RML_TAG))) {
-        ORTE_ERROR_LOG(rc);
-        OBJ_DESTRUCT(&bfr);
-        goto cleanup;
-    }
-    /* insert the add_procs cmd */
-    command = ORTE_DAEMON_ADD_LOCAL_PROCS;
-    if (ORTE_SUCCESS != (rc = opal_dss.pack(&bfr, &command, 1, ORTE_DAEMON_CMD))) {
-        ORTE_ERROR_LOG(rc);
-        OBJ_DESTRUCT(&bfr);
-        goto cleanup;
-    }
+    bfr = OBJ_NEW(opal_buffer_t);
+
+    /* indicate the target DVM */
+    jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
+    opal_dss.pack(bfr, &jfam, 1, OPAL_UINT16);
+
     /* get the launch data */
-    if (ORTE_SUCCESS != (rc = orte_odls.get_add_procs_data(&bfr, jlaunch->jobid))) {
+    if (ORTE_SUCCESS != (rc = orte_odls.get_add_procs_data(bfr, jlaunch->jobid))) {
         ORTE_ERROR_LOG(rc);
-        OBJ_DESTRUCT(&bfr);
+        OBJ_RELEASE(bfr);
         goto cleanup;
     }
-    /* deliver this to ourself.
-     * We don't want to message ourselves as this can create circular logic
-     * in the RML. Instead, this macro will set a zero-time event which will
-     * cause the buffer to be processed by the cmd processor - probably will
-     * fire right away, but that's okay
-     * The macro makes a copy of the buffer, so it's okay to release it here
-     */
-    ORTE_MESSAGE_EVENT(ORTE_PROC_MY_NAME, &bfr, ORTE_RML_TAG_DAEMON, orte_daemon_cmd_processor);
-    OBJ_DESTRUCT(&bfr);
+
+    /* send it to the daemons */
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
+                                                 NULL, ORCM_PNP_TAG_COMMAND,
+                                                 NULL, 0, bfr, cbfunc, NULL))) {
+        ORTE_ERROR_LOG(rc);
+    }
+
     OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
                          "%s spawn: job %s launched",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
@@ -212,122 +382,63 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata)
     return rc;
 }
 
-int orcm_cfgi_base_kill_app(opal_buffer_t *buffer)
+int orcm_cfgi_base_kill_app(orte_job_t *jdata)
 {
-    int32_t rc=ORCM_SUCCESS, n, j;
-    opal_buffer_t bfr;
-    orte_job_t *jdata;
-    orte_app_context_t *app;
-    char *replicas;
-    char *cmd;
-    opal_pointer_array_t killapps;
-    orte_proc_t *proctmp;
+    int32_t rc=ORCM_SUCCESS;
+    opal_buffer_t *bfr;
     orte_daemon_cmd_flag_t command;
-    orte_rml_tag_t rmltag=ORTE_RML_TAG_INVALID;
-    bool found=false;
+    orte_process_name_t name;
+    uint16_t jfam;
 
     /* construct the cmd buffer */
-    OBJ_CONSTRUCT(&bfr, opal_buffer_t);
+    bfr = OBJ_NEW(opal_buffer_t);
+
+    /* indicate the target DVM */
+    jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
+    opal_dss.pack(bfr, &jfam, 1, OPAL_UINT16);
+
     command = ORTE_DAEMON_KILL_LOCAL_PROCS;
-    opal_dss.pack(&bfr, &command, 1, ORTE_DAEMON_CMD);
-    /* construct the array of apps to kill */
-    OBJ_CONSTRUCT(&killapps, opal_pointer_array_t);
-    opal_pointer_array_init(&killapps, 8, INT_MAX, 8);
-    n=1;
-    j=0;
-    while (ORTE_SUCCESS == (rc = opal_dss.unpack(buffer, &cmd, &n, OPAL_STRING))) {
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s kill cmd for app %s",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             (NULL == cmd) ? "ALL" : cmd));
-        if (NULL == cmd) {
-            j=0;
-            goto execute_kill;
-        }
-
-        /* unpack the replica info */
-        n=1;
-        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &replicas, &n, OPAL_STRING))) {
-            ORTE_ERROR_LOG(rc);
-            goto cleanup_kill;
-        }
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s kill replicas %s for app %s",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                             (NULL == replicas) ? "ALL" : replicas, cmd));
-        /* find all job data objects for this app - skip the daemon job
-         * We have to check all the jobs because there could be multiple
-         * invocations of the same application
-         */
-        for (n=1; n < orte_job_data->size; n++) {
-            if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, n))) {
-                continue;
-            }
-            if (jdata->state > ORTE_PROC_STATE_UNTERMINATED) {
-                /* job is already terminated */
-                continue;
-            }
-            if (0 == strcasecmp(cmd, jdata->name)) {
-                OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                     "%s killing app %s job %s",
-                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                     cmd, ORTE_JOBID_PRINT(jdata->jobid)));
-                found = true;
-                if (NULL == replicas) {
-                    /* killall procs of this jobid */
-                    proctmp = OBJ_NEW(orte_proc_t);
-                    proctmp->name.jobid = jdata->jobid;
-                    proctmp->name.vpid = ORTE_VPID_WILDCARD;
-                    opal_pointer_array_add(&killapps, proctmp);
-                    j++;
-                } else {
-                }
-
-            }
-        }
-        if (NULL != replicas) {
-            free(replicas);
-        }
-        n=1;
-    }
-    if (ORTE_ERR_UNPACK_READ_PAST_END_OF_BUFFER != rc) {
+    if (ORTE_SUCCESS != (rc = opal_dss.pack(bfr, &command, 1, ORTE_DAEMON_CMD))) {
         ORTE_ERROR_LOG(rc);
-    } else {
-        rc = ORTE_SUCCESS;
-    }
-    /* if we didn't find anything, then do nothing - if we don't kick
-     * out here, then we would send a kill command with nothing in
-     * the array, which ORTE translates into "kill everything"
-     */
-    if (!found) {
-        goto cleanup_kill;
+        return rc;
     }
 
-    /* now execute the kill cmd */
- execute_kill:
-    opal_dss.pack(&bfr, &j, 1, OPAL_INT32);
-    if (0 < j) {
-        for (n=0; n < killapps.size; n++) {
-            if (NULL != (proctmp = (orte_proc_t*)opal_pointer_array_get_item(&killapps, n))) {
-                OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                     "%s ordering kill of %s",
-                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                     ORTE_NAME_PRINT(&proctmp->name)));
-                opal_dss.pack(&bfr, &(proctmp->name), 1, ORTE_NAME);
-            }
+    /* if the job is to be terminated, then we send a special name */
+    if (ORTE_JOB_STATE_ABORT_ORDERED == jdata->state) {
+        name.jobid = jdata->jobid;
+        name.vpid = ORTE_VPID_WILDCARD;
+        if (ORTE_SUCCESS != (rc = opal_dss.pack(bfr, &name, 1, ORTE_NAME))) {
+            ORTE_ERROR_LOG(rc);
+            return rc;
         }
+    } else {
     }
-    ORTE_MESSAGE_EVENT(ORTE_PROC_MY_NAME, &bfr, ORTE_RML_TAG_DAEMON, orte_daemon_cmd_processor);
- cleanup_kill:
-    OBJ_DESTRUCT(&bfr);
-    for (j=0; j < killapps.size; j++) {
-        if (NULL != (proctmp = (orte_proc_t*)opal_pointer_array_get_item(&killapps, j))) {
-            OBJ_RELEASE(proctmp);
-        }
+
+    /* send it to the daemons */
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
+                                                 NULL, ORCM_PNP_TAG_COMMAND,
+                                                 NULL, 0, bfr, cbfunc, NULL))) {
+        ORTE_ERROR_LOG(rc);
     }
-    OBJ_DESTRUCT(&killapps);
 
     return rc;
+}
+
+void orcm_cfgi_base_activate(void)
+{
+    opal_list_item_t *item;
+    orcm_cfgi_base_selected_module_t *module;
+    orcm_cfgi_base_module_t *nmodule;
+
+    for (item = opal_list_get_first(&orcm_cfgi_selected_modules);
+         opal_list_get_end(&orcm_cfgi_selected_modules) != item;
+         item = opal_list_get_next(item)) {
+        module = (orcm_cfgi_base_selected_module_t*) item;
+        nmodule = module->module;
+        if (NULL != nmodule->activate) {
+            nmodule->activate();
+        }
+    }
 }
 
 int orcm_cfgi_base_check_job(orte_job_t *jdat)
@@ -337,12 +448,10 @@ int orcm_cfgi_base_check_job(orte_job_t *jdat)
 
     /* must have at least one app */
     if (NULL == opal_pointer_array_get_item(jdat->apps, 0)) {
-        opal_output(0, "JOB %s MISSING APP", (NULL == jdat->name) ? "UNNAMED" : jdat->name);
-        return ORCM_ERR_BAD_PARAM;
+        return ORCM_ERR_NO_APP_SPECIFIED;
     }
     if (jdat->num_apps <= 0) {
-        opal_output(0, "JOB %s ZERO APPS", (NULL == jdat->name) ? "UNNAMED" : jdat->name);
-        return ORCM_ERR_BAD_PARAM;
+        return ORCM_ERR_NO_APP_SPECIFIED;
     }
     /* we require that an executable and the number of procs be specified
      * for each app
@@ -352,22 +461,18 @@ int orcm_cfgi_base_check_job(orte_job_t *jdat)
             continue;
         }
         if (NULL == app->app || NULL == app->argv || 0 == opal_argv_count(app->argv)) {
-            opal_output(0, "JOB %s NO EXE FOR APP %d", (NULL == jdat->name) ? "UNNAMED" : jdat->name, i);
-            return ORCM_ERR_BAD_PARAM;
+            return ORCM_ERR_NO_EXE_SPECIFIED;
         }
         if (app->num_procs <= 0) {
-            opal_output(0, "JOB %s ZERO PROCS FOR APP %d", (NULL == jdat->name) ? "UNNAMED" : jdat->name, i);
-            return ORCM_ERR_VALUE_OUT_OF_BOUNDS;
+            return ORCM_ERR_INVALID_NUM_PROCS;
         }
         /* ensure we can find the executable */
         if (NULL == app->env || 0 == opal_argv_count(app->env)) {
             if (ORTE_SUCCESS != orte_util_check_context_app(app, environ)) {
-                opal_output(0, "JOB %s EXE NOT FOUND FOR APP %d IN STD ENVIRON", (NULL == jdat->name) ? "UNNAMED" : jdat->name, i);
                 return ORCM_ERR_EXE_NOT_FOUND;
             }
         } else {
             if (ORTE_SUCCESS != orte_util_check_context_app(app, app->env)) {
-                opal_output(0, "JOB %s EXE NOT FOUND FOR APP %d", (NULL == jdat->name) ? "UNNAMED" : jdat->name, i);
                 return ORCM_ERR_EXE_NOT_FOUND;
             }
         }

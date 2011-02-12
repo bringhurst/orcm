@@ -20,6 +20,9 @@ sources = \
 if WANT_LOCAL_CONFD
 sources += q_confd.h \
            q_confd.c
+EXTRA_LIBS = 
+else
+EXTRA_LIBS = -lnconfd_ulib -lqnlib -lsvmdb -lsvm -lclib -lvlibmemoryclient -lvlibapi
 endif
 
 # Extra rules to build the orcm-confd.h file
@@ -54,14 +57,14 @@ mca_orcm_cfgi_confd_la_SOURCES = $(component_sources)
 nodist_mca_orcm_cfgi_confd_la_SOURCES = orcm-confd.h
 mca_orcm_cfgi_confd_la_CPPFLAGS = $(orcm_cfgi_confd_CPPFLAGS)
 mca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
-mca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS)
+mca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS) $(EXTRA_LIBS)
 
 noinst_LTLIBRARIES = $(lib)
 libmca_orcm_cfgi_confd_la_SOURCES = $(lib_sources)
 nodist_libmca_orcm_cfgi_confd_la_SOURCES = orcm-confd.h
 libmca_orcm_cfgi_confd_la_CPPFLAGS = $(orcm_cfgi_confd_CPPFLAGS)
 libmca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDFLAGS)
-libmca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS)
+libmca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS) $(EXTRA_LIBS)
 
 yangdir = $(prefix)/etc/confd
 nodist_yang_HEADERS = orcm.fxs

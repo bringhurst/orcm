@@ -10,6 +10,9 @@
 
 dist_pkgdata_DATA = help-orcm-sched.txt
 
+dist_bin_SCRIPTS = orcm-sched.qn.pl \
+                   orcm-sched.qn.sh
+
 bin_PROGRAMS = orcm-sched
 orcm_sched_SOURCES = orcm-sched.c
 orcm_sched_DEPENDENCIES = $(top_builddir)/src/libopenrcm.la

@@ -37,6 +37,7 @@ ORCM_DECLSPEC extern orcm_cfgi_base_t orcm_cfgi_base;
 int orcm_cfgi_base_open(void);
 int orcm_cfgi_base_select(void);
 int orcm_cfgi_base_close(void);
+void orcm_cfgi_base_activate(void);
 
 extern const mca_base_component_t *orcm_cfgi_base_components[];
 ORCM_DECLSPEC extern opal_list_t orcm_cfgi_components_available;

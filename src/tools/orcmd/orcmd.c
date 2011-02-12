@@ -40,7 +40,7 @@
 #endif  /* HAVE_SYS_TIME_H */
 
 
-#include "opal/mca/event/event.h"
+#include "opal/event/event.h"
 #include "opal/mca/base/base.h"
 #include "opal/util/output.h"
 #include "opal/util/cmd_line.h"
@@ -98,6 +98,8 @@ static struct {
     bool abort;
     int heartbeat;
     char *hnp_uri;
+    char *hnp_node;
+    char *hnp_port;
 } orcmd_globals;
 
 /*
@@ -153,13 +155,17 @@ opal_cmd_line_init_t orte_cmd_line_opts[] = {
       NULL, OPAL_CMD_LINE_TYPE_STRING,
       "Create a new xterm window and display output from the specified ranks there" },
 
-    { "orte", "daemon", "bootstrap", '\0', "bootstrap", "bootstrap", 0,
-      NULL, OPAL_CMD_LINE_TYPE_BOOL,
-      "Bootstrap the connection to the HNP" },
-    
     { "orte", "hnp", "uri", '\0', "hnp-uri", "hnp-uri", 1,
-      NULL, OPAL_CMD_LINE_TYPE_STRING,
+      &orcmd_globals.hnp_uri, OPAL_CMD_LINE_TYPE_STRING,
       "URI for the HNP that booted this VM" },
+    
+    { NULL, NULL, NULL, '\0', "hnp-node", "hnp-node", 1,
+      &orcmd_globals.hnp_node, OPAL_CMD_LINE_TYPE_STRING,
+      "Name of the node where the HNP can be found" },
+    
+    { NULL, NULL, NULL, '\0', "hnp-port", "hnp-port", 1,
+      &orcmd_globals.hnp_port, OPAL_CMD_LINE_TYPE_STRING,
+      "Port that the HNP is listening on" },
     
     /* End of list */
     { NULL, NULL, NULL, '\0', NULL, NULL, 0,
@@ -172,9 +178,12 @@ int main(int argc, char *argv[])
     opal_cmd_line_t *cmd_line = NULL;
     int i;
     opal_buffer_t *buffer;
-    char hostname[100];
     char *tmp_env_var = NULL;
-    
+    char hostname[ORTE_MAX_HOSTNAME_SIZE];
+    char *uri;
+    struct hostent *h;
+    char *haddr=NULL;
+
     /* initialize the globals */
     memset(&orcmd_globals, 0, sizeof(orcmd_globals));
     
@@ -184,22 +193,8 @@ int main(int argc, char *argv[])
     mca_base_cmd_line_setup(cmd_line);
     if (ORTE_SUCCESS != (ret = opal_cmd_line_parse(cmd_line, false,
                                                    argc, argv))) {
-        char *args = NULL;
-        args = opal_cmd_line_get_usage_msg(cmd_line);
-        orte_show_help("help-orcmd.txt", "orcmd:usage", false,
-                       argv[0], args);
-        free(args);
+        fprintf(stderr, "Cannot process cmd line - use --help for assistance\n");
         return ret;
-    }
-    
-    /* check for help request */
-    if (orcmd_globals.help) {
-        char *args = NULL;
-        args = opal_cmd_line_get_usage_msg(cmd_line);
-        orte_show_help("help-orcmd.txt", "orcmd:usage", false,
-                       argv[0], args);
-        free(args);
-        return 1;
     }
 
     /*
@@ -208,7 +203,6 @@ int main(int argc, char *argv[])
      */
     mca_base_cmd_line_process_args(cmd_line, &environ, &environ);
     
-    /* Ensure that enough of OPAL is setup for us to be able to run */
     /*
      * NOTE: (JJH)
      *  We need to allow 'mca_base_cmd_line_process_args()' to process command
@@ -220,9 +214,18 @@ int main(int argc, char *argv[])
      *  opal_init_util() since mca_base_cmd_line_process_args() does *not*
      *  depend upon opal_init_util() functionality.
      */
-    if (OPAL_SUCCESS != opal_init_util(&argc, &argv)) {
-        fprintf(stderr, "OPAL failed to initialize -- orcmd aborting\n");
+    if (OPAL_SUCCESS != orcm_init_util()) {
+        fprintf(stderr, "ORCM failed to initialize -- orcmd aborting\n");
         exit(1);
+    }
+    
+    /* check for help request */
+    if (orcmd_globals.help) {
+        char *args = NULL;
+        args = opal_cmd_line_get_usage_msg(cmd_line);
+        orte_show_help("help-orcmd.txt", "usage", true, args);
+        free(args);
+        return 1;
     }
 
     /* save the environment for launch purposes. This MUST be
@@ -238,7 +241,7 @@ int main(int argc, char *argv[])
      * processed the orte mca params yet, so use the local flag
      */
     if (orcmd_globals.debug) {
-        gethostname(hostname, 100);
+        gethostname(hostname, ORTE_MAX_HOSTNAME_SIZE);
         fprintf(stderr, "Daemon was launched on %s - beginning to initialize\n", hostname);
     }
     
@@ -255,6 +258,66 @@ int main(int argc, char *argv[])
         if (1000 < i) i=0;        
     }
     
+    /* see if the hnp node/port were provided instead of an hnp-uri */
+    gethostname(hostname, ORTE_MAX_HOSTNAME_SIZE);
+    if (NULL == orcmd_globals.hnp_uri && NULL != orcmd_globals.hnp_port) {
+        /* ensure the interface code is ready */
+        if (OPAL_SUCCESS != opal_init(&argc, &argv)) {
+            /* can't run */
+            fprintf(stderr, "FAILED AT OPAL INIT\n");
+            exit(1);
+        }
+        if (NULL == orcmd_globals.hnp_node) {
+            /* assume same node as us */
+            orcmd_globals.hnp_node = strdup(hostname);
+        }
+        /* if the node was provided in tuple format, just use it */
+        if (NULL != strchr(orcmd_globals.hnp_node, '.')) {
+            haddr = strdup(orcmd_globals.hnp_node);
+        } else {
+            /* lookup the address of this node */
+            if (NULL == (h = gethostbyname(orcmd_globals.hnp_node))) {
+                opal_output(0, "Got NULL return from gethostbyname on host %s - checking localhost",
+                            orcmd_globals.hnp_node);
+                /* if it is a local host, try to find the loopback interface */
+                if (0 == strcasecmp(hostname, orcmd_globals.hnp_node) ||
+                    0 == strncasecmp(hostname, orcmd_globals.hnp_node, strlen(hostname)) ||
+                    opal_ifislocal(hostname)) {
+                    int idx;
+                    struct sockaddr addr;
+                    struct in_addr inaddr;
+                    for (idx = opal_ifbegin(); 0 < idx; idx = opal_ifnext(idx)) {
+                        if (opal_ifisloopback(idx)) {
+                            if (OPAL_SUCCESS != opal_ifindextoaddr(idx, &addr, sizeof(addr))) {
+                                fprintf(stderr, "COULD NOT COMPUTE CONTACT INFO FOR HNP on NODE %s\n", orcmd_globals.hnp_node);
+                                exit(1);
+                            }
+                            inaddr = ((struct sockaddr_in*)(&addr))->sin_addr;
+                            haddr = inet_ntoa(inaddr);
+                            goto proceed;
+                        }
+                    }
+                }
+                fprintf(stderr, "COULD NOT COMPUTE CONTACT INFO FOR HNP on NODE %s\n", orcmd_globals.hnp_node);
+                exit(1);
+            }
+            haddr = inet_ntoa(*(struct in_addr*)h->h_addr_list[0]);
+        proceed:
+            if (NULL == haddr) {
+                fprintf(stderr, "COULD NOT COMPUTE CONTACT INFO FOR HNP on NODE %s\n", orcmd_globals.hnp_node);
+                exit(1);
+            }
+        }
+        /* create the uri */
+        asprintf(&uri, "OMPI_MCA_orte_hnp_uri=0.0;tcp://%s:%s", haddr, orcmd_globals.hnp_port);
+        fprintf(stderr, "SETTING HNP_URI TO %s\n", uri);
+        /* pass it into the environment for later recovery */
+        putenv(uri);
+    }
+
+    /* set the odls comm function */
+    orte_comm = orcmd_comm;
+
     /* init the ORCM library - this includes registering
      * a multicast recv so we hear announcements and
      * their responses from other apps
@@ -264,27 +327,27 @@ int main(int argc, char *argv[])
         exit(1);
     }
     
-#if 0    
     /* detach from controlling terminal
      * otherwise, remain attached so output can get to us
      */
-    if(!orte_debug_flag && !orte_debug_daemons_flag && orcmd_globals.daemonize) {
+    if (orcmd_globals.daemonize) {
         opal_daemon_init(NULL);
     } else {
         /* set the local debug verbosity */
         orcm_debug_output = 5;
     }
-#endif
 
-    /* set the odls comm function */
-    orte_comm = orcmd_comm;
+    /* let people know we are alive */
+    if (NULL == orcmd_globals.hnp_uri) {
+        opal_output(orte_clean_output, "DAEMON %s IS READY", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+    }
 
     /* wait to hear we are done */
-    opal_event_dispatch(opal_event_base);
+    opal_event_dispatch();
     return ret;
 
     /* should never get here, but if we do... */
-DONE:
+ DONE:
     /* cleanup any lingering session directories */
     orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
     

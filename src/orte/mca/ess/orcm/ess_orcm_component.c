@@ -64,8 +64,8 @@ orte_ess_orcm_component_open(void)
 
 int orte_ess_orcm_component_query(mca_base_module_t **module, int *priority)
 {
-    /* if we are a ORCM daemon or master, then we are available */
-    if (ORCM_PROC_IS_DAEMON || ORCM_PROC_IS_MASTER) {
+    /* if we are an ORCM master, then we are available */
+    if (ORCM_PROC_IS_MASTER) {
         *priority = 1000;
         *module = (mca_base_module_t *)&orte_ess_orcm_module;
         return ORTE_SUCCESS;

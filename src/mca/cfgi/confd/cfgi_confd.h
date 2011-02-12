@@ -21,11 +21,6 @@ int orcm_cfgi_confd_component_register(void);
 
 typedef struct {
     orcm_cfgi_base_component_t super;
-    char *db;
-    char *logfile;
-    char *mode;
-    char *ns;
-    FILE *log_stream;
     bool test_mode;
 } orcm_cfgi_confd_component_t;
 

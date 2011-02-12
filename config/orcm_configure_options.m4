@@ -11,7 +11,7 @@ dnl
 
 
 AC_DEFUN([ORCM_CONFIGURE_OPTIONS],[
-ompi_show_subtitle "ORCM Configuration options"
+orcm_show_subtitle "ORCM Configuration options"
 
 #
 # Do we want to forgive all configure sins and just ensure to make a
@@ -156,5 +156,15 @@ if test "$WANT_DEBUG" = "0"; then
     CXXFLAGS="-DNDEBUG -g $CXXFLAGS"
 fi
 
+AC_MSG_CHECKING([if want qlib support])
+AC_ARG_WITH([qlib],
+            [AC_HELP_STRING([--with-qlib],
+            [Build qlib integration (default: no)])])
+if test "$with_qlib" = "yes"; then
+    AC_MSG_RESULT([yes])
+else
+    AC_MSG_RESULT([no])
+fi
+AM_CONDITIONAL(ORCM_WANT_QLIB_LIBADDS, test "$with_qlib" = "yes")
 
 ])dnl

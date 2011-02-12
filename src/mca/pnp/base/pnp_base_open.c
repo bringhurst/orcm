@@ -50,10 +50,18 @@ int orcm_pnp_base_open(void)
      */
     orcm_pnp_base.output = opal_output_open(NULL);
     
-    mca_base_param_reg_int_name("pnp", "use_threads",
-                                "Use progress threads (default: 0)",
-                                   false, false, 0, &tmp);
-    orcm_pnp_base.use_threads = OPAL_INT_TO_BOOL(tmp);
+    /* initialize globals */
+    OBJ_CONSTRUCT(&orcm_pnp_base.recv_process, opal_thread_t);
+    OBJ_CONSTRUCT(&orcm_pnp_base.recv_process_ctl, orte_thread_ctl_t);
+    orcm_pnp_base.my_string_id = NULL;
+    orcm_pnp_base.my_announce_cbfunc = NULL;
+    orcm_pnp_base.my_input_channel = NULL;
+    orcm_pnp_base.my_output_channel = NULL;
+    /* init the array of channels */
+    OBJ_CONSTRUCT(&orcm_pnp_base.channels, opal_pointer_array_t);
+    opal_pointer_array_init(&orcm_pnp_base.channels, 8, INT_MAX, 8);
+    orcm_pnp_base.comm_enabled = false;
+
 
     /* Open up all available components */
     if (ORCM_SUCCESS != 
@@ -120,7 +128,8 @@ static void send_constructor(orcm_pnp_send_t *ptr)
     ptr->buffer = NULL;
     ptr->cbdata = NULL;
 }
-static void send_destructor(orcm_pnp_send_t *ptr) {
+static void send_destructor(orcm_pnp_send_t *ptr)
+{
     OBJ_DESTRUCT(&ptr->lock);
     OBJ_DESTRUCT(&ptr->cond);
 }
@@ -133,10 +142,7 @@ static void msg_constructor(orcm_pnp_msg_t *ptr)
 {
     ptr->sender.jobid = ORTE_JOBID_INVALID;
     ptr->sender.vpid = ORTE_VPID_INVALID;
-    ptr->tag = ORCM_PNP_TAG_INVALID;
     OBJ_CONSTRUCT(&ptr->buf, opal_buffer_t);
-    ptr->cbfunc = NULL;
-    ptr->cbdata = NULL;
 }
 static void msg_destructor(orcm_pnp_msg_t *ptr)
 {
@@ -146,3 +152,20 @@ OBJ_CLASS_INSTANCE(orcm_pnp_msg_t,
                    opal_list_item_t,
                    msg_constructor,
                    msg_destructor);
+
+static void info_constructor(orcm_info_t *ptr)
+{
+    ptr->app = NULL;
+    ptr->version = NULL;
+    ptr->release = NULL;
+    ptr->name = NULL;
+    ptr->nodename = NULL;
+    ptr->rml_uri = NULL;
+    ptr->uid = 0;
+    ptr->pid = 0;
+    ptr->incarnation = 0;
+}
+OBJ_CLASS_INSTANCE(orcm_info_t,
+                   opal_object_t,
+                   info_constructor,
+                   NULL);

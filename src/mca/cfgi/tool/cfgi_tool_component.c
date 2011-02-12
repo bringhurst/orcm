@@ -53,7 +53,7 @@ int orcm_cfgi_tool_component_close(void)
 
 int orcm_cfgi_tool_component_query(mca_base_module_t **module, int *priority)
 {
-    if (ORCM_PROC_IS_DAEMON) {
+    if (ORCM_PROC_IS_SCHEDULER) {
         *module = (mca_base_module_t*)&orcm_cfgi_tool_module;
         *priority = 10;
         return ORCM_SUCCESS;

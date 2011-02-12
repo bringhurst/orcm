@@ -259,10 +259,56 @@ static int orcmd_close(const orte_process_name_t* peer,
 
 static int finalize(void)
 {
-    int rc = ORTE_SUCCESS;
-    opal_list_item_t *item;
+    int rc = ORTE_SUCCESS;    
+    opal_list_item_t* item;
+    orte_iof_write_output_t *output;
+    orte_iof_write_event_t *wev;
+    int num_written;
+    bool dump;
     
     OPAL_THREAD_LOCK(&mca_iof_orcmd_component.lock);
+
+    OPAL_THREAD_LOCK(&orte_iof_base.iof_write_output_lock);
+    /* check if anything is still trying to be written out */
+    wev = orte_iof_base.iof_write_stdout->wev;
+    if (!opal_list_is_empty(&wev->outputs)) {
+        dump = false;
+        /* make one last attempt to write this out */
+        while (NULL != (item = opal_list_remove_first(&wev->outputs))) {
+            output = (orte_iof_write_output_t*)item;
+            if (!dump) {
+                num_written = write(wev->fd, output->data, output->numbytes);
+                if (num_written < output->numbytes) {
+                    /* don't retry - just cleanout the list and dump it */
+                    dump = true;
+                }
+            }
+            OBJ_RELEASE(output);
+        }
+    }
+    OBJ_RELEASE(orte_iof_base.iof_write_stdout);
+    if (!orte_xml_output) {
+        /* we only opened stderr channel if we are NOT doing xml output */
+        wev = orte_iof_base.iof_write_stderr->wev;
+        if (!opal_list_is_empty(&wev->outputs)) {
+            dump = false;
+            /* make one last attempt to write this out */
+            while (NULL != (item = opal_list_remove_first(&wev->outputs))) {
+                output = (orte_iof_write_output_t*)item;
+                if (!dump) {
+                    num_written = write(wev->fd, output->data, output->numbytes);
+                    if (num_written < output->numbytes) {
+                        /* don't retry - just cleanout the list and dump it */
+                        dump = true;
+                    }
+                }
+                OBJ_RELEASE(output);
+            }
+        }
+        OBJ_RELEASE(orte_iof_base.iof_write_stderr);
+    }
+    OPAL_THREAD_UNLOCK(&orte_iof_base.iof_write_output_lock);
+    
     while ((item = opal_list_remove_first(&mca_iof_orcmd_component.sinks)) != NULL) {
         OBJ_RELEASE(item);
     }
@@ -271,6 +317,7 @@ static int finalize(void)
         OBJ_RELEASE(item);
     }
     OBJ_DESTRUCT(&mca_iof_orcmd_component.procs);
+
     OPAL_THREAD_UNLOCK(&mca_iof_orcmd_component.lock);
     OBJ_DESTRUCT(&mca_iof_orcmd_component.lock);
     return rc;

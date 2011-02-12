@@ -11,11 +11,15 @@
 #include "include/constants.h"
 
 #include <signal.h>
+#ifdef HAVE_SYSLOG_H
+#include <syslog.h>
+#endif
 
 #include "opal/util/error.h"
+#include "opal/util/output.h"
 #include "opal/class/opal_pointer_array.h"
 #include "opal/class/opal_ring_buffer.h"
-#include "opal/mca/event/event.h"
+#include "opal/threads/mutex.h"
 
 #include "orte/runtime/runtime.h"
 #include "orte/mca/errmgr/errmgr.h"
@@ -24,7 +28,6 @@
 #include "orte/mca/grpcomm/grpcomm.h"
 #include "orte/runtime/orte_locks.h"
 #include "orte/mca/rmcast/rmcast_types.h"
-#include "orte/threads/threads.h"
 
 #include "runtime/orcm_globals.h"
 #include "runtime/runtime.h"
@@ -38,7 +41,6 @@ int orcm_debug_verbosity = 0;
 orcm_triplets_array_t *orcm_triplets;
 int orcm_max_msg_ring_size;
 orte_process_name_t orcm_default_leader_policy;
-orte_thread_ctl_t orcm_vm_launch;
 
 /* signal trap support */
 /* available signals
@@ -62,7 +64,7 @@ static int signals[] = {
     SIGQUIT,
     SIGPIPE
 };
-static opal_event_t trap_handler[4];
+static struct opal_event trap_handler[4];
 static int num_signals=4;
 
 static void trap_signals(void);
@@ -109,7 +111,19 @@ int orcm_init(orcm_proc_type_t flags)
         goto error;
     }
 
-    if (ORCM_PROC_IS_MASTER || ORCM_PROC_IS_DAEMON) {
+    /* redirect stderr if requested */
+    mca_base_param_reg_int_name("orcm", "redirect_stderr",
+                                "Redirect stderr to syslog",
+                                false, false, (int)false, &spin);
+    if (0 != spin) {
+        opal_output_redirect_all("ORCM");
+    }
+
+    if (!ORCM_PROC_IS_TOOL) {
+        opal_set_using_threads(true);
+    }
+
+    if (!ORCM_PROC_IS_APP) {
         trap_signals();
     }
 
@@ -173,6 +187,7 @@ int orcm_init_util(void)
     }
     mca_base_param_set_string(i, new_mcp);
     free(new_mcp);
+    free(mcp);
 
     orcm_util_initialized = true;
     
@@ -194,7 +209,7 @@ void orcm_remove_signal_handlers(void)
     int i;
     
     for (i=0; i < num_signals; i++) {
-        opal_event_signal_del(&trap_handler[i]);
+        opal_signal_del(&trap_handler[i]);
     }
 }
 
@@ -205,19 +220,18 @@ static void trap_signals(void)
     for (i=0; i < num_signals; i++) {
         if (SIGPIPE == signals[i]) {
             /* ignore this signal */
-            opal_event_signal_set(opal_event_base, &trap_handler[i], signals[i],
-                                  ignore_trap, &trap_handler[i]);
+            opal_signal_set(&trap_handler[i], signals[i],
+                            ignore_trap, &trap_handler[i]);
         } else {
-            opal_event_signal_set(opal_event_base, &trap_handler[i], signals[i],
-                                  signal_trap, &trap_handler[i]);
+            opal_signal_set(&trap_handler[i], signals[i],
+                            signal_trap, &trap_handler[i]);
         }
-        opal_event_signal_add(&trap_handler[i], NULL);
+        opal_signal_add(&trap_handler[i], NULL);
     }
 }
 
-static void just_quit(int fd, short flags, void*arg)
+void orcm_just_quit(int fd, short flags, void*arg)
 {
-
     if (ORCM_PROC_IS_APP || ORCM_PROC_IS_TOOL) {
         /* whack any lingering session directory files from our job */
         orte_session_dir_cleanup(ORTE_PROC_MY_NAME->jobid);
@@ -234,25 +248,25 @@ static void just_quit(int fd, short flags, void*arg)
 
 static void signal_trap(int fd, short flags, void *arg)
 {
-    int i;
-
-    /* if we are a daemon or master, allow for a forced term */
-    if (!opal_atomic_trylock(&orte_abort_inprogress_lock)) { /* returns 1 if already locked */
-        if (forcibly_die) {
-            opal_output(0, "%s forcibly exiting upon signal %s",
-                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), strsignal(fd));
+    /* if we are a master, allow for a forced term */
+    if (ORCM_PROC_IS_MASTER) {
+        if (!opal_atomic_trylock(&orte_abort_inprogress_lock)) { /* returns 1 if already locked */
+            if (forcibly_die) {
+                opal_output(0, "%s forcibly exiting upon signal %s",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), strsignal(fd));
             
-            /* kill any local procs */
-            orte_odls.kill_local_procs(NULL);
+                /* kill any local procs */
+                orte_odls.kill_local_procs(NULL);
             
-            /* whack any lingering session directory files from our jobs */
-            orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
-            /* exit with a non-zero status */
-            exit(ORTE_ERROR_DEFAULT_EXIT_CODE);
+                /* whack any lingering session directory files from our jobs */
+                orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
+                /* exit with a non-zero status */
+                exit(ORTE_ERROR_DEFAULT_EXIT_CODE);
+            }
+            opal_output(0, "orcm: abort is already in progress...hit ctrl-c again to forcibly terminate\n\n");
+            forcibly_die = true;
+            return;
         }
-        opal_output(0, "orcm: abort is already in progress...hit ctrl-c again to forcibly terminate\n\n");
-        forcibly_die = true;
-        return;
     }
     
     /* set the global abnormal exit flag so we know not to
@@ -265,12 +279,10 @@ static void signal_trap(int fd, short flags, void *arg)
     /* if we are a master, order any associated orcm daemons to die */
     if (ORCM_PROC_IS_MASTER) {
         orte_plm.terminate_orteds();
-        /* wait here a moment to give the daemons a chance to terminate */
-        sleep(1);
     }
 
-    ORTE_TIMER_EVENT(0, 0, just_quit);
- }
+    ORTE_TIMER_EVENT(0, 0, orcm_just_quit);
+}
 
 static void ignore_trap(int fd, short flags, void *arg)
 {
@@ -315,7 +327,6 @@ static void source_constructor(orcm_source_t *ptr)
 
     ptr->name.jobid = ORTE_JOBID_INVALID;
     ptr->name.vpid = ORTE_VPID_INVALID;
-    ptr->seq_num = ORTE_RMCAST_SEQ_INVALID;
     ptr->alive = true;
 }
 static void source_destructor(orcm_source_t *ptr)

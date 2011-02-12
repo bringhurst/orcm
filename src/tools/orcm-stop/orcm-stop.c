@@ -43,7 +43,7 @@
 #include <dirent.h>
 #endif  /* HAVE_DIRENT_H */
 
-#include "opal/mca/event/event.h"
+#include "opal/event/event.h"
 #include "opal/util/cmd_line.h"
 #include "opal/util/argv.h"
 #include "opal/util/opal_environ.h"
@@ -103,17 +103,28 @@ static void ack_recv(int status,
                      opal_buffer_t *buf, void *cbdata);
 
 
+static void cbfunc(int status,
+                   orte_process_name_t *sender,
+                   orcm_pnp_tag_t tag,
+                   struct iovec *msg,
+                   int count,
+                   opal_buffer_t *buffer,
+                   void *cbdata)
+{
+    OBJ_RELEASE(buffer);
+}
+
 int main(int argc, char *argv[])
 {
     int32_t ret, i;
     opal_cmd_line_t cmd_line;
     char **inpt;
-    opal_buffer_t buf;
+    opal_buffer_t *buf;
     int count;
     char cwd[OPAL_PATH_MAX];
     orcm_tool_cmd_t flag = ORCM_TOOL_STOP_CMD;
-    int32_t master;
-    uint16_t jfam;
+    int32_t master=0;
+    uint16_t jfam=0;
 
     /***************
      * Initialize
@@ -152,12 +163,6 @@ int main(int argc, char *argv[])
         args = opal_cmd_line_get_usage_msg(&cmd_line);
         orte_show_help("help-orcm-stop.txt", "usage", true, args);
         free(args);
-        return ORTE_ERROR;
-    }
-    
-    /* need to specify master */
-    if (NULL == my_globals.sched && NULL == my_globals.hnp_uri) {
-        opal_output(0, "Must specify ORCM DVM to be contacted");
         return ORTE_ERROR;
     }
     
@@ -287,36 +292,47 @@ int main(int argc, char *argv[])
     }
     
     /* setup the buffer to send our cmd */
-    OBJ_CONSTRUCT(&buf, opal_buffer_t);
+    buf = OBJ_NEW(opal_buffer_t);
     
     /* indicate the scheduler to be used */
     jfam = master & 0x0000ffff;
-    opal_dss.pack(&buf, &jfam, 1, OPAL_UINT16);
-    
-    /* load the stop cmd */
-    opal_dss.pack(&buf, &flag, 1, ORCM_TOOL_CMD_T);
+    opal_dss.pack(buf, &jfam, 1, OPAL_UINT16);
     
     /* get the apps to stop */
     inpt = NULL;
     opal_cmd_line_get_tail(&cmd_line, &count, &inpt);
     
-    /* for each app */
-    for (i=0; NULL != inpt[i]; i++) {
-        opal_dss.pack(&buf, &inpt[i], 1, OPAL_STRING);
-        /* pack the replicas to be stopped */
-        opal_dss.pack(&buf, &my_globals.replicas, 1, OPAL_STRING);
-    }
-    opal_argv_free(inpt);
+    if (0 == count) {
+        /* if no apps were given, then we stop the entire
+         * DVM itself by telling the daemon's to terminate
+         */
+        if (ORCM_SUCCESS != (ret = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
+                                                      NULL, ORCM_PNP_TAG_TERMINATE,
+                                                      NULL, 0, buf, cbfunc, NULL))) {
+            ORTE_ERROR_LOG(ret);
+        }
+        goto cleanup;
+    } else {
+        /* load the stop cmd */
+        opal_dss.pack(buf, &flag, 1, ORCM_TOOL_CMD_T);
     
-    if (ORCM_SUCCESS != (ret = orcm_pnp.output(ORCM_PNP_GROUP_OUTPUT_CHANNEL,
-                                               NULL, ORCM_PNP_TAG_TOOL,
-                                               NULL, 0, &buf))) {
-        ORTE_ERROR_LOG(ret);
-    }
-    OBJ_DESTRUCT(&buf);
+        /* for each app */
+        for (i=0; NULL != inpt[i]; i++) {
+            opal_dss.pack(buf, &inpt[i], 1, OPAL_STRING);
+            /* pack the replicas to be stopped */
+            opal_dss.pack(buf, &my_globals.replicas, 1, OPAL_STRING);
+        }
+        opal_argv_free(inpt);
     
+        if (ORCM_SUCCESS != (ret = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
+                                                      NULL, ORCM_PNP_TAG_TOOL,
+                                                      NULL, 0, buf, cbfunc, NULL))) {
+            ORTE_ERROR_LOG(ret);
+        }
+    }
+
     /* now wait for ack */
-    opal_event_dispatch(opal_event_base);
+    opal_event_dispatch();
     
     /***************
      * Cleanup
@@ -345,7 +361,7 @@ static void ack_recv(int status,
         return;
     }
 
-    /* unpack the result of the stop command */
+    /* unpack the result of the stop/term command */
     n=1;
     opal_dss.unpack(buf, &rc, &n, OPAL_INT);
     ORTE_UPDATE_EXIT_STATUS(rc);
@@ -357,5 +373,6 @@ static void ack_recv(int status,
     }
 
     /* the fact we recvd this is enough */
+    orcm_finalize();
     exit(0);
 }
