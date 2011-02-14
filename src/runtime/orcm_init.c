@@ -41,6 +41,7 @@ int orcm_debug_verbosity = 0;
 orcm_triplets_array_t *orcm_triplets;
 int orcm_max_msg_ring_size;
 orte_process_name_t orcm_default_leader_policy;
+bool orcm_redirect_stderr = false;
 
 /* signal trap support */
 /* available signals
@@ -115,7 +116,8 @@ int orcm_init(orcm_proc_type_t flags)
     mca_base_param_reg_int_name("orcm", "redirect_stderr",
                                 "Redirect stderr to syslog",
                                 false, false, (int)false, &spin);
-    if (0 != spin) {
+    orcm_redirect_stderr = OPAL_INT_TO_BOOL(spin);
+    if (orcm_redirect_stderr) {
         opal_output_redirect_all("ORCM");
     }
 

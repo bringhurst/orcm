@@ -30,6 +30,9 @@
 #ifdef HAVE_STRING_H
 #include <string.h>
 #endif  /* HAVE_STRING_H */
+#ifdef HAVE_SYSLOG_H
+#include <syslog.h>
+#endif
 
 #include "opal/dss/dss.h"
 
@@ -141,7 +144,10 @@ void orte_iof_orcmd_read_handler(int fd, short event, void *cbdata)
     /* otherwise, just print it out locally - we don't send to anyone
      * because there is no HNP to capture and display it
      */
-    if (ORTE_IOF_STDOUT & rev->tag || orte_xml_output) {
+    if (orcm_redirect_stderr) {
+        /* dump the output to syslog */
+        syslog(LOG_ERR, "%s", data);
+    } else if (ORTE_IOF_STDOUT & rev->tag || orte_xml_output) {
         orte_iof_base_write_output(&rev->name, rev->tag, data, numbytes, orte_iof_base.iof_write_stdout->wev);
     } else {
         orte_iof_base_write_output(&rev->name, rev->tag, data, numbytes, orte_iof_base.iof_write_stderr->wev);

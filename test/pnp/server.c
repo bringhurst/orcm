@@ -10,6 +10,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
+#ifdef HAVE_SYSLOG_H
+#include <syslog.h>
+#endif
 
 #include "opal/dss/dss.h"
 #include "opal/event/event.h"
@@ -17,6 +20,7 @@
 
 #include "orte/mca/errmgr/errmgr.h"
 #include "orte/util/name_fns.h"
+#include "orte/util/proc_info.h"
 #include "orte/runtime/orte_globals.h"
 
 #include "orte/mca/rml/rml.h"
@@ -101,8 +105,13 @@ int main(int argc, char* argv[])
         goto cleanup;
     }
     
-    opal_output(0, "SERVER %s ACTIVE", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+    opal_output(0, "SERVER %s ACTIVE - INCARNATION %d",
+                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                orte_process_info.num_restarts);
     
+    fprintf(stderr, "%s MY STDERR IS GOING HERE\n", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+    printf("%s MY STDOUT IS GOING HERE\n", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+
     /* wake up every x seconds to send something */
     ORTE_TIMER_EVENT(tp.tv_sec, tp.tv_usec, send_data);
 
