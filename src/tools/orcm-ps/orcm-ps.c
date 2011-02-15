@@ -35,8 +35,10 @@
 #include "opal/util/argv.h"
 #include "opal/runtime/opal.h"
 #include "opal/util/opal_environ.h"
-#include "opal/threads/threads.h"
+#include "opal/util/basename.h"
+#include "opal/util/fd.h"
 
+#include "orte/threads/threads.h"
 #include "orte/util/show_help.h"
 #include "orte/mca/errmgr/errmgr.h"
 #include "orte/util/name_fns.h"
@@ -50,9 +52,7 @@ static struct {
     bool help;
     bool monitor;
     int update_rate;
-    char *sched;
-    char *hnp_uri;
-    bool all;
+    int sched;
 } my_globals;
 
 opal_cmd_line_init_t cmd_line_opts[] = {
@@ -69,16 +69,8 @@ opal_cmd_line_init_t cmd_line_opts[] = {
       "Update rate in seconds (default: 5)" },
     
     { NULL, NULL, NULL, 'd', "dvm", "dvm", 1,
-      &my_globals.sched, OPAL_CMD_LINE_TYPE_STRING,
-      "ORCM DVM to be contacted [number or file:name of file containing it" },
-    
-    { NULL, NULL, NULL, '\0', "uri", "uri", 1,
-      &my_globals.hnp_uri, OPAL_CMD_LINE_TYPE_STRING,
-      "The uri of the ORCM DVM [uri or file:name of file containing it" },
-    
-    { NULL, NULL, NULL, 'a', "all", "all", 0,
-      &my_globals.all, OPAL_CMD_LINE_TYPE_BOOL,
-      "Show info from all source replicas [default: only from leader]" },
+      &my_globals.sched, OPAL_CMD_LINE_TYPE_INT,
+      "ORCM DVM to be contacted [default: 0]" },
     
     /* End of list */
     { NULL, NULL, NULL, '\0', NULL, NULL, 0,
@@ -91,12 +83,8 @@ opal_cmd_line_init_t cmd_line_opts[] = {
 /*
  * Local variables & functions
  */
-static opal_mutex_t lock;
-static opal_condition_t cond;
-static bool waiting=true;
-static orte_jobid_t jobfam;
-
-static void pretty_print(opal_buffer_t *buf);
+static int rel_pipe[2];
+static opal_event_t rel_ev;
 
 static void ps_recv(int status,
                     orte_process_name_t *sender,
@@ -104,64 +92,49 @@ static void ps_recv(int status,
                     struct iovec *msg, int count,
                     opal_buffer_t *buf, void *cbdata);
 
-static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *nodename,
-                       char *rml_uri, uint32_t uid);
+static void cbfunc(int status,
+                   orte_process_name_t *sender,
+                   orcm_pnp_tag_t tag,
+                   struct iovec *msg,
+                   int count,
+                   opal_buffer_t *buffer,
+                   void *cbdata)
+{
+    OBJ_RELEASE(buffer);
+}
+
+static void process_release(int fd, short flag, void *data)
+{
+    /* delete our local event */
+    opal_event_del(&rel_ev);
+    close(rel_pipe[0]);
+    close(rel_pipe[1]);
+    orcm_finalize();
+    exit(0);
+}
 
 /* update data function */
 static void update_data(int fd, short flg, void *arg)
 {
-    opal_buffer_t buf;
-    opal_event_t *tmp;
-    struct timeval now;
+    opal_buffer_t *buf;
     int32_t ret;
-    time_t mytime;
     orte_process_name_t name;
 
-    /* indicate the dvm */
-    name.jobid = jobfam;
-    if (my_globals.all) {
-        /* if the user asked for -all- info, then we indicate
-         * that all members of the dvm are to respond
-         */
-        name.vpid = ORTE_VPID_WILDCARD;
-    } else {
-        /* indicate that only the lead member is to respond */
-        name.vpid = ORTE_VPID_INVALID;
-    }
-
-    if (NULL != arg) {
-        /* print a separator for the next output */
-        fprintf(stderr, "\n=========================================================\n");
-        time(&mytime);
-        fprintf(stderr, "Time: %s\n", ctime(&mytime));
-    }
-
     /* setup the buffer to send our cmd */
-    OBJ_CONSTRUCT(&buf, opal_buffer_t);
+    buf = OBJ_NEW(opal_buffer_t);
     
-    if (ORTE_SUCCESS != (ret = opal_dss.pack(&buf, &name, 1, ORTE_NAME))) {
+    name.jobid = ORTE_CONSTRUCT_LOCAL_JOBID(my_globals.sched, 0);
+    name.vpid = 0;
+    if (ORTE_SUCCESS != (ret = opal_dss.pack(buf, &name, 1, ORTE_NAME))) {
         ORTE_ERROR_LOG(ret);
-        goto cleanup;
+        return;
     }
     
-    if (ORCM_SUCCESS != (ret = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL,
+    if (ORCM_SUCCESS != (ret = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
                                                NULL, ORCM_PNP_TAG_PS,
-                                               NULL, 0, &buf))) {
+                                                  NULL, 0, buf, cbfunc, NULL))) {
         ORTE_ERROR_LOG(ret);
-    }
-    
-    /* now wait for response */
-    OPAL_ACQUIRE_THREAD(&lock, &cond, &waiting);
-
-cleanup:
-    OBJ_DESTRUCT(&buf);
-    if (NULL != arg) {
-        /* reset the timer */
-        tmp = (opal_event_t*)arg;
-        now.tv_sec = my_globals.update_rate;
-        now.tv_usec = 0;
-        opal_evtimer_add(tmp, &now);
+        OBJ_RELEASE(buf);
     }
 }
 
@@ -188,9 +161,7 @@ int main(int argc, char *argv[])
     my_globals.help = false;
     my_globals.monitor = false;
     my_globals.update_rate = 5;
-    my_globals.sched = NULL;
-    my_globals.hnp_uri = NULL;
-    my_globals.all = false;
+    my_globals.sched = 0;
     
     /* Parse the command line options */
     opal_cmd_line_create(&cmd_line, cmd_line_opts);
@@ -212,56 +183,6 @@ int main(int argc, char *argv[])
         return ORTE_ERROR;
     }
     
-    /* need to specify scheduler */
-    if (NULL == my_globals.sched && NULL == my_globals.hnp_uri) {
-        opal_output(0, "Must specify ORCM DVM to be contacted");
-        return ORTE_ERROR;
-    }
-
-    if (NULL != my_globals.sched) {
-        if (0 == strncmp(my_globals.sched, "file", strlen("file")) ||
-            0 == strncmp(my_globals.sched, "FILE", strlen("FILE"))) {
-            char input[1024], *filename;
-            FILE *fp;
-            
-            /* it is a file - get the filename */
-            filename = strchr(my_globals.sched, ':');
-            if (NULL == filename) {
-                /* filename is not correctly formatted */
-                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "scheduler", my_globals.sched);
-                return ORTE_ERROR;
-            }
-            ++filename; /* space past the : */
-            
-            if (0 >= strlen(filename)) {
-                /* they forgot to give us the name! */
-                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-bad", true, "scheduler", my_globals.sched);
-                return ORTE_ERROR;
-            }
-            
-            /* open the file and extract the pid */
-            fp = fopen(filename, "r");
-            if (NULL == fp) { /* can't find or read file! */
-                orte_show_help("help-openrcm-runtime.txt", "hnp-filename-access", true, "scheduler", filename);
-                return ORTE_ERROR;
-            }
-            if (NULL == fgets(input, 1024, fp)) {
-                /* something malformed about file */
-                fclose(fp);
-                orte_show_help("help-openrcm-runtime.txt", "hnp-file-bad", "scheduler", true, filename);
-                return ORTE_ERROR;
-            }
-            fclose(fp);
-            input[strlen(input)-1] = '\0';  /* remove newline */
-            /* get the hnp uri and convert it */
-        } else {
-            /* must just be the hnp uri - convert it */
-        }
-    }
-            
-    OBJ_CONSTRUCT(&lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&cond, opal_condition_t);
-    
     /***************************
      * We need all of OPAL and ORTE - this will
      * automatically connect us to the CM
@@ -280,73 +201,33 @@ int main(int argc, char *argv[])
     }
     
     /* announce my existence */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.announce("orcm-ps", "0.1", "alpha", vm_tracker))) {
+    if (ORCM_SUCCESS != (ret = orcm_pnp.announce("orcm-ps", "0.1", "alpha", NULL))) {
         ORTE_ERROR_LOG(ret);
         goto cleanup;
     }
     
-    /* we know we need to print the data once */
-    update_data(0, 0, NULL);
-    
-    if (my_globals.monitor) {
-        /* setup a timer event to tell us when to do it next */
-        ORTE_TIMER_EVENT(my_globals.update_rate, 0, update_data);
-    } else {
-        ret = 0;
+    /* define an event to signal completion */
+    if (pipe(rel_pipe) < 0) {
+        opal_output(0, "Cannot open release pipe");
         goto cleanup;
     }
+    opal_event_set(&rel_ev, rel_pipe[0], OPAL_EV_READ, process_release, NULL);
+    opal_event_add(&rel_ev, 0);
+
+    /* we know we need to print the data once */
+    update_data(0, 0, NULL);
     
     opal_event_dispatch();
     
     /***************
      * Cleanup
      ***************/
- cleanup:
-    OBJ_DESTRUCT(&lock);
-    OBJ_DESTRUCT(&cond);
-    
+ cleanup:    
     /* cleanup orcm */
     orcm_finalize();
 
     return ret;
 }
-
-static void pretty_print(opal_buffer_t *buf)
-{
-    char *app;
-    int32_t n, j;
-    orte_vpid_t vpid;
-    char *node;
-    int rc;
-    
-    n=1;
-    while (ORTE_SUCCESS == (rc = opal_dss.unpack(buf, &app, &n, OPAL_STRING))) {
-        fprintf(stderr, "APP: %s\n", app);
-        free(app);
-        n=1;
-        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &vpid, &n, ORTE_VPID))) {
-            ORTE_ERROR_LOG(rc);
-            return;
-        }
-        while (ORTE_VPID_INVALID != vpid) {
-            n=1;
-            if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &node, &n, OPAL_STRING))) {
-                ORTE_ERROR_LOG(rc);
-                return;
-            }
-            fprintf(stderr, "    %s: %s\n", ORTE_VPID_PRINT(vpid), node);
-            free(node);
-            n=1;
-            if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &vpid, &n, ORTE_VPID))) {
-                ORTE_ERROR_LOG(rc);
-                return;
-            }
-        }
-        fprintf(stderr, "\n");
-    }
-    if (ORTE_ERR_UNPACK_READ_PAST_END_OF_BUFFER != rc) {
-        ORTE_ERROR_LOG(rc);
-    } }
 
 static void ps_recv(int status,
                     orte_process_name_t *sender,
@@ -354,113 +235,107 @@ static void ps_recv(int status,
                     struct iovec *msg, int count,
                     opal_buffer_t *buf, void *cbdata)
 {
-    orcm_tool_cmd_t flag;
-    char *app;
-    int32_t n, j;
+    orte_jobid_t jobid;
+    char *jname=NULL;
+    orte_app_idx_t idx;
+    char *app=NULL;
+    int32_t n;
+    int32_t max_restarts;
     orte_vpid_t vpid;
-    char *node;
+    pid_t pid;
+    char *node=NULL;
+    int32_t restarts;
+    bool jfirst, afirst;
     int rc;
 
+    /* output the title bars */
+    opal_output(orte_clean_output, "JOB\t    JOB    \t  APP  \t        \t MAX");
+    opal_output(orte_clean_output, "ID \t    NAME   \tCONTEXT\t  PATH  \tRESTARTS\tVPID\t  PID \t  NODE  \tRESTARTS");
+
     n=1;
-    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &node, &n, OPAL_STRING))) {
-        ORTE_ERROR_LOG(rc);
-        goto cleanup;
-    }
-    n=1;
-    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &node, &n, OPAL_STRING))) {
-        ORTE_ERROR_LOG(rc);
-        goto cleanup;
-    }
-    fprintf(stderr, "NODE: %s\n", node);
-    free(node);
-    n=1;
-    while (ORTE_SUCCESS == (rc = opal_dss.unpack(buf, &app, &n, OPAL_STRING))) {
-        fprintf(stderr, "    APP: %s\n", app);
-        free(app);
+    while (ORTE_SUCCESS == (rc = opal_dss.unpack(buf, &jobid, &n, ORTE_JOBID))) {
+        /* get the job name */
         n=1;
-        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &vpid, &n, ORTE_VPID))) {
+        if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &jname, &n, OPAL_STRING))) {
             ORTE_ERROR_LOG(rc);
-            goto cleanup;
+            goto release;
         }
-        fprintf(stderr, "      Instances: ");
-        while (ORTE_VPID_INVALID != vpid) {
-            fprintf(stderr, "%s ", ORTE_VPID_PRINT(vpid));
+
+        n=1;
+        jfirst = true;
+        afirst = true;
+        while (ORTE_SUCCESS == (rc = opal_dss.unpack(buf, &idx, &n, ORTE_APP_IDX)) &&
+               idx != ORTE_APP_IDX_MAX) {
+            /* get the app data */
             n=1;
-            if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &vpid, &n, ORTE_VPID))) {
+            if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &app, &n, OPAL_STRING))) {
                 ORTE_ERROR_LOG(rc);
-                goto cleanup;
+                goto release;
             }
-        }
-        fprintf(stderr, "\n");
-    }
-    fprintf(stderr, "\n");
+            n=1;
+            if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &max_restarts, &n, OPAL_INT32))) {
+                ORTE_ERROR_LOG(rc);
+                goto release;
+            }
 
-cleanup:
-    /* release the wait */
-    OPAL_RELEASE_THREAD(&lock, &cond, &waiting);
-}
-
-static void vm_tracker(char *app, char *version, char *release,
-                       orte_process_name_t *name, char *nodename,
-                       char *rml_uri, uint32_t uid)
-{
-    orte_proc_t *proc;
-    orte_node_t *node;
-    orte_job_t *daemons;
-    int i;
-    
-    /* if it is a daemon, record it */
-    if (ORTE_JOBID_IS_DAEMON(name->jobid)) {
-        if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(daemons->procs, name->vpid))) {
-            /* new daemon - add it */
-            proc = OBJ_NEW(orte_proc_t);
-            proc->name.jobid = name->jobid;
-            proc->name.vpid = name->vpid;
-            daemons->num_procs++;
-            opal_pointer_array_add(daemons->procs, proc);
-        }
-        /* ensure the state is set to running */
-        proc->state = ORTE_PROC_STATE_RUNNING;
-        /* if it is a restart, check the node against the
-         * new one to see if it changed location
-         */
-        if (NULL != proc->nodename) {
-            if (0 == strcmp(nodename, proc->nodename)) {
-                /* all done */
-                return;
-            }
-            /* must have moved */
-            OBJ_RELEASE(proc->node);  /* maintain accounting */
-            proc->nodename = NULL;
-        }
-        /* find this node in our array */
-        for (i=0; i < orte_node_pool->size; i++) {
-            if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, i))) {
-                continue;
-            }
-            if (0 == strcmp(node->name, nodename)) {
-                /* already have this node - could be a race condition
-                 * where the daemon died and has been replaced, so
-                 * just assume that is the case
-                 */
-                if (NULL != node->daemon) {
-                    OBJ_RELEASE(node->daemon);
+            /* unload the procs */
+            n=1;
+            while (ORTE_SUCCESS == (rc = opal_dss.unpack(buf, &vpid, &n, ORTE_VPID)) &&
+                   vpid != ORTE_VPID_INVALID) {
+                n=1;
+                if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &pid, &n, OPAL_PID))) {
+                    ORTE_ERROR_LOG(rc);
+                    goto release;
                 }
-                goto complete;
+                n=1;
+                if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &node, &n, OPAL_STRING))) {
+                    ORTE_ERROR_LOG(rc);
+                    goto release;
+                }
+                n=1;
+                if (ORTE_SUCCESS != (rc = opal_dss.unpack(buf, &restarts, &n, OPAL_INT32))) {
+                    ORTE_ERROR_LOG(rc);
+                    goto release;
+                }
+                if (jfirst) {
+                    /* output the job and app data with the proc */
+                    opal_output(orte_clean_output, "%d\t%8s\t  %d\t%8s\t%8d\t%4s\t%6d\t%8s\t%d",
+                                (int)ORTE_LOCAL_JOBID(jobid), jname, idx,
+                                opal_basename(app), max_restarts,
+                                ORTE_VPID_PRINT(vpid), (int)pid, node, restarts);
+                    /* flag that we did the first one */
+                    jfirst = false;
+                } else if (afirst) {
+                    opal_output(orte_clean_output, "\t\t\t  %d\t%8s\t%8d\t%4s\t%6d\t%8s\t%d",
+                                idx, opal_basename(app), max_restarts,
+                                ORTE_VPID_PRINT(vpid), (int)pid, node, restarts);
+                    afirst = false;
+                } else {
+                    opal_output(orte_clean_output, "\t\t    \t    \t   \t%4s\t%6d\t%8s\t%d",
+                                ORTE_VPID_PRINT(vpid), (int)pid, node, restarts);
+                }
+                free(node);
+                node = NULL;
             }
+            n=1;
+            free(app);
+            app = NULL;
         }
-        /* if we get here, this is a new node */
-        node = OBJ_NEW(orte_node_t);
-        node->name = strdup(nodename);
-        node->state = ORTE_NODE_STATE_UP;
-        node->index = opal_pointer_array_add(orte_node_pool, node);
-    complete:
-        OBJ_RETAIN(node);  /* maintain accounting */
-        proc->node = node;
-        proc->nodename = node->name;
-        OBJ_RETAIN(proc);  /* maintain accounting */
-        node->daemon = proc;
-        node->daemon_launched = true;
+        n=1;
+        free(jname);
+        jname = NULL;
     }
-}
 
+ release:
+    if (NULL != jname) {
+        free(jname);
+    }
+    if (NULL != app) {
+        free(app);
+    }
+    if (NULL != node) {
+        free(node);
+    }
+
+    opal_fd_write(rel_pipe[1], sizeof(int), &rc);
+}

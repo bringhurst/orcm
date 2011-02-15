@@ -961,7 +961,8 @@ static int local_setup(char **hosts)
     close(process_pipe[1]);
 
     /* let people know we are alive */
-    opal_output(orte_clean_output, "ORCM SCHEDULER %s IS READY", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+    opal_output(orte_clean_output, "ORCM SCHEDULER %s IS READY",
+                ORTE_JOB_FAMILY_PRINT(ORTE_PROC_MY_NAME->jobid));
 
     /* start the local sensors - do this last so heartbeats don't
      * start running too early
@@ -1260,8 +1261,16 @@ static void ps_request(int status,
     orte_process_name_t name;
     int32_t n;
     int rc;
-    opal_buffer_t ans;
-    
+    opal_buffer_t *ans;
+    orte_vpid_t vpid=ORTE_VPID_INVALID;
+    orte_app_idx_t idx;
+    int i, j, k;
+    orte_job_t *jdata;
+    orte_app_context_t *app;
+    orte_proc_t *proc;
+    char *null="[**]";
+    char nodename[64], *nn;
+
     ORTE_ACQUIRE_THREAD(&local_ctl);
 
     /* unpack the target name */
@@ -1271,55 +1280,70 @@ static void ps_request(int status,
         return;
     }
     
-    /* construct the response */
-    OBJ_CONSTRUCT(&ans, opal_buffer_t);
-    
-    /* if the jobid is wildcard, they just want to know who is out there */
-    if (ORTE_JOBID_WILDCARD == name.jobid) {
-        goto respond;
-    }
-    
-    /* if the requested job family isn't mine, and isn't my DVM, then ignore it */
+    /* if the requested job family isn't mine, then ignore it */
     if (ORTE_JOB_FAMILY(name.jobid) != ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid)) {
-        OBJ_DESTRUCT(&ans);
         ORTE_RELEASE_THREAD(&local_ctl);
         return;
     }
     
-    /* if the request is for my job family... */
-    if (ORTE_JOB_FAMILY(name.jobid) == ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid)) {
-        /* if the vpid is wildcard, then the caller wants this info from everyone.
-         * if the vpid is not wildcard, then only respond if I am the leader
-         */
-        if (ORTE_VPID_WILDCARD == name.vpid) {
-            /* pack the response */
-            goto pack;
+    /* construct the response */
+    ans = OBJ_NEW(opal_buffer_t);
+    
+    /* cycle thru the running jobs */
+    for (i=0; i < orte_job_data->size; i++) {
+        if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
+            continue;
         }
-        /* otherwise, just ignore this */
-        OBJ_DESTRUCT(&ans);
-        ORTE_RELEASE_THREAD(&local_ctl);
-        return;
+        opal_dss.pack(ans, &jdata->jobid, 1, ORTE_JOBID);
+        opal_dss.pack(ans, &jdata->name, 1, OPAL_STRING);
+        /* cycle thru the apps in this job */
+        for (k=0; k < jdata->apps->size; k++) {
+            if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, k))) {
+                continue;
+            }
+            /* record the app data */
+            idx = k;
+            opal_dss.pack(ans, &idx, 1, ORTE_APP_IDX);
+            opal_dss.pack(ans, &app->app, 1, OPAL_STRING);
+            opal_dss.pack(ans, &app->max_restarts, 1, OPAL_INT32);
+            /* cycle thru the procs in this job */
+            for (j=0; j < jdata->procs->size; j++) {
+                if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, j))) {
+                    continue;
+                }
+                if (proc->app_idx != k) {
+                    continue;
+                }
+                /* record this proc's data */
+                opal_dss.pack(ans, &proc->name.vpid, 1, ORTE_VPID);
+                opal_dss.pack(ans, &proc->pid, 1, OPAL_PID);
+                if (NULL == proc->node || NULL == proc->node->name) {
+                    opal_dss.pack(ans, &null, 1, OPAL_STRING);
+                } else {
+                    if (NULL == proc->node->daemon) {
+                        snprintf(nodename, 64, "%s[--]", proc->node->name);
+                    } else {
+                        snprintf(nodename, 64, "%s[%s]", proc->node->name, ORTE_VPID_PRINT(proc->node->daemon->name.vpid));
+                    }
+                    nn = nodename;
+                    opal_dss.pack(ans, &nn, 1, OPAL_STRING);
+                }
+                opal_dss.pack(ans, &proc->restarts, 1, OPAL_INT32);
+            }
+            /* write an end-of-data marker */
+            opal_dss.pack(ans, &vpid, 1, ORTE_VPID);
+        }
+        /* write an end-of-data marker */
+        idx = ORTE_APP_IDX_MAX;
+        opal_dss.pack(ans, &idx, 1, ORTE_APP_IDX);
     }
-    
-    /* the request must have been for my DVM - if they don't want everyone to
-     * respond, ignore it
-     */
-    if (ORTE_VPID_WILDCARD != name.vpid) {
-        OBJ_DESTRUCT(&ans);
-        ORTE_RELEASE_THREAD(&local_ctl);
-        return;
-    }
-    
- pack:
-    opal_dss.pack(&ans, ORTE_PROC_MY_NAME, 1, ORTE_NAME);
-    
- respond:
-    if (ORCM_SUCCESS != (rc = orcm_pnp.output(ORCM_PNP_SYS_CHANNEL,
-                                              NULL, ORCM_PNP_TAG_PS,
-                                              NULL, 0, &ans))) {
+
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
+                                                 NULL, ORCM_PNP_TAG_PS,
+                                                 NULL, 0, ans, cbfunc, NULL))) {
         ORTE_ERROR_LOG(rc);
+        OBJ_RELEASE(ans);
     }
-    OBJ_DESTRUCT(&ans);
     ORTE_RELEASE_THREAD(&local_ctl);
 }
 

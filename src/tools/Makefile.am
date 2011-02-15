@@ -16,5 +16,6 @@ SUBDIRS = \
         orcmd \
 	wrappers \
         orcm-sched \
-        orcmrun
+        orcmrun \
+        orcm-ps
 

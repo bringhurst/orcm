@@ -260,6 +260,7 @@ AC_CONFIG_FILES([Makefile
 		 src/tools/wrappers/orcm_wrapper_script
 		 src/tools/orcm-sched/Makefile
                  src/tools/orcmrun/Makefile
+                 src/tools/orcm-ps/Makefile
 
 		 test/pnp/Makefile
 		 test/spinners/Makefile
