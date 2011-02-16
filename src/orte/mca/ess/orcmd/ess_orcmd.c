@@ -1098,6 +1098,10 @@ static void process_contact(int status,
         return;
     }
 
+    /* identify the sending scheduler as my HNP */
+    ORTE_PROC_MY_HNP->jobid = peer->jobid;
+    ORTE_PROC_MY_HNP->vpid = peer->vpid;
+
     /* prep return */
     ans = OBJ_NEW(opal_buffer_t);
 
