@@ -24,7 +24,7 @@
 #include <sys/time.h>
 #endif
 
-#include "opal/event/event.h"
+#include "opal/mca/event/event.h"
 #include "opal/class/opal_ring_buffer.h"
 #include "opal/class/opal_pointer_array.h"
 

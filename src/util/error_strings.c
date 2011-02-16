@@ -12,16 +12,15 @@
 
 #include <stdio.h>
 
-const char *orcm_err2str(int errnum)
+int orcm_err2str(int errnum, const char **errmsg)
 {
-    const char *retval;
     switch (errnum) {
         case ORCM_ERR_PLACEHOLDER:
-            retval = "Placeholder";
+            *errmsg = "Placeholder";
             break;
         default:
-            retval = NULL;
+            *errmsg = NULL;
     }
 
-    return retval;
+    return ORCM_SUCCESS;
 }

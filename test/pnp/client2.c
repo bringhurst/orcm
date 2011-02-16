@@ -18,7 +18,7 @@
 #endif
 
 #include "opal/dss/dss.h"
-#include "opal/event/event.h"
+#include "opal/mca/event/event.h"
 #include "opal/util/output.h"
 
 #include "orte/mca/errmgr/errmgr.h"
@@ -86,7 +86,7 @@ int main(int argc, char* argv[])
     
     /* wake up every x seconds send something */
     ORTE_TIMER_EVENT(ORTE_PROC_MY_NAME->vpid + 1, 0, send_data);
-    opal_event_dispatch();
+    opal_event_dispatch(opal_event_base);
 
 cleanup:
     orcm_finalize();
@@ -152,7 +152,7 @@ static void send_data(int fd, short flags, void *arg)
     /* reset the timer */
     now.tv_sec = ORTE_PROC_MY_NAME->vpid + 1;
     now.tv_usec = 0;
-    opal_evtimer_add(tmp, &now);
+    opal_event_evtimer_add(tmp, &now);
     
 }
 

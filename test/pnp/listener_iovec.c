@@ -12,7 +12,7 @@
 #include <sys/time.h>
 
 #include "opal/dss/dss.h"
-#include "opal/event/event.h"
+#include "opal/mca/event/event.h"
 #include "opal/util/output.h"
 
 #include "orte/mca/errmgr/errmgr.h"
@@ -65,7 +65,7 @@ int main(int argc, char* argv[])
     }
     
     /* just sit here */
-    opal_event_dispatch();
+    opal_event_dispatch(opal_event_base);
     
 cleanup:
 

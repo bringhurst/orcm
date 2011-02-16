@@ -19,6 +19,7 @@ typedef unsigned int boolean;
 
 #include "opal/class/opal_pointer_array.h"
 #include "opal/dss/dss.h"
+#include "opal/mca/event/event.h"
 #include "opal/util/argv.h"
 #include "opal/util/basename.h"
 #include "opal/util/if.h"
@@ -359,7 +360,8 @@ static void cfgi_confd_activate(void)
             opal_output(0, "CANNOT OPEN LAUNCH PIPE");
             return;
         }
-        opal_event_set(&launch_event, launch_pipe[0], OPAL_EV_READ|OPAL_EV_PERSIST, launch_thread, NULL);
+        opal_event_set(opal_event_base, &launch_event, launch_pipe[0],
+                       OPAL_EV_READ|OPAL_EV_PERSIST, launch_thread, NULL);
         opal_event_add(&launch_event, 0);
         /* start the connection */
         OPAL_THREAD_LOCK(&internal_lock);

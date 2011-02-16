@@ -40,7 +40,7 @@
 #endif  /* HAVE_SYS_TIME_H */
 
 
-#include "opal/event/event.h"
+#include "opal/mca/event/event.h"
 #include "opal/mca/base/base.h"
 #include "opal/util/output.h"
 #include "opal/util/cmd_line.h"
@@ -250,7 +250,7 @@ int main(int argc, char *argv[])
     }
 
     /* wait to hear we are done */
-    opal_event_dispatch();
+    opal_event_dispatch(opal_event_base);
     return ret;
 
     /* should never get here, but if we do... */

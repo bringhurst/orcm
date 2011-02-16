@@ -112,7 +112,7 @@ enum {
 #define ORCM_ERR_MAX                      (ORCM_ERR_BASE - 100)
 
 /* include the prototype for the error-to-string converter */
-ORCM_DECLSPEC const char* orcm_err2str(int errnum);
+ORCM_DECLSPEC int orcm_err2str(int errnum, const char **errmsg);
 
 END_C_DECLS
 

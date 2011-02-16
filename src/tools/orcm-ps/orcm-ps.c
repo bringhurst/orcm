@@ -30,7 +30,7 @@
 #include <string.h>
 #endif  /* HAVE_STRING_H */
 
-#include "opal/event/event.h"
+#include "opal/mca/event/event.h"
 #include "opal/util/cmd_line.h"
 #include "opal/util/argv.h"
 #include "opal/runtime/opal.h"
@@ -211,13 +211,14 @@ int main(int argc, char *argv[])
         opal_output(0, "Cannot open release pipe");
         goto cleanup;
     }
-    opal_event_set(&rel_ev, rel_pipe[0], OPAL_EV_READ, process_release, NULL);
+    opal_event_set(opal_event_base, &rel_ev, rel_pipe[0],
+                   OPAL_EV_READ, process_release, NULL);
     opal_event_add(&rel_ev, 0);
 
     /* we know we need to print the data once */
     update_data(0, 0, NULL);
     
-    opal_event_dispatch();
+    opal_event_dispatch(opal_event_base);
     
     /***************
      * Cleanup

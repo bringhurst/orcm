@@ -43,7 +43,7 @@
 #include <dirent.h>
 #endif  /* HAVE_DIRENT_H */
 
-#include "opal/event/event.h"
+#include "opal/mca/event/event.h"
 #include "opal/util/cmd_line.h"
 #include "opal/util/argv.h"
 #include "opal/util/opal_environ.h"
@@ -332,7 +332,7 @@ int main(int argc, char *argv[])
     }
 
     /* now wait for ack */
-    opal_event_dispatch();
+    opal_event_dispatch(opal_event_base);
     
     /***************
      * Cleanup

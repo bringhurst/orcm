@@ -39,6 +39,7 @@
 #include "opal/mca/paffinity/paffinity.h"
 #include "opal/mca/sysinfo/sysinfo.h"
 #include "opal/mca/sysinfo/base/base.h"
+#include "opal/mca/event/event.h"
 
 #include "orte/threads/threads.h"
 #include "orte/mca/rmcast/base/base.h"
@@ -946,7 +947,8 @@ static int local_setup(char **hosts)
         error = "cannot open event pipe";
         goto error;
     }
-    opal_event_set(&process_ev, process_pipe[0], OPAL_EV_READ|OPAL_EV_PERSIST, process_daemon, NULL);
+    opal_event_set(opal_event_base, &process_ev, process_pipe[0],
+                   OPAL_EV_READ|OPAL_EV_PERSIST, process_daemon, NULL);
     opal_event_add(&process_ev, 0);
 
     /* announce our existence - this carries with it our rml uri and
@@ -961,7 +963,7 @@ static int local_setup(char **hosts)
              * we start receiving configuration info and trying
              * to launch processes
              */
-            opal_evtimer_set(&timeout, release, &timeout);
+            opal_event_evtimer_set(opal_event_base, &timeout, release, &timeout);
             /* fake out the thread ctl by flagging it as active
              * so we will sit on a conditioned wait
              */
@@ -974,7 +976,7 @@ static int local_setup(char **hosts)
         }
         if (NULL == orte_process_info.my_hnp_uri) {
             /* start the timer */
-            opal_evtimer_add(&timeout, &timeout_tv);
+            opal_event_evtimer_add(&timeout, &timeout_tv);
             /* wait to acquire the thread */
             ORTE_ACQUIRE_THREAD(&ctl);
         }
@@ -1201,7 +1203,7 @@ static void process_daemon(int fd, short flag, void *dump)
 
     /* clear the trigger pipe */
     opal_fd_read(process_pipe[0], sizeof(uint8_t), &trig);
-    opal_evtimer_add(&timeout, &timeout_tv);
+    opal_event_evtimer_add(&timeout, &timeout_tv);
 }
 
 static void release(int fd, short flag, void *dump)

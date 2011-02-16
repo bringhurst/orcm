@@ -48,7 +48,7 @@
 
 #include "opal/dss/dss.h"
 #include "opal/class/opal_value_array.h"
-#include "opal/event/event.h"
+#include "opal/mca/event/event.h"
 #include "opal/util/cmd_line.h"
 #include "opal/util/argv.h"
 #include "opal/util/opal_environ.h"
@@ -278,7 +278,7 @@ int main(int argc, char *argv[])
                 ORTE_JOB_FAMILY_PRINT(ORTE_PROC_MY_NAME->jobid));
     
     opal_set_using_threads(true);
-    opal_event_dispatch();
+    opal_event_dispatch(opal_event_base);
     
     /***************
      * Cleanup

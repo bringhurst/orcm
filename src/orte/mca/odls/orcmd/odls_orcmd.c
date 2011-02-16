@@ -1236,10 +1236,13 @@ static int construct_child_list(opal_buffer_t *data, orte_jobid_t *job)
     /* cycle through the procs and find mine */
     proc.jobid = jobdat->jobid;
     for (j=0; j < jobdat->num_procs; j++) {
+        proc.vpid = j;
         if (ORTE_PROC_STATE_INIT != states[j]) {
+            OPAL_OUTPUT_VERBOSE((5, orte_odls_globals.output,
+                                 "%s odls:constructing child list - proc %s not at INIT",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_NAME_PRINT(&proc)));
             continue;
         }
-        proc.vpid = j;
         host_daemon = locations[j];
 #if 0
         /* get the vpid of the daemon that is to host this proc */
@@ -1330,7 +1333,7 @@ static int construct_child_list(opal_buffer_t *data, orte_jobid_t *job)
     opal_condition_broadcast(&jobdat->cond);
     OPAL_THREAD_UNLOCK(&jobdat->lock);
     
-done:
+ done:
     if (NULL != app_idx) {
         free(app_idx);
         app_idx = NULL;
@@ -1349,7 +1352,7 @@ done:
     
     return ORTE_SUCCESS;
 
-REPORT_ERROR:
+ REPORT_ERROR:
     /* we have to report an error back to the HNP so we don't just
      * hang. Although there shouldn't be any errors once this is
      * all debugged, it is still good practice to have a way

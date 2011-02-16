@@ -95,6 +95,7 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata, bool overwrite)
         /* this is a new job */
         newjob = true;
         jlaunch = jdata;
+        jdata->state = ORTE_JOB_STATE_INIT;
         /* assign a jobid to it - ensure that the algorithm
          * used here is consistent so that all orcmd's will return
          * the exact same value!
