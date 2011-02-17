@@ -36,6 +36,7 @@
 #include "orte/mca/errmgr/errmgr.h"
 #include "orte/mca/errmgr/base/base.h"
 #include "orte/mca/errmgr/base/errmgr_private.h"
+#include "orte/mca/routed/routed.h"
 
 #include "errmgr_orcmapp.h"
 
@@ -99,24 +100,22 @@ static int init(void)
 {
     int rc=ORTE_SUCCESS;
 
-    if (ORCM_PROC_IS_APP) {
-        /* construct globals */
-        OBJ_CONSTRUCT(&ctl, orte_thread_ctl_t);
+    /* construct globals */
+    OBJ_CONSTRUCT(&ctl, orte_thread_ctl_t);
 
-        /* setup to recv proc failure notifications */
-        if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("orcmd", "0.1", "alpha",
-                                                            ORCM_PNP_ERROR_CHANNEL,
-                                                            ORCM_PNP_TAG_ERRMGR,
-                                                            notify_failure, NULL))) {
-            ORTE_ERROR_LOG(rc);
-            return rc;
-        }
-        if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("orcm-sched", "0.1", "alpha",
-                                                            ORCM_PNP_ERROR_CHANNEL,
-                                                            ORCM_PNP_TAG_ERRMGR,
-                                                            notify_failure, NULL))) {
-            ORTE_ERROR_LOG(rc);
-        }
+    /* setup to recv proc failure notifications */
+    if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("orcmd", "0.1", "alpha",
+                                                        ORCM_PNP_ERROR_CHANNEL,
+                                                        ORCM_PNP_TAG_ERRMGR,
+                                                        notify_failure, NULL))) {
+        ORTE_ERROR_LOG(rc);
+        return rc;
+    }
+    if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("orcm-sched", "0.1", "alpha",
+                                                        ORCM_PNP_ERROR_CHANNEL,
+                                                        ORCM_PNP_TAG_ERRMGR,
+                                                        notify_failure, NULL))) {
+        ORTE_ERROR_LOG(rc);
     }
 
     return rc;
@@ -124,14 +123,12 @@ static int init(void)
 
 static int finalize(void)
 {
-    if (ORCM_PROC_IS_APP) {
-        /* destruct globals */
-        OBJ_DESTRUCT(&ctl);
+    /* destruct globals */
+    OBJ_DESTRUCT(&ctl);
 
-        orcm_pnp.cancel_receive("orcmd", "0.1", "alpha",
-                                ORCM_PNP_APP_PUBLIC_CHANNEL,
-                                ORCM_PNP_TAG_ERRMGR);
-    }
+    orcm_pnp.cancel_receive("orcmd", "0.1", "alpha",
+                            ORCM_PNP_APP_PUBLIC_CHANNEL,
+                            ORCM_PNP_TAG_ERRMGR);
 
     return ORTE_SUCCESS;
 }
@@ -143,6 +140,16 @@ static int update_state(orte_jobid_t job,
 			pid_t pid,
                         orte_exit_code_t exit_code)
 {
+    /* look for comm failure - if it is our daemon, then we
+     * cannot recover
+     */
+    if (ORTE_JOB_STATE_COMM_FAILED == jobstate) {
+        /* see if this is our lifeline */
+        if (ORTE_SUCCESS != orte_routed.route_lost(proc)) {
+            return ORTE_ERR_UNRECOVERABLE;
+        }
+    }
+
     /* nothing to do */
     return ORTE_SUCCESS;
 }
