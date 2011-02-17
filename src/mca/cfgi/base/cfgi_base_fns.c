@@ -135,6 +135,7 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata, bool overwrite)
                              "%s spawn: existing job %s modified",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jlaunch->jobid)));
         newjob = false;
+        apps_added = false;
         for (j=0; j < jdata->apps->size; j++) {
             if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, j))) {
                 continue;
@@ -154,10 +155,18 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata, bool overwrite)
                      */
                     if (app->num_procs == app2->num_procs) {
                         /* nothing to change */
+                        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                             "%s spawn: no change to num_procs for app %s",
+                                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                             opal_basename(app->app)));
                         continue;
                     }
                     if (app->num_procs > app2->num_procs) {
                         /* we are adding procs - just add them to the end of the proc array */
+                        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                             "%s spawn: adding procs to app %s",
+                                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                             opal_basename(app->app)));
                         for (k=0; k < (app->num_procs - app2->num_procs); k++) {
                             proc = OBJ_NEW(orte_proc_t);
                             proc->name.jobid = jlaunch->jobid;
@@ -174,6 +183,10 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata, bool overwrite)
                          * and flag the reqd number for termination. We don't
                          * care which ones, so take the highest ranking ones
                          */
+                         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                             "%s spawn: removing procs from app %s",
+                                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                             opal_basename(app->app)));
                         terms = OBJ_NEW(opal_buffer_t);
                         /* indicate the target DVM */
                         jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
