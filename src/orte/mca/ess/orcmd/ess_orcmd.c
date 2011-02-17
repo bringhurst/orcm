@@ -1115,6 +1115,13 @@ static void process_contact(int status,
     }
 
     switch(command) {
+    case ORTE_DAEMON_NULL_CMD:
+        OPAL_OUTPUT_VERBOSE((5, orte_ess_base_output,
+                             "%s ACK FROM SCHED",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        OBJ_RELEASE(ans);
+        return;
+
     case ORTE_DAEMON_KILL_LOCAL_PROCS:
         OPAL_OUTPUT_VERBOSE((5, orte_ess_base_output,
                              "%s KILLING LOCAL PROCS BY SCHED COMMAND",

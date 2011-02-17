@@ -173,7 +173,6 @@ static int rte_init(void)
                                    true, false, NULL, &tmp);
     if (NULL != tmp) {
         jfam = strtol(tmp, NULL, 10);
-        opal_output(0, "GOT JOB FAM OF %d", jfam);
         ORTE_PROC_MY_NAME->jobid = ORTE_CONSTRUCT_LOCAL_JOBID(jfam << 16, 0);
         /* assume a vpid of 1 - it can be overwritten later */
         ORTE_PROC_MY_NAME->vpid = 1;
@@ -1130,11 +1129,20 @@ static void vm_tracker(orcm_info_t *vm)
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                              ORTE_NAME_PRINT(vm->name)));
         daemons->num_procs++;
-        /* re-initialize heartbeat to avoid race condition with
-         * heartbeat check timer
-         */
-        proc->beat = 0;
+        /* reinitialize heartbeat - obviously, it is alive */
+        proc->beat = true;
         restarted = true;
+        /* send it an ack so it will start its heartbeat */
+        buf = OBJ_NEW(opal_buffer_t);
+        opal_dss.pack(buf, vm->name, 1, ORTE_NAME);
+        command = ORTE_DAEMON_NULL_CMD;
+        opal_dss.pack(buf, &command, 1, ORTE_DAEMON_CMD_T);
+        if (ORTE_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL, NULL,
+                                                     ORCM_PNP_TAG_DATA, NULL, 0,
+                                                     buf, cbfunc, NULL))) {
+            ORTE_ERROR_LOG(rc);
+            OBJ_RELEASE(buf);
+        }
     }
     /* update the pid, in case it changed */
     proc->pid = vm->pid;
@@ -1150,8 +1158,8 @@ static void vm_tracker(orcm_info_t *vm)
     proc->state = ORTE_PROC_STATE_RUNNING;
     /* exit code is obviously zero */
     proc->exit_code = 0;
-    /* initialize heartbeat */
-    proc->beat = 0;
+    /* initialize heartbeat - obviously, it is alive */
+    proc->beat = true;
 
     /* get the node - it is at the index of the daemon's vpid */
     if (NULL != (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, vm->name->vpid))) {
