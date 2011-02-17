@@ -1172,13 +1172,9 @@ static boolean install_handler(confd_hkeypath_t *kp,
   return parse(kp, op, value, notify_type, true);
 }
 
-static orte_job_t* get_job(uint32_t num)
+static orte_job_t* get_job(orte_jobid_t job)
 {
-    orte_jobid_t job;
     orte_job_t *jdt;
-
-    /* convert the number to a jobid */
-    job = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, num);
 
     if (NULL == (jdt = orte_get_job_data_object(job))) {
         /* job not known */
@@ -1230,6 +1226,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
     orte_odls_child_t *child;
     orte_process_name_t name;
     char nodename[64];
+    orte_jobid_t jobid;
 
     /*
      * look at the first XML tag in the keypath to see which element
@@ -1239,17 +1236,16 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
     case orcm_job_id:
         vp = qc_find_key(kp, orcm_job, 0);
         if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR JOBID - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         ui32 = CONFD_GET_UINT32(vp);
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                              "%s REQUEST FOR JOBID ELEMENT %u",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ui32));
-        jdat = get_job(ui32);
-        if (NULL == jdat) {
-            goto notfound;
-        }
-        CONFD_SET_UINT32(&val, jdat->jobid);
+        jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, ui32);
+        CONFD_SET_UINT32(&val, jobid);
         confd_data_reply_value(tctx, &val);
         goto release;
 
@@ -1259,12 +1255,16 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         vp = qc_find_key(kp, orcm_job, 0);
         if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR JOB NAME - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
-        ui32 = CONFD_GET_UINT32(vp);
-        jdat = get_job(ui32);
+        jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));
+        jdat = get_job(jobid);
         if (NULL == jdat) {
             /* job no longer exists */
+            opal_output(0, "%s CONFD REQUEST FOR JOB NAME - JOB %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
             goto notfound;
         }
         if (NULL == jdat->name) {
@@ -1282,23 +1282,30 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         vp = qc_find_key(kp, orcm_job, 0);
         if (NULL == vp) {
-            opal_output(0, "JOB ID NOT FOUND");
-            goto notfound;
+            opal_output(0, "%s CONFD REQUEST FOR PATH - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+             goto notfound;
         }
         /* get the referenced app_context */
-        jdat = get_job(CONFD_GET_UINT32(vp));
+        jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));
+        jdat = get_job(jobid);
         if (NULL == jdat) {
             /* job no longer exists */
+            opal_output(0, "%s CONFD REQUEST FOR PATH - JOB %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
             goto notfound;
         }
         vp = qc_find_key(kp, orcm_app_context, 0);
         if (NULL == vp) {
-            opal_output(0, "APP IDX NOT FOUND");
+            opal_output(0, "%s CONFD REQUEST FOR PATH - NO APP INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
         if (NULL == app) {
-            opal_output(0, "APP NOT FOUND");
+            opal_output(0, "%s CONFD REQUEST FOR PATH - APP %d NOT FOUND IN JOB %s",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
             goto notfound;
         }
         if (NULL == app->name) {
@@ -1316,23 +1323,30 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         vp = qc_find_key(kp, orcm_job, 0);
         if (NULL == vp) {
-            opal_output(0, "JOB ID NOT FOUND");
+            opal_output(0, "%s CONFD REQUEST FOR MAX RESTARTS - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         /* get the referenced app_context */
-        jdat =get_job(CONFD_GET_UINT32(vp));
+        jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));
+        jdat =get_job(jobid);
         if (NULL == jdat) {
             /* job no longer exists */
+            opal_output(0, "%s CONFD REQUEST FOR MAX RESTARTS - JOB %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
             goto notfound;
         }
         vp = qc_find_key(kp, orcm_app_context, 0);
         if (NULL == vp) {
-            opal_output(0, "APP IDX NOT FOUND");
+            opal_output(0, "%s CONFD REQUEST FOR MAX RESTARTS - NO APP INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
         if (NULL == app) {
-            opal_output(0, "APP %d NOT FOUND", CONFD_GET_UINT32(vp));
+            opal_output(0, "%s CONFD REQUEST FOR MAX RESTARTS - APP %d NOT FOUND IN JOB %s",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
             goto notfound;
         }
         i32 = app->max_restarts;
@@ -1347,24 +1361,30 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         vp = qc_find_key(kp, orcm_job, 0);
         if (NULL == vp) {
-            ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
+            opal_output(0, "%s CONFD REQUEST FOR APP NAME - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         /* get the referenced app_context */
-        jdat = get_job(CONFD_GET_UINT32(vp));
+        jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));
+        jdat = get_job(jobid);
         if (NULL == jdat) {
             /* job no longer exists */
-            ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
+            opal_output(0, "%s CONFD REQUEST FOR APP NAME - JOB %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
             goto notfound;
         }
         vp = qc_find_key(kp, orcm_app_context, 0);
         if (NULL == vp) {
-            ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
+            opal_output(0, "%s CONFD REQUEST FOR APP NAME - NO APP INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
         if (NULL == app) {
-            ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
+            opal_output(0, "%s CONFD REQUEST FOR APP NAME - APP %d NOT FOUND IN JOB %s",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
             goto notfound;
         }
         if (NULL == app->name) {
@@ -1381,20 +1401,24 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         vp = qc_find_key(kp, orcm_job, 0);
         if (NULL == vp) {
-            ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
+            opal_output(0, "%s CONFD REQUEST FOR PID - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         name.jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));;
         vp = qc_find_key(kp, orcm_replica, 0);
         if (NULL == vp) {
-            ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
+            opal_output(0, "%s CONFD REQUEST FOR PID - NO REPLICA PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         name.vpid = CONFD_GET_UINT32(vp);
         /* find this process */
         proc = get_child(&name);
         if (NULL == proc) {
-            ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
+            opal_output(0, "%s CONFD REQUEST FOR PID - PROC %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        ORTE_NAME_PRINT(&name));
             goto notfound;
         }
         CONFD_SET_UINT32(&val, proc->pid);
@@ -1407,20 +1431,24 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         vp = qc_find_key(kp, orcm_job, 0);
         if (NULL == vp) {
-            ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
+            opal_output(0, "%s CONFD REQUEST FOR NUM RESTARTS - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         name.jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));;
         vp = qc_find_key(kp, orcm_replica, 0);
         if (NULL == vp) {
-            ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
+            opal_output(0, "%s CONFD REQUEST FOR NUM RESTARTS - NO REPLICA PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         name.vpid = CONFD_GET_UINT32(vp);
         /* find this process */
         proc = get_child(&name);
         if (NULL == proc) {
-            ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
+            opal_output(0, "%s CONFD REQUEST FOR NUM RESTARTS - PROC %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        ORTE_NAME_PRINT(&name));
             goto notfound;
         }
         CONFD_SET_INT32(&val, proc->restarts);
@@ -1430,17 +1458,24 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
     case orcm_node:
         vp = qc_find_key(kp, orcm_job, 0);
         if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR NODE - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         name.jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));;
         vp = qc_find_key(kp, orcm_replica, 0);
         if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR NODE - NO REPLICA PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         name.vpid = CONFD_GET_UINT32(vp);
         /* find this process */
         proc = get_child(&name);
         if (NULL == proc) {
+            opal_output(0, "%s CONFD REQUEST FOR NODE - PROC %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        ORTE_NAME_PRINT(&name));
             goto notfound;
         }
         if (NULL == proc->node || NULL == proc->node->name) {
@@ -1476,9 +1511,13 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         vp = qc_find_key(kp, orcm_orte_node, 0);
         if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR NODE STATE - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_INT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR NODE STATE - NODE %d NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_INT32(vp));
             goto notfound;
         }
         switch (node->state) {
@@ -1503,9 +1542,13 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         vp = qc_find_key(kp, orcm_orte_node, 0);
         if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR NODE TEMP - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_INT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR NODE TEMP - NODE %d NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_INT32(vp));
             goto notfound;
         }
         CONFD_SET_INT8(&val, 1);
@@ -1518,9 +1561,13 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         vp = qc_find_key(kp, orcm_orte_node, 0);
         if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR NODE NUM PROCS - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
         if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_INT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR NODE NUM PROCS - NODE %d NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_INT32(vp));
             goto notfound;
         }
         i32 = node->num_procs;

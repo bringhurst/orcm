@@ -1612,6 +1612,14 @@ static void process_contact(int status,
             /* add it to the job */
             opal_pointer_array_set_item(jdata->procs, child.vpid, proc);
             jdata->num_procs++;
+            /* find this app_context */
+            if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, app_idx))) {
+                opal_output(0, "%s CHILD %s IS ON UNKNOWN APP_CTX - SHOULD NOT HAPPEN",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_NAME_PRINT(&child));
+                goto release;
+            }
+            /* account for it on the app */
+            app->num_procs++;
             /* add it to the node */
             OBJ_RETAIN(proc);
             opal_pointer_array_add(node->procs, proc);
