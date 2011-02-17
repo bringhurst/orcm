@@ -812,10 +812,6 @@ static int local_setup(void)
         error = "orte_sensor_select";
         goto error;
     }
-    /* start the local sensors - do this last so heartbeats don't
-     * start running too early
-     */
-    orte_sensor.start(ORTE_PROC_MY_NAME->jobid);
 
     /* announce our existence - this carries with it our rml uri and
      * our local node system info
@@ -1101,6 +1097,12 @@ static void process_contact(int status,
     /* identify the sending scheduler as my HNP */
     ORTE_PROC_MY_HNP->jobid = peer->jobid;
     ORTE_PROC_MY_HNP->vpid = peer->vpid;
+
+    /* start the local sensors - do this now so heartbeats don't
+     * start running too early as we need to learn the name
+     * of the HNP from here
+     */
+    orte_sensor.start(ORTE_PROC_MY_NAME->jobid);
 
     /* prep return */
     ans = OBJ_NEW(opal_buffer_t);
