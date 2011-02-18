@@ -126,12 +126,9 @@ static void vm_term(int status,
                     struct iovec *msg, int count,
                     opal_buffer_t *buf,
                     void *cbdata);
-static void process_contact(int status,
-                            orte_process_name_t *peer,
-                            orcm_pnp_tag_t tag,
-                            struct iovec *msg, int count,
-                            opal_buffer_t *buffer,
-                            void *cbdata);
+static void recv_contact(int status, orte_process_name_t* peer,
+                         opal_buffer_t* buffer, orte_rml_tag_t tag,
+                         void* cbdata);
 
 
 static int rte_init(void)
@@ -271,6 +268,7 @@ static int rte_init(void)
 
 static int rte_finalize(void)
 {
+    orte_rml.recv_cancel(ORTE_NAME_WILDCARD, ORTE_RML_TAG_BOOTSTRAP);
     local_fin();
     OBJ_DESTRUCT(&local_ctl);
 
@@ -884,13 +882,13 @@ static int local_setup(char **hosts)
         ORTE_ERROR_LOG(ret);
         orte_quit();
     }
-    /* listen for state data when restarting */
-    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcmd", "0.1", "alpha",
-                                                         ORCM_PNP_SYS_CHANNEL,
-                                                         ORCM_PNP_TAG_DATA,
-                                                         process_contact, NULL))) {
+    /* listen for state data responses */
+    ret = orte_rml.recv_buffer_nb(ORTE_NAME_WILDCARD, ORTE_RML_TAG_BOOTSTRAP,
+                                  ORTE_RML_PERSISTENT, recv_contact, NULL);
+    if (ret != ORTE_SUCCESS && ret != ORTE_ERR_NOT_IMPLEMENTED) {
         ORTE_ERROR_LOG(ret);
-        orte_quit();
+        error = "contact_recv";
+        goto error;
     }
 
     /* open the cfgi framework so we can receive configuration instructions */
@@ -1048,6 +1046,15 @@ static void cbfunc(int status,
 {
     OBJ_RELEASE(buffer);
 }
+static void rml_cbfunc(int status,
+                       struct orte_process_name_t* peer,
+                       struct opal_buffer_t* buffer,
+                       orte_rml_tag_t tag,
+                       void* cbdata)
+{
+    OBJ_RELEASE(buffer);
+}
+
 
 static void vm_tracker(orcm_info_t *vm)
 {
@@ -1101,8 +1108,6 @@ static void vm_tracker(orcm_info_t *vm)
         opal_pointer_array_set_item(daemons->procs, vm->name->vpid, proc);
         /* setup to complete the handshake */
         buf = OBJ_NEW(opal_buffer_t);
-        /* identify the desired respondent */
-        opal_dss.pack(buf, vm->name, 1, ORTE_NAME);
         /* if this is a clean start, tell the daemon to kill any
          * existing running procs
          */
@@ -1114,9 +1119,9 @@ static void vm_tracker(orcm_info_t *vm)
         }
         opal_dss.pack(buf, &command, 1, ORTE_DAEMON_CMD_T);
         /* send it*/
-        if (ORTE_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL, NULL,
-                                                     ORCM_PNP_TAG_DATA, NULL, 0,
-                                                     buf, cbfunc, NULL))) {
+        if (ORTE_SUCCESS != (rc = orte_rml.send_buffer_nb(vm->name, buf,
+                                                          ORTE_RML_TAG_BOOTSTRAP, 0,
+                                                          rml_cbfunc, NULL))) {
             ORTE_ERROR_LOG(rc);
             OBJ_RELEASE(buf);
         }
@@ -1134,12 +1139,11 @@ static void vm_tracker(orcm_info_t *vm)
         restarted = true;
         /* send it an ack so it will start its heartbeat */
         buf = OBJ_NEW(opal_buffer_t);
-        opal_dss.pack(buf, vm->name, 1, ORTE_NAME);
         command = ORTE_DAEMON_NULL_CMD;
         opal_dss.pack(buf, &command, 1, ORTE_DAEMON_CMD_T);
-        if (ORTE_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL, NULL,
-                                                     ORCM_PNP_TAG_DATA, NULL, 0,
-                                                     buf, cbfunc, NULL))) {
+        if (ORTE_SUCCESS != (rc = orte_rml.send_buffer_nb(vm->name, buf,
+                                                          ORTE_RML_TAG_BOOTSTRAP, 0,
+                                                          rml_cbfunc, NULL))) {
             ORTE_ERROR_LOG(rc);
             OBJ_RELEASE(buf);
         }
@@ -1393,13 +1397,11 @@ static void vm_term(int status,
     ORTE_TIMER_EVENT(0, 0, orcm_just_quit);
 }
 
-static void process_contact(int status,
-                            orte_process_name_t *peer,
-                            orcm_pnp_tag_t tag,
-                            struct iovec *msg, int count,
-                            opal_buffer_t *buffer,
-                            void *cbdata)
+static void process_contact(int fd, short flags, void* cbdata)
 {
+    orte_message_event_t *mev = (orte_message_event_t*)cbdata;
+    orte_process_name_t *peer = &mev->sender;
+    opal_buffer_t *buffer = mev->buffer;
     int n, rc, ret;
     int32_t num, i;
     orte_job_t *jdata;
@@ -1659,4 +1661,12 @@ static void process_contact(int status,
         opal_fd_write(process_pipe[1], sizeof(uint8_t), &trig);
     }
     ORTE_RELEASE_THREAD(&local_ctl);
+}
+
+static void recv_contact(int status, orte_process_name_t* peer,
+                         opal_buffer_t* buffer, orte_rml_tag_t tag,
+                         void* cbdata)
+{
+    /* rotate out of rml recv */
+    ORTE_MESSAGE_EVENT(peer, buffer, tag, process_contact);
 }
