@@ -215,6 +215,14 @@ void orcm_pnp_base_process_announcements(orte_process_name_t *sender,
     /* release the triplet thread */
     ORTE_RELEASE_THREAD(&triplet->ctl);
 
+    /* if this is an original announcement, then we
+     * always allow for the announce callback
+     */
+    if (originator.jobid == ORTE_JOBID_INVALID &&
+        originator.vpid == ORTE_VPID_INVALID) {
+        known = false;
+    }
+
     /* notify the user, if requested - be sure to do
      * this outside of the triplet lock in case the cbfunc
      * needs to access the triplet
