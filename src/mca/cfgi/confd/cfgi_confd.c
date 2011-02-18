@@ -486,7 +486,7 @@ static boolean parse(confd_hkeypath_t *kp,
     char *cptr, *param, *ctmp;
     unsigned int i, imax;
     int32_t i32;
-    int rc, j;
+    int rc, j, app_idx;
     orte_job_t *jdat, *jdata=NULL;
     orte_app_context_t *app, *aptr;
     bool valid;
@@ -727,6 +727,7 @@ static boolean parse(confd_hkeypath_t *kp,
              */
             cptr = CONFD_GET_CBUFPTR(vp);
             app = NULL;
+            app_idx = 0;
             for (j=0; j < jdata->apps->size; j++) {
                 if (NULL == (aptr = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, j))) {
                     continue;
@@ -737,10 +738,12 @@ static boolean parse(confd_hkeypath_t *kp,
                     app = aptr;
                     break;
                 }
+                app_idx++;
             }
             if (NULL == app) {
                 /* new context */
                 app = OBJ_NEW(orte_app_context_t);
+                app->idx = app_idx;
                 app->app = strdup(cptr);
                 OPAL_OUTPUT_VERBOSE((3, orcm_cfgi_base.output,
                                      "ADDING NEW APP %s", app->app));
@@ -751,7 +754,7 @@ static boolean parse(confd_hkeypath_t *kp,
                  */
                 app->name = strdup(opal_basename(app->app));
                 /* add to the job */
-                opal_pointer_array_add(jdata->apps, app);
+                opal_pointer_array_set_item(jdata->apps, idx, app);
                 jdata->num_apps++;
             }
         }
