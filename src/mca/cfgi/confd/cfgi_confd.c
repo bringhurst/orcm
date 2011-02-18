@@ -257,7 +257,6 @@ confd_nanny (void *arg)
      * confd interface state
      */
     qc_confd_t cc;
-    int num_tries=0;
     struct timespec delay = {0, 1000};
     int idx;
     char log_pfx[48];
@@ -265,19 +264,8 @@ confd_nanny (void *arg)
     snprintf(log_pfx, sizeof(log_pfx), "ORCM-DVM/%d", \
              (int)ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid));
 
-    /*
-     * retry the connection setup a couple of times
-     * in case there is a race condition
-     */
+    /* retry the connection setup infinite times */
     while (! connect_to_confd(&cc, log_pfx, stderr)) {
-        if (1 == num_tries) {
-            /* we tried it twice - time to punt */
-            thread_active = false;
-            waiting = false;
-            opal_condition_signal(&internal_cond);
-            return NULL;
-        }
-        num_tries++;
         nanosleep(&delay, NULL);
         qc_close(&cc);
     }
@@ -294,7 +282,6 @@ confd_nanny (void *arg)
     /*
      * loop forever handling events, and reconnecting when needed
      */
-    num_tries = 0;
     for (;;) {
         /*
          * handle events from confd (including the startup config events)
@@ -302,15 +289,9 @@ confd_nanny (void *arg)
          */
         qc_confd_poll(&cc);
         do {
-            num_tries++;
-            if (5 < num_tries) {
-                thread_active = false;
-                return NULL;
-            }
             qc_close(&cc);
             sleep(1);
         } while (! qc_reconnect(&cc));
-        num_tries = 0;
     }
 
     return NULL;
