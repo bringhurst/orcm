@@ -257,7 +257,6 @@ confd_nanny (void *arg)
      * confd interface state
      */
     qc_confd_t cc;
-    struct timespec delay = {0, 1000};
     int idx;
     char log_pfx[48];
 
@@ -266,7 +265,7 @@ confd_nanny (void *arg)
 
     /* retry the connection setup infinite times */
     while (! connect_to_confd(&cc, log_pfx, stderr)) {
-        nanosleep(&delay, NULL);
+        sleep(1);
         qc_close(&cc);
     }
     thread_active = true;
