@@ -171,7 +171,6 @@ ORCM_DECLSPEC extern int orcm_debug_verbosity;
 ORCM_DECLSPEC extern orcm_triplets_array_t *orcm_triplets;
 ORCM_DECLSPEC extern int orcm_max_msg_ring_size;
 ORCM_DECLSPEC extern orte_process_name_t orcm_default_leader_policy;
-ORCM_DECLSPEC extern bool orcm_redirect_stderr;
 
 #define ORCM_WILDCARD_STRING_ID "@:@:@"
 

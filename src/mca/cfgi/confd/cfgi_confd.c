@@ -734,7 +734,7 @@ static boolean parse(confd_hkeypath_t *kp,
                  */
                 app->name = strdup(opal_basename(app->app));
                 /* add to the job */
-                opal_pointer_array_set_item(jdata->apps, idx, app);
+                opal_pointer_array_set_item(jdata->apps, app_idx, app);
                 jdata->num_apps++;
             }
         }

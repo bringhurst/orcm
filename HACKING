@@ -35,11 +35,26 @@ To build the required support, follow these steps:
    OMPI layer only makes the build go faster; OpenRCM itself does not
    require the OMPI layer.
 
-    shell$ ./autogen.sh -no-ompi
+    shell$ ./autogen.pl -no-ompi
 
-3. Configure the OMPI software for use with OpenRCM:
+3. Configure the OMPI software for use with OpenRCM. The following configure
+   options are the minimum required:
 
-    shell$ ./configure --prefix=whatever --enable-multicast --enable-bootstrap --with-devel-headers
+    shell$ ./configure --prefix=whatever --enable-multicast --with-devel-headers \
+              --enable-opal-multi-threads
+
+   If you plan to run ORCM across multiple nodes and want to detect/respond to
+   node failures, then add:
+
+   --enable-heartbeat --enable-sensors
+
+   If you want to minimize your memory footprint, you can "not-build" a number
+   of standard ORTE modules. See one of the platform files (such as
+   contrib/platform/cisco/linux) for an example configuration. Note that you
+   can always use a platform file to build OMPI for ORCM. Platform files
+   replace all other configure options - for example:
+
+     shell$ ./configure --prefix=whatever --platform=contrib/platform/cisco/linux
 
 4. Build and install the OMPI software:
 
@@ -62,7 +77,7 @@ OpenRCM:
 2. The build requires that you start with a very simple autogen
    script:
 
-    shell$ ./autogen.sh
+    shell$ ./autogen.pl
 
 3. Configure the OpenRCM software. Note that you must tell the
    configure where to find the Open MPI build you installed!

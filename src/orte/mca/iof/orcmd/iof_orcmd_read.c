@@ -35,6 +35,7 @@
 #endif
 
 #include "opal/dss/dss.h"
+#include "opal/util/output.h"
 
 #include "orte/mca/errmgr/errmgr.h"
 #include "orte/mca/odls/odls_types.h"
@@ -144,9 +145,9 @@ void orte_iof_orcmd_read_handler(int fd, short event, void *cbdata)
     /* otherwise, just print it out locally - we don't send to anyone
      * because there is no HNP to capture and display it
      */
-    if (orcm_redirect_stderr) {
+    if (opal_output_redirected_to_syslog) {
         /* dump the output to syslog */
-        syslog(LOG_ERR, "%s", data);
+        syslog(opal_output_redirected_syslog_pri, "%s", data);
     } else if (ORTE_IOF_STDOUT & rev->tag || orte_xml_output) {
         orte_iof_base_write_output(&rev->name, rev->tag, data, numbytes, orte_iof_base.iof_write_stdout->wev);
     } else {

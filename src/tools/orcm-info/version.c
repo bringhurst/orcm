@@ -156,10 +156,10 @@ void orcm_info_show_orcm_version(const char *scope)
                                    ORTE_MAJOR_VERSION, ORTE_MINOR_VERSION, 
                                    ORTE_RELEASE_VERSION, 
                                    ORTE_GREEK_VERSION,
-                                   ORTE_WANT_SVN, ORTE_SVN_R));
+                                   ORTE_WANT_REPO_REV, ORTE_REPO_REV));
     free(tmp);
     asprintf(&tmp, "%s:version:svn", orcm_info_type_orte);
-    orcm_info_out("Open RTE SVN revision", tmp, ORTE_SVN_R);
+    orcm_info_out("Open RTE SVN revision", tmp, ORTE_REPO_REV);
     free(tmp);
     asprintf(&tmp, "%s:version:release_date", orcm_info_type_orte);
     orcm_info_out("Open RTE release date", tmp, ORTE_RELEASE_DATE);
@@ -171,10 +171,10 @@ void orcm_info_show_orcm_version(const char *scope)
                                    OPAL_MAJOR_VERSION, OPAL_MINOR_VERSION, 
                                    OPAL_RELEASE_VERSION, 
                                    OPAL_GREEK_VERSION,
-                                   OPAL_WANT_SVN, OPAL_SVN_R));
+                                   OPAL_WANT_REPO_REV, OPAL_REPO_REV));
     free(tmp);
     asprintf(&tmp, "%s:version:svn", orcm_info_type_opal);
-    orcm_info_out("OPAL SVN revision", tmp, OPAL_SVN_R);
+    orcm_info_out("OPAL SVN revision", tmp, OPAL_REPO_REV);
     free(tmp);
     asprintf(&tmp, "%s:version:release_date", orcm_info_type_opal);
     orcm_info_out("OPAL release date", tmp, OPAL_RELEASE_DATE);

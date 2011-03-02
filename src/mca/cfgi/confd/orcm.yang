@@ -236,7 +236,7 @@ module orcm {
             key node-id;
 	    leaf node-id {
 	        description "Index of node in array";
-		type int32;
+		type uint32;
 	    }
             leaf node-name {
                 description "Node name";
