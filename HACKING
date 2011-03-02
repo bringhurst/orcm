@@ -1,4 +1,4 @@
-Copyright (c) 2009      Cisco Systems, Inc.  All rights reserved.
+Copyright (c) 2009-2011 Cisco Systems, Inc.  All rights reserved.
 $COPYRIGHT$
 
 Additional copyrights may follow
@@ -82,7 +82,8 @@ OpenRCM:
 3. Configure the OpenRCM software. Note that you must tell the
    configure where to find the Open MPI build you installed!
 
-    shell$ ./configure --prefix=whatever --with-orte=ompi-prefix-given
+    shell$ ./configure --prefix=whatever --with-orte=<ompi-prefix-given> \
+              --with-orte-plugin-dir=<ompi-prefix-given>/lib/open-rte
 
 4. Build and install the ORCM software:
 
@@ -107,9 +108,8 @@ or try to run production performance numbers with debugging builds.
 
 If you wish to build an optimized version of Open MPI from a
 developer's checkout for use with OpenRCM, then you need to slightly
-modify the ./configure line:
-
-    shell$ ./configure --prefix=whatever --enable-multicast --enable-bootstrap --with-devel-headers --disable-debug
+modify the ./configure line by adding --disable-debug to your other
+options.
 
 
 Other Dependencies
