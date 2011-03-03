@@ -56,6 +56,11 @@ To build the required support, follow these steps:
 
      shell$ ./configure --prefix=whatever --platform=contrib/platform/cisco/linux
 
+   For a full list of configure options, including directions on how to add
+   confd support, use:
+
+     shell$ ./configure --help
+
 4. Build and install the OMPI software:
 
     shell$ make clean all install > /dev/null
