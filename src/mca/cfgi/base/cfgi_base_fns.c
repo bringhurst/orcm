@@ -459,6 +459,7 @@ int orcm_cfgi_base_check_job(orte_job_t *jdat)
 {
     int i;
     orte_app_context_t *app;
+    char *str;
 
     /* must have at least one app */
     if (NULL == opal_pointer_array_get_item(jdat->apps, 0)) {
@@ -475,18 +476,38 @@ int orcm_cfgi_base_check_job(orte_job_t *jdat)
             continue;
         }
         if (NULL == app->app || NULL == app->argv || 0 == opal_argv_count(app->argv)) {
+            OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                 "%s MISSING APP INFO name %s argv %s",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                 (NULL == app->app) ? "NULL" : app->app,
+                                 (NULL == app->argv) ? "NULL" : app->argv[0]));
             return ORCM_ERR_NO_EXE_SPECIFIED;
         }
         if (app->num_procs <= 0) {
+            OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                 "%s NUM PROCS NOT SET name %s np %d",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                 (NULL == app->app) ? "NULL" : app->app,
+                                 app->num_procs));
             return ORCM_ERR_INVALID_NUM_PROCS;
         }
         /* ensure we can find the executable */
         if (NULL == app->env || 0 == opal_argv_count(app->env)) {
             if (ORTE_SUCCESS != orte_util_check_context_app(app, environ)) {
+                OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                     "%s EXEC NOT FOUND: NO ENV name %s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     (NULL == app->app) ? "NULL" : app->app));
                 return ORCM_ERR_EXE_NOT_FOUND;
             }
         } else {
             if (ORTE_SUCCESS != orte_util_check_context_app(app, app->env)) {
+                str = opal_argv_join(app->env, ':');
+                OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                     "%s EXEC NOT FOUND name %s env %s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     (NULL == app->app) ? "NULL" : app->app, str));
+                free(str);
                 return ORCM_ERR_EXE_NOT_FOUND;
             }
         }

@@ -65,7 +65,7 @@ module orcm {
         }
     }
 
-    container config {
+    container orcm-config {
         // This will be where we store configuration data about the cluster-manager. The top
         //   container stores data about all installed applications -- this will be populated
         //   by the installation manager.  Beneath each installed application, we store
@@ -145,7 +145,7 @@ module orcm {
             leaf app-name {
 		description "Application name";
 		type leafref {
-                  path "/orcm:config/install/app/name";
+                  path "/orcm:orcm-config/install/app/name";
                 }
             }
 	    leaf enable-recovery {
@@ -164,7 +164,7 @@ module orcm {
                     //type leafref {
                         // This points back to the installed binaries to make sure you can't
                         //   configure a binary that hasn't already been installed
-                    //    path "/orcm:config/install/app[name=current()/../../name]/bin/name";
+                    //    path "/orcm:orcm-config/install/app[name=current()/../../name]/bin/name";
                     //}
                     type string;
                     description "Executable name";

@@ -185,7 +185,7 @@ static boolean cfgi_confd_subscribe(qc_confd_t *cc)
                        0,			/* priority */
                        orcm__ns,
                        install_cmds,
-                       "/config/install"))
+                       "/orcm:orcm-config/install"))
         return FALSE;
 
     /*
@@ -197,7 +197,7 @@ static boolean cfgi_confd_subscribe(qc_confd_t *cc)
                        5,			/* priority */
                        orcm__ns,
                        config_cmds,
-                       "/config/run"))
+                       "/orcm:orcm-config/run"))
         return FALSE;
 
     /*
@@ -513,6 +513,7 @@ static boolean parse(confd_hkeypath_t *kp,
                 } else {
                     opal_output(0, "SPECIFIED APP %s IS INVALID - IGNORING",
                                 (NULL == jdata->name) ? "NULL" : jdata->name);
+                    opal_dss.dump(0, jdata, ORTE_JOB);
                     OBJ_RELEASE(jdata);
                 }
                 /* clear this from the array */
@@ -555,28 +556,128 @@ static boolean parse(confd_hkeypath_t *kp,
             }
             /* delete only the specified installed app */
             cptr = CONFD_GET_CBUFPTR(vp);
+            vp = qc_find_key(kp, orcm_exec, 0);
+            param = NULL;
+            if (NULL == vp) {
+                param = NULL;
+            } else {
+                param = CONFD_GET_CBUFPTR(vp);
+            }
             for (j=0; j < installed_apps.size; j++) {
                 if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, j))) {
                     continue;
                 }
                 if (0 == strcasecmp(jdat->name, cptr)) {
-                    opal_pointer_array_set_item(&installed_apps, j, NULL);
-                    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                         "%s DELETING INSTALLED APPLICATION %s",
-                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                         (NULL == jdat->name) ? "NULL" : jdat->name));
-                    OBJ_RELEASE(jdat);
-                    /* see if any instances of this are running - if so, kill them too */
-                    for (j=0; j < orte_job_data->size; j++) {
-                        if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, j))) {
-                            continue;
+                    if (NULL == param) {
+                        switch(qc_get_xmltag(kp,1)) {
+                        case orcm_enable_recovery:
+                            OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                                 "%s DELETING ENABLE_RECOVERY FOR APPLICATION %s",
+                                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                                 (NULL == jdat->name) ? "NULL" : jdat->name));
+                            jdat->enable_recovery = false;
+                            break;
+                        default:
+                            /* delete the entire application */
+                            opal_pointer_array_set_item(&installed_apps, j, NULL);
+                            OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                                 "%s DELETING INSTALLED APPLICATION %s",
+                                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                                 (NULL == jdat->name) ? "NULL" : jdat->name));
+                            OBJ_RELEASE(jdat);
+                            /* see if any instances of this are running - if so, kill them too */
+                            for (j=0; j < orte_job_data->size; j++) {
+                                if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, j))) {
+                                    continue;
+                                }
+                                if (0 == strcasecmp(cptr, jdat->name)) {
+                                    jdata = OBJ_NEW(orte_job_t);
+                                    jdata->jobid = jdat->jobid;
+                                    jdata->state = ORTE_JOB_STATE_ABORT_ORDERED;  /* flag that this job is to be aborted */
+                                    /* add it to the active array for processing upon commit */
+                                    opal_pointer_array_add(&active_apps, jdata);
+                                }
+                            }
+                            break;
                         }
-                        if (0 == strcasecmp(cptr, jdat->name)) {
-                            jdata = OBJ_NEW(orte_job_t);
-                            jdata->jobid = jdat->jobid;
-                            jdata->state = ORTE_JOB_STATE_ABORT_ORDERED;  /* flag that this job is to be aborted */
-                            /* add it to the active array for processing upon commit */
-                            opal_pointer_array_add(&active_apps, jdata);
+                    } else {
+                        /* delete a field from a specific executable within this app */
+                        for (app_idx=0; app_idx < jdat->apps->size; app_idx++) {
+                            if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, app_idx))) {
+                                continue;
+                            }
+                            if (0 == strcasecmp(app->app, param)) {
+                                /* found the executable - determine the field they want deleted */
+                                switch(qc_get_xmltag(kp,1)) {
+                                case orcm_argv:
+                                    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                                         "%s DELETING ARGV FROM INSTALLED APP %s EXEC %s",
+                                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                                         (NULL == jdat->name) ? "NULL" : jdat->name,
+                                                         param));
+                                    opal_argv_free(app->argv);
+                                    app->argv = NULL;
+                                    break;
+                                case orcm_env:
+                                    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                                         "%s DELETING ENV FROM INSTALLED APP %s EXEC %s",
+                                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                                         (NULL == jdat->name) ? "NULL" : jdat->name,
+                                                         param));
+                                    opal_argv_free(app->env);
+                                    app->env = NULL;
+                                    break;
+                                case orcm_gid:
+                                    app->gid = -1;
+                                    break;
+                                case orcm_uid:
+                                    app->uid = -1;
+                                    break;
+                                case orcm_max_restarts:
+                                    /* assuming that this means the user previously
+                                     * had specified a max_restarts value, but now
+                                     * wants it to be infinite - i.e., "no maximum
+                                     * on restarts"
+                                     */
+                                    app->max_restarts = -1;
+                                    app->recovery_defined = true;
+                                    break;
+                                case orcm_nodes:
+                                    if (NULL != app->dash_host) {
+                                        opal_argv_free(app->dash_host);
+                                        app->dash_host = NULL;
+                                    }
+                                    break;
+                                case orcm_replicas:
+                                    /* if the user wants no replicas, then this app
+                                     * won't be run - however, we leave it in the
+                                     * install config in case the user wants to 
+                                     * run it again later
+                                     */
+                                    app->num_procs = 0;
+                                    break;
+                                case orcm_working_dir:
+                                    if (NULL != app->cwd) {
+                                        free(app->cwd);
+                                        app->cwd = NULL;
+                                    }
+                                    break;
+                                case orcm_leader_exclude:
+                                    /* removing this field implies unsetting the
+                                     * value so this app can become a leader - but
+                                     * we don't use it now, so just ignore
+                                     */
+                                    break;
+                                default:
+                                    opal_output(0, "%s REQUEST TO DELETE AN UNKNOWN XML KEY FROM APP %s EXEC %s",
+                                                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                                (NULL == jdat->name) ? "NULL" : jdat->name,
+                                                param);
+                                    break;
+                                }
+                                /* only one executable could be specified */
+                                break;
+                            }
                         }
                     }
                     ret = TRUE;
@@ -777,14 +878,6 @@ static boolean parse(confd_hkeypath_t *kp,
                 }
             }
             break;
-        case orcm_gid:
-            jdata->gid = CONFD_GET_INT32(value);
-            ret = TRUE;
-            break;
-        case orcm_uid:
-            jdata->uid = CONFD_GET_INT32(value);
-            ret = TRUE;
-            break;
         case orcm_enable_recovery:
             i32 = CONFD_GET_INT32(value);
             if (0 != i32) {
@@ -858,6 +951,11 @@ static boolean parse(confd_hkeypath_t *kp,
             ret = TRUE;
             break;
         case orcm_nodes:
+            /* remove any prior data */
+            if (NULL != app->dash_host) {
+                opal_argv_free(app->dash_host);
+                app->dash_host = NULL;
+            }
             /* the equivalent to -host */
             clist = CONFD_GET_LIST(value);
             imax = CONFD_GET_LISTSIZE(value);
@@ -867,6 +965,15 @@ static boolean parse(confd_hkeypath_t *kp,
             ret = TRUE;
             break;
         case orcm_argv:
+            /* remove any prior data */
+            if (NULL != app->argv) {
+                opal_argv_free(app->argv);
+                app->argv = NULL;
+                /* restore the app's name to argv[0] if known */
+                if (NULL != app->app) {
+                    opal_argv_append_nosize(&app->argv, opal_basename(app->app));
+                }
+            }
             clist = CONFD_GET_LIST(value);
             imax = CONFD_GET_LISTSIZE(value);
             for (i=0; i < imax; i++) {
@@ -875,6 +982,11 @@ static boolean parse(confd_hkeypath_t *kp,
             ret = TRUE;
             break;
         case orcm_env:
+            /* remove any prior data */
+            if (NULL != app->env) {
+                opal_argv_free(app->env);
+                app->env = NULL;
+            }
             clist = CONFD_GET_LIST(value);
             imax = CONFD_GET_LISTSIZE(value);
             for (i=0; i < imax; i++) {
@@ -884,6 +996,14 @@ static boolean parse(confd_hkeypath_t *kp,
             break;
         case orcm_working_dir:
             app->cwd = strdup(CONFD_GET_CBUFPTR(value));
+            ret = TRUE;
+            break;
+        case orcm_gid:
+            app->gid = CONFD_GET_INT32(value);
+            ret = TRUE;
+            break;
+        case orcm_uid:
+            app->uid = CONFD_GET_INT32(value);
             ret = TRUE;
             break;
 
@@ -1563,6 +1683,4 @@ static void copy_defaults(orte_job_t *target, orte_job_t *src)
     target->num_apps = src->num_apps;
     target->controls = src->controls;
     target->stdin_target = src->stdin_target;
-    target->uid = src->uid;
-    target->gid = src->gid;
 }
