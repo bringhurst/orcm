@@ -185,7 +185,7 @@ static boolean cfgi_confd_subscribe(qc_confd_t *cc)
                        0,			/* priority */
                        orcm__ns,
                        install_cmds,
-                       "/orcm:orcm-config/install"))
+                       "/orcmConfig/install"))
         return FALSE;
 
     /*
@@ -197,7 +197,7 @@ static boolean cfgi_confd_subscribe(qc_confd_t *cc)
                        5,			/* priority */
                        orcm__ns,
                        config_cmds,
-                       "/orcm:orcm-config/run"))
+                       "/orcmConfig/run"))
         return FALSE;
 
     /*
@@ -1372,6 +1372,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         goto release;
         break;
 
+        /****  NODE DATA  ****/
     case orcm_node_id:
         CONFD_SET_CBUF(&val, "NODEID", strlen("NODEID"));
         confd_data_reply_value(tctx, &val);
@@ -1381,7 +1382,22 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                              "%s REQUEST FOR NODE NAME ELEMENT",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        CONFD_SET_CBUF(&val, "NODENAME", strlen("NODENAME"));
+        vp = qc_find_key(kp, orcm_node, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR NODE NAME - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR NODE NAME - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
+            goto notfound;
+        }
+        if (NULL == node->name) {
+            CONFD_SET_CBUF(&val, "UNKNOWN", strlen("UNKNOWN"));
+        } else {
+            CONFD_SET_CBUF(&val, node->name, strlen(node->name));
+        }
         confd_data_reply_value(tctx, &val);
         goto release;
 
@@ -1389,19 +1405,21 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                              "%s REQUEST FOR NODE STATE ELEMENT",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        vp = qc_find_key(kp, orcm_orte_node, 0);
+        vp = qc_find_key(kp, orcm_node, 0);
         if (NULL == vp) {
             opal_output(0, "%s CONFD REQUEST FOR NODE STATE - NO NODE INDEX PROVIDED",
                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
-        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_INT32(vp)))) {
-            opal_output(0, "%s CONFD REQUEST FOR NODE STATE - NODE %d NOT FOUND",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_INT32(vp));
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR NODE STATE - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
             goto notfound;
         }
         switch (node->state) {
         case ORTE_NODE_STATE_UP:
+        case ORTE_NODE_STATE_NOT_INCLUDED:
+        case ORTE_NODE_STATE_DO_NOT_USE:
             CONFD_SET_CBUF(&val, "UP", strlen("UP"));
             break;
         case ORTE_NODE_STATE_DOWN:
@@ -1420,15 +1438,15 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                              "%s REQUEST FOR NODE TEMP ELEMENT",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        vp = qc_find_key(kp, orcm_orte_node, 0);
+        vp = qc_find_key(kp, orcm_node, 0);
         if (NULL == vp) {
             opal_output(0, "%s CONFD REQUEST FOR NODE TEMP - NO NODE INDEX PROVIDED",
                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
-        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_INT32(vp)))) {
-            opal_output(0, "%s CONFD REQUEST FOR NODE TEMP - NODE %d NOT FOUND",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_INT32(vp));
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR NODE TEMP - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
             goto notfound;
         }
         CONFD_SET_INT8(&val, 1);
@@ -1439,15 +1457,15 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                              "%s REQUEST FOR NODE NUM PROCS ELEMENT",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        vp = qc_find_key(kp, orcm_orte_node, 0);
+        vp = qc_find_key(kp, orcm_node, 0);
         if (NULL == vp) {
             opal_output(0, "%s CONFD REQUEST FOR NODE NUM PROCS - NO NODE INDEX PROVIDED",
                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
-        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_INT32(vp)))) {
-            opal_output(0, "%s CONFD REQUEST FOR NODE NUM PROCS - NODE %d NOT FOUND",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_INT32(vp));
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR NODE NUM PROCS - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
             goto notfound;
         }
         i32 = node->num_procs;
@@ -1561,7 +1579,7 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
         goto notfound;
         break;
 
-    case orcm_orte_node:
+    case orcm_node:
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                              "%s REQUEST FOR NEXT NODE",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));

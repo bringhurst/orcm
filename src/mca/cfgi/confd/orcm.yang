@@ -1,3 +1,8 @@
+/* Hey Emacs use -*- mode: C -*- */
+/*
+ * Copyright (c) 2010-2011 Cisco Systems, Inc. All rights reserved. 
+ */
+
 module orcm {
     namespace "http://www.cisco.com/ns/orcm";
     prefix "orcm";
@@ -65,7 +70,7 @@ module orcm {
         }
     }
 
-    container orcm-config {
+    container orcmConfig {
         // This will be where we store configuration data about the cluster-manager. The top
         //   container stores data about all installed applications -- this will be populated
         //   by the installation manager.  Beneath each installed application, we store
@@ -76,7 +81,7 @@ module orcm {
         //   data model (not under the "install" container), but we can't do it that way b/c
         //   of a current tail-f limitation for referencing nested lists.
 	description "Cluster Manager configuration";
-        tailf:alt-name "orcm";
+        tailf:alt-name "orcm-config";
         tailf:cli-add-mode;
 	container install {
             tailf:cli-add-mode;
@@ -145,7 +150,7 @@ module orcm {
             leaf app-name {
 		description "Application name";
 		type leafref {
-                  path "/orcm:orcm-config/install/app/name";
+                  path "/orcmConfig/install/app/name";
                 }
             }
 	    leaf enable-recovery {
@@ -180,9 +185,9 @@ module orcm {
         }
     }
     
-    container oper {
+    container orcmOper {
         config false;
-        tailf:alt-name orcm;
+        tailf:alt-name "orcm";
         tailf:callpoint orcm_oper;
         description "ORCM operational data";
         list job {
@@ -232,7 +237,7 @@ module orcm {
                 }
             }
         }
-        list orte-node {
+        list node {
             key node-id;
 	    leaf node-id {
 	        description "Index of node in array";
