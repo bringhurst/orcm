@@ -34,6 +34,7 @@ typedef unsigned int boolean;
 #include "orte/mca/plm/base/plm_private.h"
 #include "orte/runtime/orte_globals.h"
 #include "orte/util/context_fns.h"
+#include "orte/util/error_strings.h"
 
 #include "mca/pnp/pnp.h"
 #include "mca/cfgi/cfgi.h"
@@ -697,6 +698,27 @@ static boolean parse(confd_hkeypath_t *kp,
                     if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, j))) {
                         continue;
                     }
+                    /* if the job is already terminated, then just remove it from
+                     * the array - if we try to tell it to die, nothing will
+                     * happen and thus the errmgr won't remove the job for us
+                     * Reserve the special case of procs_migrating as there
+                     * could be other procs still running
+                     */
+                    if (ORTE_JOB_STATE_UNTERMINATED < jdat->state &&
+                        ORTE_JOB_STATE_PROCS_MIGRATING != jdat->state) {
+                        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                             "%s APP %s IS IN STATE %s - REMOVING FROM JOB ARRAY",
+                                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                             (NULL == jdat->name) ? "NULL" : jdat->name,
+                                             orte_job_state_to_str(jdat->state)));
+                        opal_pointer_array_set_item(orte_job_data, j, NULL);
+                        OBJ_RELEASE(jdat);
+                        continue;
+                    }
+                    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                         "%s ORDERING APP %s TO ABORT",
+                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                         (NULL == jdat->name) ? "NULL" : jdat->name));
                     jdata = OBJ_NEW(orte_job_t);
                     jdata->jobid = jdat->jobid;
                     jdata->state = ORTE_JOB_STATE_ABORT_ORDERED;  /* flag that this job is to be aborted */
@@ -707,28 +729,43 @@ static boolean parse(confd_hkeypath_t *kp,
                 break;
             }
             /* find this in the active job array */
-            jdata = OBJ_NEW(orte_job_t);
             cptr = CONFD_GET_CBUFPTR(vp);
+            ret = FALSE;
             for (j=0; j < orte_job_data->size; j++) {
                 if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, j))) {
                     continue;
                 }
                 if (0 == strcmp(cptr, jdat->instance)) {
-                    jdata->jobid = jdat->jobid;
+                    /* if the job is already terminated, then just remove it from
+                     * the array - if we try to tell it to die, nothing will
+                     * happen and thus the errmgr won't remove the job for us
+                     * Reserve the special case of procs_migrating as there
+                     * could be other procs still running
+                     */
+                    if (ORTE_JOB_STATE_UNTERMINATED < jdat->state &&
+                        ORTE_JOB_STATE_PROCS_MIGRATING != jdat->state) {
+                        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                             "%s APP %s IS IN STATE %s - REMOVING FROM JOB ARRAY",
+                                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                             (NULL == jdat->name) ? "NULL" : jdat->name,
+                                             orte_job_state_to_str(jdat->state)));
+                        opal_pointer_array_set_item(orte_job_data, j, NULL);
+                        OBJ_RELEASE(jdat);
+                    } else {
+                        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                             "%s ORDERING APP %s TO ABORT",
+                                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                             (NULL == jdat->name) ? "NULL" : jdat->name));
+                        jdata = OBJ_NEW(orte_job_t);
+                        jdata->jobid = jdat->jobid;
+                        jdata->state = ORTE_JOB_STATE_ABORT_ORDERED;  /* flag that this job is to be aborted */
+                        /* add it to the active array for processing upon commit */
+                        opal_pointer_array_add(&active_apps, jdata);
+                    }
+                    ret = TRUE;
                     break;
                 }
             }
-            if (ORTE_JOBID_INVALID == jdata->jobid) {
-                opal_output(0, "%s Job %s not found - cannot delete",
-                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), cptr);
-                OBJ_RELEASE(jdata);
-                ret = FALSE;
-                break;
-            }
-            jdata->state = ORTE_JOB_STATE_ABORT_ORDERED;  /* flag that this job is to be aborted */
-            /* add it to the active array for processing upon commit */
-            opal_pointer_array_add(&active_apps, jdata);
-            ret = TRUE;
         }
         break;
 

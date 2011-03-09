@@ -196,11 +196,6 @@ static int update_state(orte_jobid_t job,
     orte_job_t *jdt;
     uint16_t jfam;
 
-    /* should never get this call as it is only executed for local
-     * procs. Only exception is comm_failure as this is reported
-     * by the OOB when a socket connection is dropped
-     */
-
     OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
                          "%s errmgr:update_state for job %s proc %s",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
@@ -476,7 +471,7 @@ static void remote_update(int status,
     orte_proc_state_t state;
     orte_exit_code_t exit_code;
     pid_t pid;
-    bool restart_reqd, job_released;
+    bool restart_reqd, job_released, job_done;
     uint16_t jfam;
 
     OPAL_OUTPUT_VERBOSE((5, orte_errmgr_base.output,
@@ -580,10 +575,32 @@ static void remote_update(int status,
                 }
                 /* release the object */
                 OBJ_RELEASE(proc);
-                /* if the job is now empty, remove it too */
+                /* if the job is now empty, or if the only procs remaining are stopped
+                 * due to exceeding restart (and thus cannot run), remove it too
+                 */
                 if (0 == jdata->num_procs) {
                     opal_pointer_array_set_item(orte_job_data, ORTE_LOCAL_JOBID(jdata->jobid), NULL);
                     OBJ_RELEASE(jdata);
+                } else {
+                    job_done = true;
+                    for (k=0; k < jdata->procs->size; k++) {
+                        if (NULL == (pptr = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, k))) {
+                            continue;
+                        }
+                        opal_output(0, "%s CHECKING PROC %s STATE %s",
+                                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                    ORTE_NAME_PRINT(&pptr->name),
+                                    orte_proc_state_to_str(pptr->state));
+                        if (pptr->state < ORTE_PROC_STATE_UNTERMINATED ||
+                            ORTE_PROC_STATE_CANNOT_RESTART != pptr->state) {
+                            job_done = false;
+                            break;
+                        }
+                    }
+                    if (job_done) {
+                        opal_pointer_array_set_item(orte_job_data, ORTE_LOCAL_JOBID(jdata->jobid), NULL);
+                        OBJ_RELEASE(jdata);
+                    }
                 }
             } else {
                 OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
