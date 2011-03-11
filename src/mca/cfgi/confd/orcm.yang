@@ -308,5 +308,51 @@ module orcm {
                 }
             }
         }
+	list running-software {
+	    key id;
+	    leaf id {
+	        description "Index of application in array";
+		type uint32;
+	    }
+            leaf name {
+                description "Plain name of the application";
+                type string;
+            }
+            leaf enable-recovery {
+                description "Enable recovery of failed processes";
+                type string;
+            }
+            list running-app {
+                key idx;
+                leaf idx {
+                    description "ORCM app ID";
+                    type uint32;
+                }
+                leaf path {
+                    description "Name of executable";
+                    type string;
+                }
+                leaf version {
+                    description "Version of this binary";
+                    type app-version_t;
+                }
+                leaf max-restarts {
+                    description "Max # of restarts";
+                    type int32;
+                }
+                leaf replicas {
+                    description "Default num replicas";
+                    type int32;
+                }
+                leaf uid {
+                    description "User id to be used";
+                    type int32;
+                }
+                leaf gid {
+                     description "Group id to be used";
+                     type int32;
+                }
+            }
+        }
     }
 }
