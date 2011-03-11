@@ -978,6 +978,7 @@ static boolean parse(confd_hkeypath_t *kp,
             break;
         case orcm_version:
             opal_output_verbose(2, orcm_cfgi_base.output, "version: %s", CONFD_GET_CBUFPTR(value));
+            app->version = strdup(CONFD_GET_CBUFPTR(value));
             ret = TRUE;
             break;
         case orcm_config_set:
@@ -1088,19 +1089,6 @@ static boolean install_handler(confd_hkeypath_t *kp,
     return parse(kp, op, value, notify_type, true);
 }
 
-static orte_job_t* get_job(orte_jobid_t job)
-{
-    orte_job_t *jdt;
-
-    if (NULL == (jdt = orte_get_job_data_object(job))) {
-        /* job not known */
-        opal_output(0, "%s JOB %s NOT KNOWN",
-                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(job));
-        return NULL;
-    }
-    return jdt;
-}
-
 static orte_proc_t* get_child(orte_process_name_t *proc)
 {
     orte_job_t *jdt;
@@ -1171,13 +1159,18 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                              "%s REQUEST FOR JOB NAME ELEMENT",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         vp = qc_find_key(kp, orcm_job, 0);
-        if (NULL == vp) {
-            opal_output(0, "%s CONFD REQUEST FOR JOB NAME - NO JOB PROVIDED",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-            goto notfound;
+        if (NULL != vp) {
+            jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));
+            jdat = orte_get_job_data_object(jobid);
+        } else {
+            vp = qc_find_key(kp, orcm_installed_software, 0);
+            if (NULL == vp) {
+                opal_output(0, "%s CONFD REQUEST FOR JOB NAME - NO JOB PROVIDED",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                goto notfound;
+            }
+            jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
         }
-        jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));
-        jdat = get_job(jobid);
         if (NULL == jdat) {
             /* job no longer exists */
             opal_output(0, "%s CONFD REQUEST FOR JOB NAME - JOB %s NOT FOUND",
@@ -1193,19 +1186,63 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         goto release;
         break;
 
+    case orcm_enable_recovery:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR ENABLE RECOVERY ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_job, 0);
+        if (NULL != vp) {
+            jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));
+            jdat = orte_get_job_data_object(jobid);
+        } else {
+            vp = qc_find_key(kp, orcm_installed_software, 0);
+            if (NULL == vp) {
+                opal_output(0, "%s CONFD REQUEST FOR ENABLE RECOVERY - NO JOB PROVIDED",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                goto notfound;
+            }
+            jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
+        }
+        if (NULL == jdat) {
+            /* job no longer exists */
+            opal_output(0, "%s CONFD REQUEST FOR ENABLE RECOVERY - JOB %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
+            goto notfound;
+        }
+        if (jdat->recovery_defined) {
+            if (jdat->enable_recovery) {
+                CONFD_SET_CBUF(&val, "Y", 1);
+            } else {
+                CONFD_SET_CBUF(&val, "N", 1);
+            }
+        } else {
+            if (orte_enable_recovery) {
+                CONFD_SET_CBUF(&val, "Y", 1);
+            } else {
+                CONFD_SET_CBUF(&val, "N", 1);
+            }
+        }
+        confd_data_reply_value(tctx, &val);
+        goto release;
+        break;
+
     case orcm_path:
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                              "%s REQUEST FOR PATH ELEMENT",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         vp = qc_find_key(kp, orcm_job, 0);
-        if (NULL == vp) {
-            opal_output(0, "%s CONFD REQUEST FOR PATH - NO JOB PROVIDED",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-            goto notfound;
+        if (NULL != vp) {
+            jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));
+            jdat = orte_get_job_data_object(jobid);
+        } else {
+            vp = qc_find_key(kp, orcm_installed_software, 0);
+            if (NULL == vp) {
+                opal_output(0, "%s CONFD REQUEST FOR PATH - NO JOB PROVIDED",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                goto notfound;
+            }
+            jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
         }
-        /* get the referenced app_context */
-        jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));
-        jdat = get_job(jobid);
         if (NULL == jdat) {
             /* job no longer exists */
             opal_output(0, "%s CONFD REQUEST FOR PATH - JOB %s NOT FOUND",
@@ -1214,9 +1251,12 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         }
         vp = qc_find_key(kp, orcm_app_context, 0);
         if (NULL == vp) {
-            opal_output(0, "%s CONFD REQUEST FOR PATH - NO APP INDEX PROVIDED",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-            goto notfound;
+            vp = qc_find_key(kp, orcm_installed_app, 0);
+            if (NULL == vp) {
+                opal_output(0, "%s CONFD REQUEST FOR PATH - NO APP INDEX PROVIDED",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                goto notfound;
+            }
         }
         app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
         if (NULL == app) {
@@ -1239,14 +1279,18 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                              "%s REQUEST FOR RESTARTS ELEMENT",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         vp = qc_find_key(kp, orcm_job, 0);
-        if (NULL == vp) {
-            opal_output(0, "%s CONFD REQUEST FOR MAX RESTARTS - NO JOB PROVIDED",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-            goto notfound;
+        if (NULL != vp) {
+            jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));
+            jdat = orte_get_job_data_object(jobid);
+        } else {
+            vp = qc_find_key(kp, orcm_installed_software, 0);
+            if (NULL == vp) {
+                opal_output(0, "%s CONFD REQUEST FOR MAX RESTARTS - NO JOB PROVIDED",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                goto notfound;
+            }
+            jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
         }
-        /* get the referenced app_context */
-        jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));
-        jdat =get_job(jobid);
         if (NULL == jdat) {
             /* job no longer exists */
             opal_output(0, "%s CONFD REQUEST FOR MAX RESTARTS - JOB %s NOT FOUND",
@@ -1255,9 +1299,12 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         }
         vp = qc_find_key(kp, orcm_app_context, 0);
         if (NULL == vp) {
-            opal_output(0, "%s CONFD REQUEST FOR MAX RESTARTS - NO APP INDEX PROVIDED",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-            goto notfound;
+            vp = qc_find_key(kp, orcm_installed_app, 0);
+            if (NULL == vp) {
+                opal_output(0, "%s CONFD REQUEST FOR MAX RESTARTS - NO APP INDEX PROVIDED",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                goto notfound;
+            }
         }
         app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
         if (NULL == app) {
@@ -1266,11 +1313,40 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                         CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
             goto notfound;
         }
-        i32 = app->max_restarts;
+        if (app->recovery_defined) {
+            i32 = app->max_restarts;
+        } else {
+            i32 = orte_max_restarts;
+        }
         CONFD_SET_INT32(&val, i32);
         confd_data_reply_value(tctx, &val);
         goto release;
         break;
+
+    case orcm_name:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR INSTALLED APPNAME ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_installed_software, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR APP NAME - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
+        if (NULL == jdat) {
+            /* job no longer exists */
+            opal_output(0, "%s CONFD REQUEST FOR APP NAME - JOB %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
+            goto notfound;
+        }
+        if (NULL == jdat->name) {
+            CONFD_SET_CBUF(&val, "UNNAMED", strlen("UNNAMED"));
+        } else {
+            CONFD_SET_CBUF(&val, jdat->name, strlen(jdat->name));
+        }
+        confd_data_reply_value(tctx, &val);
+        goto release;
 
     case orcm_app_name:
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
@@ -1282,9 +1358,8 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
             goto notfound;
         }
-        /* get the referenced app_context */
         jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));
-        jdat = get_job(jobid);
+        jdat = orte_get_job_data_object(jobid);
         if (NULL == jdat) {
             /* job no longer exists */
             opal_output(0, "%s CONFD REQUEST FOR APP NAME - JOB %s NOT FOUND",
@@ -1409,6 +1484,150 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         goto release;
         break;
 
+        /****   INSTALLED APP DATA    ****/
+    case orcm_version:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR INSTALLED APP VERSION ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_installed_software, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR APP VERSION - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
+        if (NULL == jdat) {
+            /* job no longer exists */
+            opal_output(0, "%s CONFD REQUEST FOR APP VERSION - JOB %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
+            goto notfound;
+        }
+        vp = qc_find_key(kp, orcm_installed_app, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR APP VERSION - NO APP INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
+        if (NULL == app) {
+            opal_output(0, "%s CONFD REQUEST FOR APP VERSION - APP %d NOT FOUND IN JOB %s",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
+            goto notfound;
+        }
+        if (NULL == app->version) {
+            CONFD_SET_CBUF(&val, "----", strlen("----"));
+        } else {
+            CONFD_SET_CBUF(&val, app->version, strlen(app->version));
+        }
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_replicas:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR INSTALLED APP NUM REPLICAS ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_installed_software, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR APP NUM REPLICAS - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
+        if (NULL == jdat) {
+            /* job no longer exists */
+            opal_output(0, "%s CONFD REQUEST FOR APP NUM REPLICAS - JOB %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
+            goto notfound;
+        }
+        vp = qc_find_key(kp, orcm_installed_app, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR APP NUM REPLICAS - NO APP INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
+        if (NULL == app) {
+            opal_output(0, "%s CONFD REQUEST FOR APP NUM REPLICAS - APP %d NOT FOUND IN JOB %s",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
+            goto notfound;
+        }
+        i32 = app->num_procs;
+        CONFD_SET_INT32(&val, i32);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+ 
+    case orcm_uid:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR INSTALLED APP UID ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_installed_software, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR APP UID - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
+        if (NULL == jdat) {
+            /* job no longer exists */
+            opal_output(0, "%s CONFD REQUEST FOR APP UID - JOB %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
+            goto notfound;
+        }
+        vp = qc_find_key(kp, orcm_installed_app, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR APP UID - NO APP INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
+        if (NULL == app) {
+            opal_output(0, "%s CONFD REQUEST FOR APP UID - APP %d NOT FOUND IN JOB %s",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
+            goto notfound;
+        }
+        i32 = app->uid;
+        CONFD_SET_INT32(&val, i32);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+ 
+    case orcm_gid:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR INSTALLED APP GID ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_installed_software, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR APP GID - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
+        if (NULL == jdat) {
+            /* job no longer exists */
+            opal_output(0, "%s CONFD REQUEST FOR APP GID - JOB %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
+            goto notfound;
+        }
+        vp = qc_find_key(kp, orcm_installed_app, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR APP GID - NO APP INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
+        if (NULL == app) {
+            opal_output(0, "%s CONFD REQUEST FOR APP GID - APP %d NOT FOUND IN JOB %s",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
+            goto notfound;
+        }
+        i32 = app->gid;
+        CONFD_SET_INT32(&val, i32);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+ 
         /****  NODE DATA  ****/
     case orcm_node_id:
         CONFD_SET_CBUF(&val, "NODEID", strlen("NODEID"));
@@ -1535,6 +1754,7 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
     orte_proc_t *p;
     uint32_t app_idx;
     uint32_t i, ui32;
+    opal_pointer_array_t *array;
 
     switch (qc_get_xmltag(kp, 1)) {
     case orcm_job:
@@ -1561,13 +1781,38 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         ky = qc_find_key(kp, orcm_job, 0);
         if (NULL == ky) {
-            opal_output(0, "APP_CTX KEY NOT FOUND");
             goto notfound;
         }
         ui32 = CONFD_GET_UINT32(ky);
         jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, ui32);
         if (NULL == jdat) {
-            opal_output(0, "JOB %u NOT FOUND", ui32);
+            goto notfound;
+        }
+        if (next == -1) {
+            next = 0;
+        }
+        /* look for next non-NULL app context */
+        for (i=next; i < jdat->apps->size; i++) {
+            if (NULL != opal_pointer_array_get_item(jdat->apps, i)) {
+                CONFD_SET_UINT32(&key, i);
+                confd_data_reply_next_key(tctx, &key, 1, i + 1);
+                goto depart;
+            }
+        }
+        goto notfound;
+        break;
+
+    case orcm_installed_app:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR NEXT INSTALLED APP",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        ky = qc_find_key(kp, orcm_installed_software, 0);
+        if (NULL == ky) {
+            goto notfound;
+        }
+        ui32 = CONFD_GET_UINT32(ky);
+        jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, ui32);
+        if (NULL == jdat) {
             goto notfound;
         }
         if (next == -1) {
@@ -1589,10 +1834,16 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
                              "%s REQUEST FOR NEXT REPLICA",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         ky = qc_find_key(kp, orcm_job, 0);
-        if (NULL == ky) {
-            goto notfound;
+        if (NULL != ky) {
+            array = orte_job_data;
+        } else {
+            ky = qc_find_key(kp, orcm_installed_software, 0);
+            if (NULL == ky) {
+                goto notfound;
+            }
+            array = &installed_apps;
         }
-        jdat = get_job(CONFD_GET_UINT32(ky));
+        jdat = (orte_job_t*)opal_pointer_array_get_item(array, ui32);
         if (NULL == jdat) {
             goto notfound;
         }
@@ -1634,6 +1885,27 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
         goto notfound;
         break;
 
+    case orcm_installed_software:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR NEXT INSTALLED APP",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        if (next == -1) {
+            next = 0;
+        }
+        /* look for next non-NULL job site */
+        opal_output(0, "NEXT %ld", next);
+        for (i=next; i < installed_apps.size; i++) {
+            if (NULL != opal_pointer_array_get_item(&installed_apps, i)) {
+                opal_output(0, "RETURNING %u", i);
+                CONFD_SET_UINT32(&key, i);
+                confd_data_reply_next_key(tctx, &key, 1, i + 1);
+                goto depart;
+            }
+        }
+        opal_output(0, "NOT FOUND");
+        goto notfound;
+        break;
+
     default:
         opal_output(0, "OPER: UNRECOGNIZED OPTION");
         break;
@@ -1643,6 +1915,7 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
      * not found
      */
  notfound:
+    opal_output(0, "NOT FOUND");
     confd_data_reply_next_key(tctx, NULL, -1, -1);
 
  depart:
