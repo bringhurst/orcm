@@ -258,14 +258,21 @@ confd_nanny (void *arg)
      * confd interface state
      */
     qc_confd_t cc;
-    int idx;
+    int cnt;
     char log_pfx[48];
 
     snprintf(log_pfx, sizeof(log_pfx), "ORCM-DVM/%d", \
              (int)ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid));
 
+    cnt = 0;
     /* retry the connection setup infinite times */
     while (! connect_to_confd(&cc, log_pfx, stderr)) {
+        cnt++;
+        if (10 == cnt) {
+            opal_output(0, "%s FAILED TO CONNECT TO CONFD",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            cnt = 0;
+        }
         sleep(1);
         qc_close(&cc);
     }
