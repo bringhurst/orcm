@@ -1,0 +1,77 @@
+<clispec xmlns="http://tail-f.com/ns/clispec/1.0" style="c">
+  
+  <operationalMode>
+
+    <cmd name="clear" mount="orcm">
+      <help>Clear the restart counter for one or more processes</help>
+      <info>Clear the restart counter for one or more processes</info>
+      <callback>
+        <capi>
+          <cmdpoint>orcm_clear</cmdpoint>
+        </capi>
+      </callback>
+      
+      <params>
+
+        <param>
+	  <type><void/></type>
+	  <params mode="choice">
+	    <param>
+	      <name>job-name</name>
+	      <mapTo>JN=</mapTo>
+	      <type>
+		<simpleType namespace="http://www.w3.org/2001/XMLSchema"
+			    name="string"/>
+	      </type>
+              <callback>
+                <capi>
+                  <completionpoint>orcm-clear-completion</completionpoint>
+                </capi>
+              </callback>
+            </param>
+
+            <param>
+	      <name>job-id</name>
+	      <mapTo>JI=</mapTo>
+	      <type>
+		<simpleType namespace="http://www.w3.org/2001/XMLSchema"
+			    name="integer"/>
+	      </type>
+              <callback>
+                <capi>
+                  <completionpoint>orcm-clear-completion</completionpoint>
+                </capi>
+              </callback>
+            </param>
+	  </params>
+	</param>
+
+	<param>
+	  <name>executable</name>
+	  <mapTo>EXE=</mapTo>
+	  <optional/>
+	  <callback>
+	    <capi>
+	      <completionpoint>orcm-clear-completion</completionpoint>
+	    </capi>
+	  </callback>
+	</param>
+
+	<param>
+	  <name>vpid</name>
+	  <mapTo>VPID=</mapTo>
+	  <optional/>
+	  <callback>
+	    <capi>
+	      <completionpoint>orcm-clear-completion</completionpoint>
+	    </capi>
+	  </callback>
+	</param>
+
+      </params>
+
+    </cmd>
+
+  </operationalMode>
+
+</clispec>

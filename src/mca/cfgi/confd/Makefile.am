@@ -35,6 +35,9 @@ orcm.fxs: orcm.yang
 orcm-confd.h: orcm.fxs
 	confdc --emit-h orcm-confd.h orcm.fxs
 
+orcm.ccl: orcm.cli
+	confdc -c $(srcdir)/orcm.cli
+
 # Make the output library in this directory, and name it either
 # mca_<project>_<type>_<name>.la (for DSO builds) or
 # libmca_<project>_<type>_<name>.la (for static builds).
@@ -67,9 +70,9 @@ libmca_orcm_cfgi_confd_la_LDFLAGS = -module -avoid-version $(orcm_cfgi_confd_LDF
 libmca_orcm_cfgi_confd_la_LIBADD = $(orcm_cfgi_confd_LIBS) $(EXTRA_LIBS)
 
 yangdir = $(prefix)/etc/confd
-nodist_yang_HEADERS = orcm.fxs
+nodist_yang_HEADERS = orcm.fxs orcm.ccl
 
 # Clean out the generated files
 
-CLEANFILES = orcm.fxs orcm-confd.h
+CLEANFILES = orcm.fxs orcm-confd.h orcm.ccl
 

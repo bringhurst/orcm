@@ -148,140 +148,79 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata, bool overwrite)
                 if (0 != strcmp(app2->app, app->app)) {
                     continue;
                 }
-                /* update info */
-                if (overwrite) {
-                    /* the num_procs in the provided job is the actual number we want,
-                     * not an adjustment
-                     */
-                    if (app->num_procs == app2->num_procs) {
-                        /* nothing to change */
-                        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                             "%s spawn: no change to num_procs for app %s",
-                                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                             opal_basename(app->app)));
-                        continue;
+                /* the num_procs in the provided job is the actual number we want,
+                 * not an adjustment
+                 */
+                if (app->num_procs == app2->num_procs) {
+                    /* nothing to change */
+                    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                         "%s spawn: no change to num_procs for app %s",
+                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                         opal_basename(app->app)));
+                    continue;
+                }
+                if (app->num_procs > app2->num_procs) {
+                    /* we are adding procs - just add them to the end of the proc array */
+                    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                         "%s spawn: adding procs to app %s",
+                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                         opal_basename(app->app)));
+                    for (k=0; k < (app->num_procs - app2->num_procs); k++) {
+                        proc = OBJ_NEW(orte_proc_t);
+                        proc->name.jobid = jlaunch->jobid;
+                        proc->name.vpid = jlaunch->num_procs;
+                        proc->state = ORTE_PROC_STATE_RESTART;
+                        proc->app_idx = app2->idx;
+                        opal_pointer_array_set_item(jlaunch->procs, proc->name.vpid, proc);
+                        jlaunch->num_procs++;
                     }
-                    if (app->num_procs > app2->num_procs) {
-                        /* we are adding procs - just add them to the end of the proc array */
-                        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                             "%s spawn: adding procs to app %s",
-                                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                             opal_basename(app->app)));
-                        for (k=0; k < (app->num_procs - app2->num_procs); k++) {
-                            proc = OBJ_NEW(orte_proc_t);
-                            proc->name.jobid = jlaunch->jobid;
-                            proc->name.vpid = jlaunch->num_procs;
-                            proc->state = ORTE_PROC_STATE_RESTART;
-                            proc->app_idx = app2->idx;
-                            opal_pointer_array_set_item(jlaunch->procs, proc->name.vpid, proc);
-                            jlaunch->num_procs++;
-                        }
-                        app2->num_procs = app->num_procs;
-                        apps_added = true;
-                    } else {
-                        /* we are subtracting procs - cycle thru the proc array
-                         * and flag the reqd number for termination. We don't
-                         * care which ones, so take the highest ranking ones
-                         */
-                         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                             "%s spawn: removing procs from app %s",
-                                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                             opal_basename(app->app)));
-                        terms = OBJ_NEW(opal_buffer_t);
-                        /* indicate the target DVM */
-                        jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
-                        opal_dss.pack(terms, &jfam, 1, OPAL_UINT16);
-                        /* pack the command */
-                        command = ORTE_DAEMON_KILL_LOCAL_PROCS;
-                        if (ORTE_SUCCESS != (rc = opal_dss.pack(terms, &command, 1, ORTE_DAEMON_CMD))) {
-                            ORTE_ERROR_LOG(rc);
-                            return rc;
-                        }
-                        for (k=jlaunch->procs->size-1, m=0; 0 <= k && m < (app2->num_procs - app->num_procs); k--) {
-                            if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jlaunch->procs, k))) {
-                                continue;
-                            }
-                            if (proc->app_idx == app2->idx) {
-                                /* flag it for termination - we can't remove it from the
-                                 * various tracking structures just yet because (a) the
-                                 * process is still alive, and (b) we need the info
-                                 * in those structures to kill it. Fortunately, when
-                                 * we do finally kill it, the errmgr will take care
-                                 * of cleaning up the tracking structures
-                                 */
-                                proc->state = ORTE_PROC_STATE_TERMINATE;
-                                if (ORTE_SUCCESS != (rc = opal_dss.pack(terms, &proc->name, 1, ORTE_NAME))) {
-                                    ORTE_ERROR_LOG(rc);
-                                    return rc;
-                                }
-                                m++;
-                            }
-                        }
-                        app2->num_procs = app->num_procs;
-                        /* send it to the daemons */
-                        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
-                                                                     NULL, ORCM_PNP_TAG_COMMAND,
-                                                                     NULL, 0, terms, cbfunc, NULL))) {
-                            ORTE_ERROR_LOG(rc);
-                        }
-                    }
+                    app2->num_procs = app->num_procs;
+                    apps_added = true;
                 } else {
-                    /* the num_procs in the provided job is an incremental adjustment */
-                    if (0 < app->num_procs) {
-                        /* we are adding procs - just add them to the end of the proc array */
-                        for (k=0; k < app->num_procs; k++) {
-                            proc = OBJ_NEW(orte_proc_t);
-                            proc->name.jobid = jlaunch->jobid;
-                            proc->name.vpid = jlaunch->num_procs;
-                            proc->state = ORTE_PROC_STATE_RESTART;
-                            proc->app_idx = app2->idx;
-                            opal_pointer_array_set_item(jlaunch->procs, proc->name.vpid, proc);
-                            jlaunch->num_procs++;
+                    /* we are subtracting procs - cycle thru the proc array
+                     * and flag the reqd number for termination. We don't
+                     * care which ones, so take the highest ranking ones
+                     */
+                    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                         "%s spawn: removing procs from app %s",
+                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                         opal_basename(app->app)));
+                    terms = OBJ_NEW(opal_buffer_t);
+                    /* indicate the target DVM */
+                    jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
+                    opal_dss.pack(terms, &jfam, 1, OPAL_UINT16);
+                    /* pack the command */
+                    command = ORTE_DAEMON_KILL_LOCAL_PROCS;
+                    if (ORTE_SUCCESS != (rc = opal_dss.pack(terms, &command, 1, ORTE_DAEMON_CMD))) {
+                        ORTE_ERROR_LOG(rc);
+                        return rc;
+                    }
+                    for (k=jlaunch->procs->size-1, m=0; 0 <= k && m < (app2->num_procs - app->num_procs); k--) {
+                        if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jlaunch->procs, k))) {
+                            continue;
                         }
-                        apps_added = true;
-                    } else {
-                        /* we are subtracting procs - cycle thru the proc array
-                         * and flag the reqd number for termination. We don't
-                         * care which ones
-                         */
-                        app->num_procs = -1*app->num_procs;
-                        terms = OBJ_NEW(opal_buffer_t);
-                        /* indicate the target DVM */
-                        jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
-                        opal_dss.pack(terms, &jfam, 1, OPAL_UINT16);
-                        /* pack the command */
-                        command = ORTE_DAEMON_KILL_LOCAL_PROCS;
-                        if (ORTE_SUCCESS != (rc = opal_dss.pack(terms, &command, 1, ORTE_DAEMON_CMD))) {
-                            ORTE_ERROR_LOG(rc);
-                            return rc;
-                        }
-                        for (k=jlaunch->procs->size-1, m=0; 0 <= k && m < app->num_procs; k--) {
-                            if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jlaunch->procs, k))) {
-                                continue;
+                        if (proc->app_idx == app2->idx) {
+                            /* flag it for termination - we can't remove it from the
+                             * various tracking structures just yet because (a) the
+                             * process is still alive, and (b) we need the info
+                             * in those structures to kill it. Fortunately, when
+                             * we do finally kill it, the errmgr will take care
+                             * of cleaning up the tracking structures
+                             */
+                            proc->state = ORTE_PROC_STATE_TERMINATE;
+                            if (ORTE_SUCCESS != (rc = opal_dss.pack(terms, &proc->name, 1, ORTE_NAME))) {
+                                ORTE_ERROR_LOG(rc);
+                                return rc;
                             }
-                            if (proc->app_idx == app2->idx) {
-                                /* flag it for termination - we can't remove it from the
-                                 * various tracking structures just yet because (a) the
-                                 * process is still alive, and (b) we need the info
-                                 * in those structures to kill it. Fortunately, when
-                                 * we do finally kill it, the errmgr will take care
-                                 * of cleaning up the tracking structures
-                                 */
-                                proc->state = ORTE_PROC_STATE_TERMINATE;
-                                if (ORTE_SUCCESS != (rc = opal_dss.pack(terms, &proc->name, 1, ORTE_NAME))) {
-                                    ORTE_ERROR_LOG(rc);
-                                    return rc;
-                                }
-                                m++;
-                            }
+                            m++;
                         }
-                        app2->num_procs -= app->num_procs;
-                        /* send it to the daemons */
-                        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
-                                                                     NULL, ORCM_PNP_TAG_COMMAND,
-                                                                     NULL, 0, terms, cbfunc, NULL))) {
-                            ORTE_ERROR_LOG(rc);
-                        }
+                    }
+                    app2->num_procs = app->num_procs;
+                    /* send it to the daemons */
+                    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
+                                                                 NULL, ORCM_PNP_TAG_COMMAND,
+                                                                 NULL, 0, terms, cbfunc, NULL))) {
+                        ORTE_ERROR_LOG(rc);
                     }
                 }
             }
@@ -289,8 +228,8 @@ int orcm_cfgi_base_spawn_app(orte_job_t *jdata, bool overwrite)
         /* if any apps were added, then we need to remap and launch
          * the job so the daemons will know to start them
          */
-        if (!apps_added) {
-            /* nothing added, so we are done! */
+        if (!apps_added && ORTE_JOB_STATE_RESTART != jdata->state) {
+            /* nothing added and no restart requested, so we are done! */
             return rc;
         }
         /* flag that this is a "restart" so the map will be redone */

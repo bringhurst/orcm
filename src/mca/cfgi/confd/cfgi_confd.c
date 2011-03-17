@@ -112,13 +112,24 @@ static boolean parse(confd_hkeypath_t *kp,
 	             enum cdb_sub_notification notify_type,
 		     bool install);
 
-static int orcm_get_elem (struct confd_trans_ctx *tctx,
-			  confd_hkeypath_t       *kp);
+static int orcm_get_elem(struct confd_trans_ctx *tctx,
+                         confd_hkeypath_t       *kp);
 
-static int orcm_get_next (struct confd_trans_ctx *tctx,
-			  confd_hkeypath_t       *kp,
-			  long next);
+static int orcm_get_next(struct confd_trans_ctx *tctx,
+                         confd_hkeypath_t       *kp,
+                         long next);
 
+static boolean orcm_clear(int maapisock,
+                          struct confd_user_info *uinfo,
+                          int argc, char **argv, long which);
+
+static boolean orcm_clear_completion(struct confd_user_info *uinfo,
+                                     int                     cli_style,
+                                     char                   *token,
+                                     int                     comp_char,
+                                     confd_hkeypath_t       *kp,
+                                     char                   *cmdpath,
+                                     char                   *param_id);
 /*
  * set up initial communication w/confd and register for callbacks
  * returns having requested from confd the startup config for all
@@ -207,13 +218,16 @@ static boolean cfgi_confd_subscribe(qc_confd_t *cc)
     if (! qc_subscribe_done(cc))
         return FALSE;
 
-#if 0
     /*
      * register CLI command handlers
      */
-    if (! qc_reg_cmdpoint(cc, "show-data", show_data_func, 0))
+    if (! qc_reg_cmdpoint(cc, "orcm_clear", orcm_clear, 0))
         return FALSE;
-#endif
+
+    /*
+     * register completion handler for the command */
+    if (! qc_reg_completion(cc, "orcm-clear-completion", orcm_clear_completion))
+        return FALSE;
 
     /*
      *register as a data provider
@@ -2125,4 +2139,554 @@ static void copy_defaults(orte_job_t *target, orte_job_t *src)
     target->num_apps = src->num_apps;
     target->controls = src->controls;
     target->stdin_target = src->stdin_target;
+}
+
+static boolean orcm_clear(int maapisock,
+                          struct confd_user_info *uinfo,
+                          int argc, char **argv, long which)
+{
+    int i, n;
+    char *value, *appname;
+    orte_job_t *jdata=NULL, *jdt;
+    orte_app_context_t *app=NULL, *aptr;
+    orte_proc_t *proc=NULL;
+    boolean ret = TRUE;
+    bool restart;
+    orcm_job_caddy_t *caddy;
+
+    if (1 < opal_output_get_verbosity(orcm_cfgi_base.output)) {
+        opal_output(0, "%s CMDPOINT CALLED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+        for (i=0; i < argc; i++) {
+            opal_output(0, "%s     %s", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), argv[i]);
+        }
+    }
+
+    /* cycle through the argv looking for reqd command elements */
+    for (i=0; i < argc; i++) {
+        /* get ptr to the value */
+        value = strchr(argv[i], '=');
+        if (NULL == value) {
+            /* no equals sign - that's wrong */
+            opal_output(0, "%s VALUE MISSING EQUAL SIGN: %s",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), argv[i]);
+            ret = FALSE;
+            goto cleanup;
+        }
+        value++;
+        if (NULL == value) {
+            /* no value present - that's wrong */
+            opal_output(0, "%s VALUE MISSING: %s",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), argv[i]);
+            ret = FALSE;
+            goto cleanup;
+        }
+
+        if (0 == strncmp(argv[i], "JN", strlen("JN"))) {
+            /* see if we already found it - that would be wrong */
+            if (NULL != jdata) {
+                opal_output(0, "%s JOB %s DOUBLY-SPECIFIED",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), jdata->name);
+                ret = FALSE;
+                goto cleanup;
+            }
+            /* find the job of this name */
+            jdata = NULL;
+            for (n=1; n < orte_job_data->size; n++) {
+                if (NULL == (jdt = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, n))) {
+                    continue;
+                }
+                if (0 == strcmp(jdt->name, value)) {
+                    jdata = jdt;
+                    break;
+                }
+            }
+            if (NULL == jdata) {
+                opal_output(0, "%s JOB %s NOT FOUND",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), value);
+                ret = FALSE;
+                goto cleanup;
+            }
+        } else if (0 == strncmp(argv[i], "JI", strlen("JI"))) {
+            /* see if we already found it - that would be wrong */
+            if (NULL != jdata) {
+                opal_output(0, "%s JOB %s DOUBLY-SPECIFIED",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), jdata->name);
+                ret = FALSE;
+                goto cleanup;
+            }
+            /* convert the value to an int */
+            n = atoi(value);
+            /* get this job number */
+            if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, n))) {
+            }
+        } else if (0 == strncmp(argv[i], "EXE", strlen("EXE"))) {
+            /* must have defined the job first */
+            if (NULL == jdata) {
+                opal_output(0, "%s JOB FOR APP %s NOT SPECIFIED",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), value);
+                ret = FALSE;
+                goto cleanup;
+            }
+            /* look for executable */
+            app = NULL;
+            for (n=0; n < jdata->apps->size; n++) {
+                if (NULL == (aptr = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, n))) {
+                    continue;
+                }
+                appname = opal_basename(aptr->app);
+                if (0 == strcmp(appname, value)) {
+                    app = aptr;
+                    free(appname);
+                    break;
+                }
+                free(appname);
+            }
+            if (NULL == app) {
+                /* couldn't find this app */
+                opal_output(0, "%s APP %s IN JOB %s NOT FOUND",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), value, jdata->name);
+                ret = FALSE;
+                goto cleanup;
+            }
+        } else if (0 == strncmp(argv[i], "VPID", strlen("VPID"))) {
+            if (NULL == jdata) {
+                opal_output(0, "%s JOB NOT YET DEFINED",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+                goto cleanup;
+            }
+            /* get this vpid */
+            n = atoi(value);
+            if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, n))) {
+                opal_output(0, "%s PROC %d IN JOB %s IS NOT AVAILABLE",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), n, jdata->name);
+                ret = FALSE;
+                goto cleanup;
+            }
+        }
+    }
+
+    /* check for bozo case - should not be possible as confd
+     * won't let you do it, but...
+     */
+    if (NULL == jdata) {
+        opal_output(0, "%s NO JOB SPECIFIED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+        ret = FALSE;
+        goto cleanup;
+    }
+
+    /* the number of parameters we received in argv depends upon
+     * the level of input received from the user. For example, the
+     * user may want to reset all the procs in a job, and so will
+     * only provide the job as input. All combinations can be given.
+     * We could receive an executable and no vpid, or we could receive
+     * a vpid without an executable. So we need to consider a number
+     * of cases
+     */
+
+    restart = false;
+    if (NULL == app && NULL == proc) {
+        /* only give a job - reset all procs in that job */
+        for (n=0; n < jdata->procs->size; n++) {
+            if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, n))) {
+                continue;
+            }
+            OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                                 "RESETTING PROC %s", ORTE_NAME_PRINT(&proc->name)));
+            proc->restarts = 0;
+            if (ORTE_PROC_STATE_CANNOT_RESTART == proc->state) {
+                /* if the proc hit its max restarts and couldn't be
+                 * restarted, we need to restart it now
+                 */
+                jdata->state = ORTE_JOB_STATE_RESTART;
+                proc->state = ORTE_PROC_STATE_RESTART;
+                restart = true;
+            }
+        }
+    } else if (NULL != proc) {
+        /* only one proc specified - reset it */
+        OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                             "RESETTING PROC %s", ORTE_NAME_PRINT(&proc->name)));
+        proc->restarts = 0;
+        if (ORTE_PROC_STATE_CANNOT_RESTART == proc->state) {
+            /* if the proc hit its max restarts and couldn't be
+             * restarted, we need to restart it now
+             */
+            jdata->state = ORTE_JOB_STATE_RESTART;
+            proc->state = ORTE_PROC_STATE_RESTART;
+            restart = true;
+        }
+    } else {
+        /* only way here is for app != NULL and proc == NULL,
+         * indicating that we are to reset all procs in that app
+         */
+        for (n=0; n < jdata->procs->size; n++) {
+            if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, n))) {
+                continue;
+            }
+            if (proc->app_idx == app->idx) {
+                OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                                     "RESETTING PROC %s", ORTE_NAME_PRINT(&proc->name)));
+                proc->restarts = 0;
+                if (ORTE_PROC_STATE_CANNOT_RESTART == proc->state) {
+                    /* if the proc hit its max restarts and couldn't be
+                     * restarted, we need to restart it now
+                     */
+                    jdata->state = ORTE_JOB_STATE_RESTART;
+                    proc->state = ORTE_PROC_STATE_RESTART;
+                    restart = true;
+                }
+            }
+        }
+    }
+
+    if (restart) {
+        /* issue the restart command */
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "RESTARTING JOB %s", jdata->name));
+        caddy = OBJ_NEW(orcm_job_caddy_t);
+        caddy->cmd = ORCM_CONFD_SPAWN;
+        caddy->jdata = jdata;
+        opal_fd_write(launch_pipe[1], sizeof(orcm_job_caddy_t*), &caddy);
+    }
+
+ cleanup:
+    return ret;
+}
+
+static boolean orcm_clear_completion(struct confd_user_info *uinfo,
+                                     int                     cli_style,
+                                     char                   *token,
+                                     int                     comp_char,
+                                     confd_hkeypath_t       *kp,
+                                     char                   *cmdpath,
+                                     char                   *param_id)
+{
+    struct confd_completion_value *cmplt=NULL, value;
+    int i, n, nopts;
+    orte_job_t *jdata, *jdt;
+    orte_app_context_t *app, *aptr;
+    orte_proc_t *proc;
+    boolean ret=TRUE;
+    char **options=NULL;
+    char *appname, *numid;
+
+    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                         "%s CLEAR COMPLETION CALLED\n    token %s(%d)\n     cmdpath %s\n     paramid %s\n",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         (NULL == token) ? "NULL" : token,
+                         (NULL == token) ? 0 : (int)strlen(token),
+                         (NULL == cmdpath) ? "NULL" : cmdpath,
+                         (NULL == param_id) ? "NULL" : param_id));
+
+    options = opal_argv_split(cmdpath, ' ');
+    nopts = opal_argv_count(options);
+
+    if (0 == strcmp(options[nopts-1], "job-name") ||
+        0 == strcmp(options[nopts-1], "job-id")) {
+        /* count the number of active jobs */
+        n=0;
+        for (i=1; i < orte_job_data->size; i++) {
+            if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
+                continue;
+            }
+            n++;
+        }
+
+        if (0 == n) {
+            /* no running jobs */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "No active jobs";
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            return ret;
+        }
+
+        /* allocate the completion array - this is the largest the array of completions
+         * can be. We may not fill it all, so we track the actual number of entries
+         * and pass that value back to confd
+         */
+        cmplt = (struct confd_completion_value *)malloc(n * sizeof(struct confd_completion_value));
+
+        if (0 == strcmp(options[nopts-1], "job-name")) {
+            /* were we given a partial? */
+            if (0 == strlen(token)) {
+                /* nope - send back all the job names */
+                for (i=1, n=0; i < orte_job_data->size; i++) {
+                    if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
+                        continue;
+                    }
+                    if (NULL == jdata->name) {
+                        continue;
+                    }
+                    cmplt[n].type = CONFD_COMPLETION;
+                    cmplt[n].value = strdup(jdata->name);
+                    cmplt[n].extra = NULL;
+                    n++;
+                }
+            } else {
+                /* yes - just insert those that start with token */
+                for (i=1, n=0; i < orte_job_data->size; i++) {
+                    if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
+                        continue;
+                    }
+                    if (NULL == jdata->name) {
+                        continue;
+                    }
+                    if (0 == strncmp(jdata->name, token, strlen(token))) {
+                        cmplt[n].type = CONFD_COMPLETION;
+                        cmplt[n].value = strdup(jdata->name);
+                        cmplt[n].extra = NULL;
+                        n++;
+                    }
+                }
+            }
+        } else if (0 == strcmp(options[nopts-1], "job-id")) {
+            /* were we given a partial? */
+            if (0 == strlen(token)) {
+                /* nope - send back all the job ids */
+                for (i=1, n=0; i < orte_job_data->size; i++) {
+                    if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
+                        continue;
+                    }
+                    cmplt[n].type = CONFD_COMPLETION;
+                    asprintf(&cmplt[n].value, "%d", i);
+                    cmplt[n].extra = NULL;
+                    n++;
+                }
+            } else {
+                /* yes - just insert those that start with token. This is
+                 * a little ugly as the token is a string and the job number
+                 * is an integer - hopefully, someone will devise a more
+                 * efficient method!
+                 */
+                for (i=1, n=0; i < orte_job_data->size; i++) {
+                    if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
+                        continue;
+                    }
+                    asprintf(&numid, "%d", i);
+                    if (0 == strncmp(numid, token, strlen(token))) {
+                        cmplt[n].type = CONFD_COMPLETION;
+                        cmplt[n].value = strdup(numid);
+                        cmplt[n].extra = NULL;
+                        n++;
+                    }
+                    free(numid);
+                }
+            }
+        }
+
+        if (confd_action_reply_completion(uinfo, cmplt, n) < 0) {
+            opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            ret = FALSE;
+        }
+    } else if (0 == strcmp(options[nopts-1], "executable")) {
+        /* the job name or job-id is in the third position */
+        if (0 == strcmp(options[2], "job-name")) {
+            /* find this job name */
+            jdata = NULL;
+            for (i=1; i < orte_job_data->size; i++) {
+                if (NULL == (jdt = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
+                    continue;
+                }
+                if (NULL == jdt->name) {
+                    continue;
+                }
+                if (0 == strcmp(jdt->name, options[3])) {
+                    jdata = jdt;
+                    break;
+                }
+            }
+            if (NULL == jdata) {
+                opal_output(0, "%s COMPLETION ERROR: JOB %s NOT FOUND",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                            options[3]);
+                ret = FALSE;
+                goto cleanup;
+            }
+        } else if (0 == strcmp(options[2], "job-id")) {
+            /* find this job number */
+            i = atoi(options[3]);
+            if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
+                opal_output(0, "%s COMPLETION ERROR: JOB %s NOT FOUND",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                            options[3]);
+                ret = FALSE;
+                goto cleanup;
+            }
+        } else {
+            /* unrecognized */
+            opal_output(0, "%s COMPLETION ERROR: UNRECOGNIZED PATH ELEMENT %s",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        options[2]);
+            ret = FALSE;
+            goto cleanup;
+        }
+        /* allocate the completion array - this is the largest the array of completions
+         * can be. We may not fill it all, so we track the actual number of entries
+         * and pass that value back to confd
+         */
+        cmplt = (struct confd_completion_value *)malloc(jdata->num_apps * sizeof(struct confd_completion_value));
+
+        /* were we given a partial token? */
+        if (0 == strlen(token)) {
+            /* no - get all completions for this job */
+            for (i=0; i < jdata->apps->size; i++) {
+                if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, i))) {
+                    continue;
+                }
+                appname = opal_basename(app->app);
+                cmplt[i].type = CONFD_COMPLETION;
+                cmplt[i].value = strdup(appname);
+                cmplt[i].extra = NULL;
+                free(appname);
+            }
+            n = i;
+        } else {
+            /* yes - get all completions that start with provided token */
+            for (i=0, n=0; i < jdata->apps->size; i++) {
+                if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, i))) {
+                    continue;
+                }
+                appname = opal_basename(app->app);
+                if (0 == strncmp(appname, token, strlen(token))) {
+                    cmplt[n].type = CONFD_COMPLETION;
+                    cmplt[n].value = strdup(appname);
+                    cmplt[n].extra = NULL;
+                    n++;
+                }
+                free(appname);
+            }
+        }
+        if (confd_action_reply_completion(uinfo, cmplt, n) < 0) {
+            opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            ret = FALSE;
+        }
+    } else if (0 == strcmp(options[nopts-1], "vpid")) {
+        /* the job name or job-id is in the third position */
+        if (0 == strcmp(options[2], "job-name")) {
+            /* find this job name */
+            jdata = NULL;
+            for (i=1; i < orte_job_data->size; i++) {
+                if (NULL == (jdt = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
+                    continue;
+                }
+                if (NULL == jdt->name) {
+                    continue;
+                }
+                if (0 == strcmp(jdt->name, options[3])) {
+                    jdata = jdt;
+                    break;
+                }
+            }
+            if (NULL == jdata) {
+                opal_output(0, "%s COMPLETION ERROR: JOB %s NOT FOUND",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                            options[3]);
+                ret = FALSE;
+                goto cleanup;
+            }
+        } else if (0 == strcmp(options[2], "job-id")) {
+            /* find this job number */
+            i = atoi(options[3]);
+            if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
+                opal_output(0, "%s COMPLETION ERROR: JOB %s NOT FOUND",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                            options[3]);
+                ret = FALSE;
+                goto cleanup;
+            }
+        } else {
+            /* unrecognized */
+            opal_output(0, "%s COMPLETION ERROR: UNRECOGNIZED PATH ELEMENT %s",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        options[2]);
+            ret = FALSE;
+            goto cleanup;
+        }
+        /* find the executable */
+        app = NULL;
+        for (i=0; i < jdata->apps->size; i++) {
+            if (NULL == (aptr = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, i))) {
+                continue;
+            }
+            appname = opal_basename(aptr->app);
+            if (0 == strcmp(appname, options[5])) {
+                app = aptr;
+                free(appname);
+                break;
+            }
+            free(appname);
+        }
+        if (NULL == app) {
+            opal_output(0, "%s COMPLETION ERROR: APP %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        options[5]);
+            ret = FALSE;
+            goto cleanup;
+        }
+        /* allocate the completion array - this is the largest the array of completions
+         * can be. We may not fill it all, so we track the actual number of entries
+         * and pass that value back to confd
+         */
+        cmplt = (struct confd_completion_value *)malloc(app->num_procs * sizeof(struct confd_completion_value));
+        /* were we given a partial? */
+        if (0 == strlen(token)) {
+            /* return all vpid values */
+            for (i=0, n=0; i < jdata->procs->size; i++) {
+                if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, i))) {
+                    continue;
+                }
+                if (proc->app_idx != app->idx) {
+                    continue;
+                }
+                cmplt[n].type = CONFD_COMPLETION;
+                asprintf(&cmplt[n].value, "%s", ORTE_VPID_PRINT(proc->name.vpid));
+                cmplt[n].extra = NULL;
+                n++;
+            }
+        } else {
+            /* return all values that start with provided token. This is
+             * a little ugly as the token is a string and the job number
+             * is an integer - hopefully, someone will devise a more
+             * efficient method!
+             */
+            for (i=0, n=0; i < jdata->procs->size; i++) {
+                if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, i))) {
+                    continue;
+                }
+                if (proc->app_idx != app->idx) {
+                    continue;
+                }
+                asprintf(&numid, "%d", proc->name.vpid);
+                if (0 == strncmp(numid, token, strlen(token))) {
+                    cmplt[n].type = CONFD_COMPLETION;
+                    cmplt[n].value = strdup(numid);
+                    cmplt[n].extra = NULL;
+                    n++;
+                }
+                free(numid);
+            }
+        }
+        if (confd_action_reply_completion(uinfo, cmplt, n) < 0) {
+            opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            ret = FALSE;
+        }
+    } else {
+        /* unrecognized */
+        opal_output(0, "%s COMPLETION ERROR: UNRECOGNIZED PARAMS %s",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), cmdpath);
+    }
+
+ cleanup:
+    if (NULL != cmplt) {
+        for (i=0; i < n; i++) {
+            free(cmplt[i].value);
+        }
+        free(cmplt);
+    }
+    opal_argv_free(options);
+    return ret;
 }
