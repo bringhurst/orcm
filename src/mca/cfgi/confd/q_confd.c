@@ -8,6 +8,7 @@
  *   qc_subscribe
  *   qc_subscribe_done          // if any subscriptions
  *   qc_reg_cmdpoint
+ *   qc_reg_actpoint
  *   qc_reg_data_cb
  *   qc_callbacks_done          // if any cmd or data callbacks
  *   qc_startup_config
@@ -316,11 +317,9 @@ cc_cdbsock (qc_confd_t  *cc,
 
     if (cdb_connect(cdbsock, CDB_DATA_SOCKET, (struct sockaddr*) &cc->addr,
                     sizeof(cc->addr)) != CONFD_OK) {
-        if (qc_debug) {
-            cc_err(cc, "cdb_connect(%s:%u): %s",
-                   inet_ntoa(cc->addr.sin_addr), ntohs(cc->addr.sin_port),
-                   confd_last_err());
-        }
+        cc_err(cc, "cdb_connect(%s:%u): %s",
+               inet_ntoa(cc->addr.sin_addr), ntohs(cc->addr.sin_port),
+               confd_last_err());
         close(cdbsock);
         return FALSE;
     }
@@ -706,6 +705,62 @@ cc_command (struct confd_user_info *uinfo,
 
 
 /*
+ * invoke an action handler
+ */
+static int
+cc_action (struct confd_user_info *uinfo,
+           struct xml_tag *tag,
+           struct confd_hkeypath *kp, 
+           confd_tag_value_t *params, 
+           int nparams)
+{
+    int retv;
+    qc_confd_t *cc;
+    struct cmddata *cdp;
+
+    cdp = uinfo->actx.cb_opaque;
+    cc  = uinfo->actx.dx->d_opaque;
+
+    if (cc->maapisock < 0) {
+        cc->maapisock = socket(PF_INET, SOCK_STREAM, 0);
+        if (cc->maapisock < 0 ) {
+            cc_err(cc, "socket(maapi): %s", strerror(errno));
+            confd_action_seterr(uinfo, "%s", cc->err);
+            return CONFD_ERR;
+        }
+    
+        if (maapi_connect(cc->maapisock, (struct sockaddr*) &cc->addr,
+                          sizeof(cc->addr)) < 0) {
+            cc_err(cc, "maapi_connect(%s:%u): %s",
+                   inet_ntoa(cc->addr.sin_addr), ntohs(cc->addr.sin_port),
+                   confd_last_err());
+            confd_action_seterr(uinfo, "%s", cc->err);
+
+            close(cc->maapisock);
+            cc->maapisock = -1;
+
+            return CONFD_ERR;
+        }
+    }
+
+    if (cc->app_lock) {
+        cc->app_lock();
+    }
+    if (cdp->action_handler(uinfo, tag, kp, params, nparams)) {
+        retv = CONFD_OK;
+    } else {
+        confd_action_seterr(uinfo, "CLI cmd fail: %s", cdp->cmdpoint);
+        retv = CONFD_ERR;
+    }
+    if (cc->app_unlock) {
+        cc->app_unlock();
+    }
+
+    return retv;
+}
+
+
+/*
  * (re)register a command point handler
  */
 static boolean
@@ -726,6 +781,38 @@ cc_reg_cmdpt (qc_confd_t     *cc,
 
     act_cbs.init      = cc_action_init;
     act_cbs.command   = cc_command;
+    act_cbs.cb_opaque = cdp;
+
+    if (confd_register_action_cbs(cc->dctx, &act_cbs) != CONFD_OK) {
+        cc_err(cc, "reg_cmdpt(%s): %s", cdp->cmdpoint, confd_last_err());
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+
+/*
+ * (re)register a action point handler
+ */
+static boolean
+cc_reg_actpt (qc_confd_t     *cc,
+              struct cmddata *cdp)
+{
+    struct confd_action_cbs act_cbs;
+
+    /*
+     * open ctl/wrk sockets
+     */
+    if (! cc_open_cbsocks(cc)) {
+        return FALSE;
+    }
+
+    snprintf(act_cbs.actionpoint, sizeof(act_cbs.actionpoint),
+             "%s", cdp->cmdpoint);
+
+    act_cbs.init      = cc_action_init;
+    act_cbs.action    = cc_action;
     act_cbs.cb_opaque = cdp;
 
     if (confd_register_action_cbs(cc->dctx, &act_cbs) != CONFD_OK) {
@@ -761,6 +848,7 @@ cc_completion (struct confd_user_info *uinfo,
 
     if (cc->log_level == CONFD_TRACE) {
         fprintf(cc->log_stream, "completion(%s): %s\n", cmp->comppoint, cmdpath);
+        fflush(cc->log_stream);
     }
 
     if (cc->app_lock) {
@@ -866,6 +954,8 @@ cc_reg_trans (qc_confd_t *cc)
         .init   = cc_trans_init,
         .finish = cc_trans_finish,
     };
+
+    if (!cc_open_cbsocks(cc)) return FALSE;
 
     if (confd_register_trans_cb(cc->dctx, &trans_cbs) != CONFD_OK) {
         cc_err(cc, "reg_trans_cb: %s", confd_last_err());
@@ -1772,6 +1862,7 @@ cc_iter_diffs (confd_hkeypath_t *kp,
     if (sdp->cc->log_level == CONFD_TRACE) {
         qc_pp_change(buf, sizeof(buf), kp, op, newv, sdp->namespace);
         fprintf(sdp->cc->log_stream, "sub@%s: %s\n", sdp->path, buf);
+        fflush(sdp->cc->log_stream);
     }
 
     /*
@@ -1995,11 +2086,15 @@ qc_confd_poll (void* arg)
     poll_fail_counter = 0;
     while (1) {
         int ix;
+	int rv;
 
-	if (poll(&set[0], nfd, -1) < 0) {
+	if (rv=poll(&set[0], nfd, -1) < 0) {
+	    if(errno == EINTR)
+		continue;	/* Don't count these, they're unpredictable
+				 * (and valgrind causes them) */
 	    if (++poll_fail_counter < 10)
 		continue;
-	    cc_err(cc, "Excessive poll failures");
+	    cc_err(cc, "Excessive poll failures: %s", strerror(errno));
             return int2ptr(FALSE);
 	}
 	poll_fail_counter = 0;
@@ -2082,6 +2177,46 @@ qc_reg_cmdpoint (qc_confd_t  *cc,
     cdp->handler = cmdfunc;
 
     if (! cc_reg_cmdpt(cc, cdp)) {
+        return FALSE;
+    }
+
+    cc->ncmdpts++;
+
+    return TRUE;
+}
+
+
+/*
+ * register an action callback
+ */
+boolean
+qc_reg_actpoint (qc_confd_t  *cc,
+                 char        *actpoint,
+		 int (*actfunc) (struct confd_user_info *uinfo,
+				 struct xml_tag *tag,
+				 struct confd_hkeypath *kp,
+				 confd_tag_value_t *params,
+				 int nparams))
+{
+    struct cmddata *cdp;
+
+    if (cc->ncmdpts >= N_QC_CMDPOINTS) {
+        cc_err(cc, "too many cmdpoints");
+        return FALSE;
+    }
+
+    cdp = &cc->cmddata[cc->ncmdpts];
+
+    if (snprintf(cdp->cmdpoint, sizeof(cdp->cmdpoint),
+                 "%s", actpoint) >= sizeof(cdp->cmdpoint)) {
+        cc_err(cc, "actpoint name too long: %s", actpoint);
+        return FALSE;
+    }
+
+    cdp->action_handler = actfunc;
+    cdp->handler = NULL; // not a command handler
+
+    if (! cc_reg_actpt(cc, cdp)) {
         return FALSE;
     }
 
