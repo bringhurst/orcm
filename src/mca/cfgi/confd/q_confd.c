@@ -758,14 +758,11 @@ cc_completion (struct confd_user_info *uinfo,
     cmp = uinfo->actx.cb_opaque;
     cc  = uinfo->actx.dx->d_opaque;
 
-#if 0
-    if (cc->log_level == CONFD_TRACE) {
-        char buf[128];
 
-        confd_pp_kpath(buf, sizeof(buf), kp);
-        fprintf(cc->log_stream, "completion(%s): %s\n", cmp->comppoint, buf);
+    if (cc->log_level == CONFD_TRACE) {
+        fprintf(cc->log_stream, "completion(%s): %s\n", cmp->comppoint, cmdpath);
     }
-#endif
+
     if (cc->app_lock) {
         cc->app_lock();
     }
