@@ -1,6 +1,3 @@
-#if !defined(q_confd__INCLUDED)
-#define q_confd__INCLUDED
-
 /*
  * simplified API to confd
  */
@@ -74,11 +71,6 @@ struct cmddata {
                           int                     argc,
                           char                   *argv[],
                           long                    which);
-    boolean (*action_handler)(struct confd_user_info *uinfo,
-			      struct xml_tag *tag,
-			      struct confd_hkeypath *kp,
-			      confd_tag_value_t *params,
-			      int nparams);
     long         which;
     char         cmdpoint[MAX_CALLPOINT_LEN];
 };
@@ -206,6 +198,8 @@ extern confd_value_t *qc_find_key(confd_hkeypath_t *kp,
                                   enum confd_vtype  type);
 extern boolean qc_wait_start(qc_confd_t *cc);
 extern void    qc_close(qc_confd_t *cc);
+extern void qc_set_interfaces(char **interfaces);
+extern int qc_get_interface(void);
 extern boolean qc_confd_init(qc_confd_t           *cc,
                              char                  *log_pfx,
                              FILE                  *log_stream,
@@ -239,13 +233,6 @@ extern boolean qc_reg_cmdpoint(qc_confd_t  *cc,
                                     char                   *argv[],
                                     long                    which),
                                long         which);
-extern boolean qc_reg_actpoint(qc_confd_t  *cc,
-                               char        *cmdpoint,
-			       boolean (*actfunc)(struct confd_user_info *uinfo,
-					       	  struct xml_tag *tag,
-				       		  struct confd_hkeypath *kp,
-			       			  confd_tag_value_t *params,
-		       				  int nparams));
 extern boolean qc_reg_completion(qc_confd_t *cc,
                                  char       *comppoint,
                                  boolean   (*compfunc)
@@ -287,5 +274,3 @@ qc_nocmd (enum cdb_iter_op op)
 
     return FALSE;
 }
-
-#endif

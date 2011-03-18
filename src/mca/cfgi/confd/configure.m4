@@ -87,7 +87,16 @@ AC_DEFUN([MCA_orcm_cfgi_confd_CONFIG],[
         LIBS="$orcm_check_confd_save_LIBS"
 
         # see if internal support functions are needed
+        AC_MSG_CHECKING([for internal confd support])
         AM_CONDITIONAL([WANT_LOCAL_CONFD], test "$enable_internal_confd_support" = "yes")
+        if test "$enable_internal_confd_support" = "yes"; then
+            want_local_confd_flag=1
+            AC_MSG_RESULT([yes])
+        else
+            AC_MSG_RESULT([no])
+            want_local_confd_flag=0
+        fi
+        AC_DEFINE_UNQUOTED([WANT_LOCAL_CONFD], [$want_local_confd_flag], [Use local confd support])
 
         AS_IF([test "$orcm_check_confd_happy" = "yes"],
               [$1],

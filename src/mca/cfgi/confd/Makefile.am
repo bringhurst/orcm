@@ -18,8 +18,8 @@ sources = \
         cfgi_confd_component.c
 
 if WANT_LOCAL_CONFD
-sources += q_confd.h \
-           q_confd.c
+sources += orcm_q_confd.h \
+           orcm_q_confd.c
 EXTRA_LIBS = 
 else
 EXTRA_LIBS = -lnconfd_ulib -lqnlib -lsvmdb -lsvm -lclib -lvlibmemoryclient -lvlibapi

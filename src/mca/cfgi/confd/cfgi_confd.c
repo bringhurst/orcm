@@ -14,8 +14,13 @@ typedef unsigned int boolean;
 #include "openrcm_config_private.h"
 #include "constants.h"
 
+#if WANT_LOCAL_CONFD
+#include "orcm_q_confd.h"
+#else
+#include <q_confd.h>
+#endif
+
 #include "orcm-confd.h"
-#include "q_confd.h"
 
 #include "opal/class/opal_pointer_array.h"
 #include "opal/dss/dss.h"
@@ -2263,6 +2268,18 @@ static boolean orcm_clear(int maapisock,
                 ret = FALSE;
                 goto cleanup;
             }
+            /* bozo check - did they specify an executable, but give
+             * us a proc that is not from that executable?
+             */
+            if (NULL != app && app->idx != proc->app_idx) {
+                appname = opal_basename(app->app);
+                opal_output(0, "%s PROC %s DOES NOT BELONG TO EXECUTABLE %s",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                            ORTE_NAME_PRINT(&proc->name), appname);
+                free(appname);
+                ret = FALSE;
+                goto cleanup;
+            }
         }
     }
 
@@ -2606,68 +2623,109 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
             ret = FALSE;
             goto cleanup;
         }
-        /* find the executable */
-        app = NULL;
-        for (i=0; i < jdata->apps->size; i++) {
-            if (NULL == (aptr = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, i))) {
-                continue;
-            }
-            appname = opal_basename(aptr->app);
-            if (0 == strcmp(appname, options[5])) {
-                app = aptr;
-                free(appname);
-                break;
-            }
-            free(appname);
-        }
-        if (NULL == app) {
-            opal_output(0, "%s COMPLETION ERROR: APP %s NOT FOUND",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                        options[5]);
-            ret = FALSE;
-            goto cleanup;
-        }
-        /* allocate the completion array - this is the largest the array of completions
-         * can be. We may not fill it all, so we track the actual number of entries
-         * and pass that value back to confd
-         */
-        cmplt = (struct confd_completion_value *)malloc(app->num_procs * sizeof(struct confd_completion_value));
-        /* were we given a partial? */
-        if (0 == strlen(token)) {
-            /* return all vpid values */
-            for (i=0, n=0; i < jdata->procs->size; i++) {
-                if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, i))) {
-                    continue;
-                }
-                if (proc->app_idx != app->idx) {
-                    continue;
-                }
-                cmplt[n].type = CONFD_COMPLETION;
-                asprintf(&cmplt[n].value, "%s", ORTE_VPID_PRINT(proc->name.vpid));
-                cmplt[n].extra = NULL;
-                n++;
-            }
-        } else {
-            /* return all values that start with provided token. This is
-             * a little ugly as the token is a string and the job number
-             * is an integer - hopefully, someone will devise a more
-             * efficient method!
+        /* were we given an executable too? */
+        if (5 == nopts) {
+            /* nope - allocate the completion array - this is the largest the array of completions
+             * can be. We may not fill it all, so we track the actual number of entries
+             * and pass that value back to confd
              */
-            for (i=0, n=0; i < jdata->procs->size; i++) {
-                if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, i))) {
-                    continue;
-                }
-                if (proc->app_idx != app->idx) {
-                    continue;
-                }
-                asprintf(&numid, "%d", proc->name.vpid);
-                if (0 == strncmp(numid, token, strlen(token))) {
+            cmplt = (struct confd_completion_value *)malloc(jdata->num_procs * sizeof(struct confd_completion_value));
+            /* were we given a partial? */
+            if (0 == strlen(token)) {
+                /* nope - return all vpids in job */
+                for (i=0, n=0; i < jdata->procs->size; i++) {
+                    if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, i))) {
+                        continue;
+                    }
                     cmplt[n].type = CONFD_COMPLETION;
-                    cmplt[n].value = strdup(numid);
+                    asprintf(&cmplt[n].value, "%s", ORTE_VPID_PRINT(proc->name.vpid));
                     cmplt[n].extra = NULL;
                     n++;
                 }
-                free(numid);
+            } else {
+                /* return all values that start with provided token. This is
+                 * a little ugly as the token is a string and the job number
+                 * is an integer - hopefully, someone will devise a more
+                 * efficient method!
+                 */
+                for (i=0, n=0; i < jdata->procs->size; i++) {
+                    if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, i))) {
+                        continue;
+                    }
+                    asprintf(&numid, "%d", proc->name.vpid);
+                    if (0 == strncmp(numid, token, strlen(token))) {
+                        cmplt[n].type = CONFD_COMPLETION;
+                        cmplt[n].value = strdup(numid);
+                        cmplt[n].extra = NULL;
+                        n++;
+                    }
+                    free(numid);
+                }
+            }
+        } else {
+            /* find the executable */
+            app = NULL;
+            for (i=0; i < jdata->apps->size; i++) {
+                if (NULL == (aptr = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, i))) {
+                    continue;
+                }
+                appname = opal_basename(aptr->app);
+                if (0 == strcmp(appname, options[5])) {
+                    app = aptr;
+                    free(appname);
+                    break;
+                }
+                free(appname);
+            }
+            if (NULL == app) {
+                opal_output(0, "%s COMPLETION ERROR: APP %s NOT FOUND",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                            options[5]);
+                ret = FALSE;
+                goto cleanup;
+            }
+            /* allocate the completion array - this is the largest the array of completions
+             * can be. We may not fill it all, so we track the actual number of entries
+             * and pass that value back to confd
+             */
+            cmplt = (struct confd_completion_value *)malloc(app->num_procs * sizeof(struct confd_completion_value));
+            /* were we given a partial? */
+            if (0 == strlen(token)) {
+                /* return all vpid values */
+                for (i=0, n=0; i < jdata->procs->size; i++) {
+                    if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, i))) {
+                        continue;
+                    }
+                    if (proc->app_idx != app->idx) {
+                        continue;
+                    }
+                    cmplt[n].type = CONFD_COMPLETION;
+                    asprintf(&cmplt[n].value, "%s", ORTE_VPID_PRINT(proc->name.vpid));
+                    cmplt[n].extra = NULL;
+                    n++;
+                }
+            } else {
+                /* return all values that start with provided token. This is
+                 * a little ugly as the token is a string and the job number
+                 * is an integer - hopefully, someone will devise a more
+                 * efficient method!
+                 */
+                for (i=0, n=0; i < jdata->procs->size; i++) {
+                    if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, i))) {
+                        continue;
+                    }
+                    if (proc->app_idx != app->idx) {
+                        continue;
+                    }
+                    asprintf(&numid, "%d", proc->name.vpid);
+                    if (0 == strncmp(numid, token, strlen(token))) {
+                        cmplt[n].type = CONFD_COMPLETION;
+                        cmplt[n].value = strdup(numid);
+                        cmplt[n].extra = NULL;
+                        n++;
+                    }
+                    free(numid);
+                }
             }
         }
         if (confd_action_reply_completion(uinfo, cmplt, n) < 0) {
