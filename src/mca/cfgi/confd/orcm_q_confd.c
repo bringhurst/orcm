@@ -51,7 +51,7 @@ typedef int boolean;
 
 static bool qc_debug = false;
 
-#include "q_confd.h"
+#include "orcm_q_confd.h"
 
  /*
  * use CONFD_ADDR (format ip-address:port), or
@@ -759,10 +759,7 @@ cc_completion (struct confd_user_info *uinfo,
     cc  = uinfo->actx.dx->d_opaque;
 
     if (cc->log_level == CONFD_TRACE) {
-        char buf[128];
-
-        confd_pp_kpath(buf, sizeof(buf), kp);
-        fprintf(cc->log_stream, "completion(%s): %s\n", cmp->comppoint, buf);
+        fprintf(cc->log_stream, "completion(%s): %s\n", cmp->comppoint, cmdpath);
     }
     
     if (cc->app_lock) {

@@ -2151,7 +2151,7 @@ static boolean orcm_clear(int maapisock,
                           int argc, char **argv, long which)
 {
     int i, n;
-    char *value, *appname;
+    char *value, *appname, *remainder;
     orte_job_t *jdata=NULL, *jdt;
     orte_app_context_t *app=NULL, *aptr;
     orte_proc_t *proc=NULL;
@@ -2219,9 +2219,20 @@ static boolean orcm_clear(int maapisock,
                 ret = FALSE;
                 goto cleanup;
             }
-            /* convert the value to an int */
-            n = atoi(value);
-            /* get this job number */
+            /* find this job number - need extra protection here as
+             * confd does -not- check types on input data! Thus, a user
+             * could have provided a string, or have a typo character
+             * in the middle of the number
+             */
+            n = strtol(value, &remainder, 10);
+            if (NULL != remainder && 0 < strlen(remainder)) {
+                /* there was indeed a character in here! */
+                opal_output(0, "%s JOB ID %s CONTAINS NON-NUMERIC CHARACTER",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), value);
+                ret = FALSE;
+                goto cleanup;
+            }
+           /* get this job number */
             if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, n))) {
             }
         } else if (0 == strncmp(argv[i], "EXE", strlen("EXE"))) {
@@ -2260,8 +2271,19 @@ static boolean orcm_clear(int maapisock,
                 ret = FALSE;
                 goto cleanup;
             }
-            /* get this vpid */
-            n = atoi(value);
+            /* get this vpid - need extra protection here as
+             * confd does -not- check types on input data! Thus, a user
+             * could have provided a string, or have a typo character
+             * in the middle of the number
+             */
+            n = strtol(value, &remainder, 10);
+            if (NULL != remainder && 0 < strlen(remainder)) {
+                /* there was indeed a character in here! */
+                opal_output(0, "%s PROC ID %s CONTAINS NON-NUMERIC CHARACTER",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), value);
+                ret = FALSE;
+                goto cleanup;
+            }
             if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, n))) {
                 opal_output(0, "%s PROC %d IN JOB %s IS NOT AVAILABLE",
                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), n, jdata->name);
@@ -2386,7 +2408,7 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
     orte_proc_t *proc;
     boolean ret=TRUE;
     char **options=NULL;
-    char *appname, *numid;
+    char *appname, *numid, *remainder;
 
     OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                          "%s CLEAR COMPLETION CALLED\n    token %s(%d)\n     cmdpath %s\n     paramid %s\n",
@@ -2425,7 +2447,7 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
          * can be. We may not fill it all, so we track the actual number of entries
          * and pass that value back to confd
          */
-        cmplt = (struct confd_completion_value *)malloc(n * sizeof(struct confd_completion_value));
+        cmplt = (struct confd_completion_value *)calloc(n, sizeof(struct confd_completion_value));
 
         if (0 == strcmp(options[nopts-1], "job-name")) {
             /* were we given a partial? */
@@ -2474,7 +2496,18 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
                     n++;
                 }
             } else {
-                /* yes - just insert those that start with token. This is
+                /* check to see if we were given a number. Confd does
+                 * not check for type match before sending us data, so
+                 * the user could be typing gibberish
+                 */
+                n = strtol(token, &remainder, 10);
+                if (NULL != remainder && 0 < strlen(remainder)) {
+                    opal_output(0, "%s COMPLETION ERROR: JOB-ID %s HAS NON-NUMERIC CHARACTER %s %d",
+                                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), token, remainder, (int)strlen(remainder));
+                    ret = FALSE;
+                    goto cleanup;
+                }
+                /* just insert those that start with token. This is
                  * a little ugly as the token is a string and the job number
                  * is an integer - hopefully, someone will devise a more
                  * efficient method!
@@ -2524,8 +2557,19 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
                 goto cleanup;
             }
         } else if (0 == strcmp(options[2], "job-id")) {
-            /* find this job number */
-            i = atoi(options[3]);
+            /* find this job number - need extra protection here as
+             * confd does -not- check types on input data! Thus, a user
+             * could have provided a string, or have a typo character
+             * in the middle of the number
+             */
+            i = strtol(options[3], &remainder, 10);
+            if (NULL != remainder && 0 < strlen(remainder)) {
+                /* there was indeed a character in here! */
+                opal_output(0, "%s COMPLETION ERROR: JOB-ID %s HAS NON-NUMERIC CHARACTER %s(%d)",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), options[3], remainder, (int)strlen(remainder));
+                ret = FALSE;
+                goto cleanup;
+            }
             if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
                 opal_output(0, "%s COMPLETION ERROR: JOB %s NOT FOUND",
                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
@@ -2545,7 +2589,7 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
          * can be. We may not fill it all, so we track the actual number of entries
          * and pass that value back to confd
          */
-        cmplt = (struct confd_completion_value *)malloc(jdata->num_apps * sizeof(struct confd_completion_value));
+        cmplt = (struct confd_completion_value *)calloc(jdata->num_apps, sizeof(struct confd_completion_value));
 
         /* were we given a partial token? */
         if (0 == strlen(token)) {
@@ -2606,8 +2650,19 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
                 goto cleanup;
             }
         } else if (0 == strcmp(options[2], "job-id")) {
-            /* find this job number */
-            i = atoi(options[3]);
+            /* find this job number - need extra protection here as
+             * confd does -not- check types on input data! Thus, a user
+             * could have provided a string, or have a typo character
+             * in the middle of the number
+             */
+            i = strtol(options[3], &remainder, 10);
+            if (NULL != remainder && 0 < strlen(remainder)) {
+                /* there was indeed a character in here! */
+                opal_output(0, "%s COMPLETION ERROR: JOB-ID %s HAS NON-NUMERIC CHARACTER %s(%d)",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), options[3], remainder, (int)strlen(remainder));
+                ret = FALSE;
+                goto cleanup;
+            }
             if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
                 opal_output(0, "%s COMPLETION ERROR: JOB %s NOT FOUND",
                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
@@ -2629,7 +2684,7 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
              * can be. We may not fill it all, so we track the actual number of entries
              * and pass that value back to confd
              */
-            cmplt = (struct confd_completion_value *)malloc(jdata->num_procs * sizeof(struct confd_completion_value));
+            cmplt = (struct confd_completion_value *)calloc(jdata->num_procs, sizeof(struct confd_completion_value));
             /* were we given a partial? */
             if (0 == strlen(token)) {
                 /* nope - return all vpids in job */
@@ -2688,7 +2743,7 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
              * can be. We may not fill it all, so we track the actual number of entries
              * and pass that value back to confd
              */
-            cmplt = (struct confd_completion_value *)malloc(app->num_procs * sizeof(struct confd_completion_value));
+            cmplt = (struct confd_completion_value *)calloc(app->num_procs, sizeof(struct confd_completion_value));
             /* were we given a partial? */
             if (0 == strlen(token)) {
                 /* return all vpid values */
@@ -2741,7 +2796,9 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
  cleanup:
     if (NULL != cmplt) {
         for (i=0; i < n; i++) {
-            free(cmplt[i].value);
+            if (NULL != cmplt[i].value) {
+                free(cmplt[i].value);
+            }
         }
         free(cmplt);
     }

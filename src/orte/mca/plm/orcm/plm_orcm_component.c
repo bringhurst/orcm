@@ -114,7 +114,7 @@ int orte_plm_orcm_component_query(mca_base_module_t **module, int *priority)
     
     /* this module can only work if rsh/ssh is available */
     
-    if (ORTE_SUCCESS != orte_plm_base_rsh_launch_agent_setup()) {
+    if (ORTE_SUCCESS != orte_plm_base_rsh_launch_agent_setup(NULL, NULL)) {
         /* this isn't an error - we just cannot be selected */
         OPAL_OUTPUT_VERBOSE((1, orte_plm_globals.output,
                              "%s plm:rsh: unable to be used: cannot find path "
