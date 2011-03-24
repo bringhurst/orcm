@@ -24,10 +24,10 @@ typedef struct {
 
 ORCM_DECLSPEC extern orcm_leader_base_t orcm_leader_base;
 
-int orcm_leader_base_open(void);
-int orcm_leader_base_select(void);
-int orcm_leader_base_close(void);
+ORCM_DECLSPEC int orcm_leader_base_open(void);
+ORCM_DECLSPEC int orcm_leader_base_select(void);
+ORCM_DECLSPEC int orcm_leader_base_close(void);
 
-extern const mca_base_component_t *orcm_leader_base_components[];
+ORCM_DECLSPEC extern const mca_base_component_t *orcm_leader_base_components[];
 
 #endif

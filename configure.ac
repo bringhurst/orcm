@@ -189,6 +189,17 @@ dnl AC_SUBST(OPENRCM_WRAPPER_EXTRA_CXXFLAGS)
 AC_SUBST(OPENRCM_WRAPPER_EXTRA_LDFLAGS)
 AC_SUBST(OPENRCM_WRAPPER_EXTRA_LIBS)
 
+##################################
+# Visibility
+##################################
+
+# Check the visibility declspec at the end to avoid problem with
+# the previous tests that are not necessarily prepared for
+# the visibility feature.
+orcm_show_title "Symbol visibility feature"
+
+ORCM_CHECK_VISIBILITY
+
 #
 # Libtool: part 1
 #
@@ -250,7 +261,6 @@ AC_CONFIG_FILES([Makefile
 		 src/orte/Makefile
 
                  src/tools/Makefile
-		 src/tools/orcm/Makefile
 		 src/tools/orcm-info/Makefile
 		 src/tools/orcm-start/Makefile
 		 src/tools/orcm-stop/Makefile

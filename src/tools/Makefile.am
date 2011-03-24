@@ -9,7 +9,6 @@
 #
 
 SUBDIRS = \
-	orcm \
         orcm-info \
 	orcm-start \
 	orcm-stop \

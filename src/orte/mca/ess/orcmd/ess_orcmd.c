@@ -117,9 +117,13 @@ static void vm_cmd(int status,
                    int count,
                    opal_buffer_t *buffer,
                    void *cbdata);
-static void recv_contact(int status, orte_process_name_t* peer,
-                         opal_buffer_t* buffer, orte_rml_tag_t tag,
-                         void* cbdata);
+static void recv_contact(int status,
+                         orte_process_name_t *sender,
+                         orcm_pnp_tag_t tag,
+                         struct iovec *msg,
+                         int count,
+                         opal_buffer_t *buffer,
+                         void *cbdata);
 
 static int rte_init(void)
 {
@@ -257,7 +261,6 @@ static int rte_init(void)
 
 static int rte_finalize(void)
 {
-    orte_rml.recv_cancel(ORTE_NAME_WILDCARD, ORTE_RML_TAG_BOOTSTRAP);
     local_fin();
     return ORTE_SUCCESS;    
 }
@@ -788,11 +791,11 @@ static int local_setup(void)
         goto error;
     }
     /* listen for state data requests */
-    ret = orte_rml.recv_buffer_nb(ORTE_NAME_WILDCARD, ORTE_RML_TAG_BOOTSTRAP,
-                                  ORTE_RML_PERSISTENT, recv_contact, NULL);
-    if (ret != ORTE_SUCCESS && ret != ORTE_ERR_NOT_IMPLEMENTED) {
-        ORTE_ERROR_LOG(ret);
-        error = "contact_recv";
+    if (ORCM_SUCCESS != (ret = orcm_pnp.register_receive("orcm-sched", "0.1", "alpha",
+                                                         ORCM_PNP_SYS_CHANNEL,
+                                                         ORCM_PNP_TAG_BOOTSTRAP,
+                                                         recv_contact, NULL))) {
+        error = "contact recv";
         goto error;
     }
 
@@ -1037,20 +1040,25 @@ static void vm_cmd(int status,
     ORTE_MESSAGE_EVENT(ORTE_PROC_MY_NAME, buffer, ORTE_RML_TAG_DAEMON, orte_daemon_cmd_processor);
 }
 
-static void rml_cbfunc(int status,
-                       struct orte_process_name_t* peer,
-                       struct opal_buffer_t* buffer,
-                       orte_rml_tag_t tag,
-                       void* cbdata)
+static void cbfunc(int status,
+                   orte_process_name_t *sender,
+                   orcm_pnp_tag_t tag,
+                   struct iovec *msg,
+                   int count,
+                   opal_buffer_t *buffer,
+                   void *cbdata)
 {
     OBJ_RELEASE(buffer);
 }
 
-static void process_contact(int fd, short flags, void* cbdata)
+static void recv_contact(int status,
+                         orte_process_name_t *peer,
+                         orcm_pnp_tag_t tag,
+                         struct iovec *msg,
+                         int count,
+                         opal_buffer_t *buffer,
+                         void *cbdata)
 {
-    orte_message_event_t *mev = (orte_message_event_t*)cbdata;
-    orte_process_name_t *peer = &mev->sender;
-    opal_buffer_t *buffer = mev->buffer;
     orte_process_name_t name;
     orte_daemon_cmd_flag_t command;
     int n, rc;
@@ -1062,6 +1070,23 @@ static void process_contact(int fd, short flags, void* cbdata)
     orte_app_context_t *app;
     orte_app_idx_t na;
 
+    /* is this responding to an announce from me? */
+    n = 1;
+    if (ORTE_SUCCESS != (rc = opal_dss.unpack(buffer, &name, &n, ORTE_NAME))) {
+        ORTE_ERROR_LOG(rc);
+        return;
+    }
+    if (name.jobid != ORTE_PROC_MY_NAME->jobid ||
+        name.vpid != ORTE_PROC_MY_NAME->vpid) {
+        /* nope - someone else */
+        OPAL_OUTPUT_VERBOSE((5, orte_ess_base_output,
+                             "%s GOT SCHED CONTACT COMMAND FOR %s - IGNORING",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             ORTE_NAME_PRINT(&name)));
+        /* DO NOT send a response */
+        return;
+    }
+
     OPAL_OUTPUT_VERBOSE((5, orte_ess_base_output,
                          "%s GOT SCHED CONTACT COMMAND",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
@@ -1071,8 +1096,7 @@ static void process_contact(int fd, short flags, void* cbdata)
     ORTE_PROC_MY_HNP->vpid = peer->vpid;
 
     /* start the local sensors - do this now so heartbeats don't
-     * start running too early as we need to learn the name
-     * of the HNP from here
+     * start running before the scheduler knows we exist
      */
     orte_sensor.start(ORTE_PROC_MY_NAME->jobid);
 
@@ -1159,18 +1183,10 @@ static void process_contact(int fd, short flags, void* cbdata)
     }
 
  release:
-    if (ORTE_SUCCESS != (rc = orte_rml.send_buffer_nb(peer, ans,
-                                                      ORTE_RML_TAG_BOOTSTRAP, 0,
-                                                      rml_cbfunc, NULL))) {
+    if (ORTE_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
+                                                 NULL, ORCM_PNP_TAG_BOOTSTRAP,
+                                                 NULL, 0, ans, cbfunc, NULL))) {
         ORTE_ERROR_LOG(rc);
         OBJ_RELEASE(ans);
     }
-}
-
-static void recv_contact(int status, orte_process_name_t* peer,
-                         opal_buffer_t* buffer, orte_rml_tag_t tag,
-                         void* cbdata)
-{
-    /* rotate out of rml recv */
-    ORTE_MESSAGE_EVENT(peer, buffer, tag, process_contact);
 }

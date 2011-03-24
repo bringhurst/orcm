@@ -68,13 +68,9 @@ OBJ_CLASS_INSTANCE(orcm_job_caddy_t,
 #define ORCM_CONFD_KILL  0x02
 
 static opal_pointer_array_t installed_apps, active_apps;
-static opal_mutex_t internal_lock;
-static opal_condition_t internal_cond;
-static bool waiting;
-static bool thread_active;
+static bool thread_active = false;
 static bool initialized = false;
 static bool enabled = false;
-static opal_mutex_t enabled_lock;
 static pthread_t confd_nanny_id;
 static char **interfaces=NULL;
 static bool confd_master_is_local=false;
@@ -280,6 +276,8 @@ confd_nanny (void *arg)
     int cnt;
     char log_pfx[48];
 
+    thread_active = true;
+
     snprintf(log_pfx, sizeof(log_pfx), "ORCM-DVM/%d", \
              (int)ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid));
 
@@ -295,9 +293,6 @@ confd_nanny (void *arg)
         sleep(1);
         qc_close(&cc);
     }
-    thread_active = true;
-    waiting = false;
-    opal_condition_signal(&internal_cond);
 
     if (FALSE == cfgi_confd_subscribe(&cc)) {
         opal_output(0, "%s FAILED TO SUBSCRIBE TO CONFD",
@@ -336,10 +331,6 @@ static int cfgi_confd_init(void)
     OBJ_CONSTRUCT(&active_apps, opal_pointer_array_t);
     opal_pointer_array_init(&active_apps, 16, INT_MAX, 16);
 
-    OBJ_CONSTRUCT(&internal_lock, opal_mutex_t);
-    OBJ_CONSTRUCT(&internal_cond, opal_condition_t);
-    OBJ_CONSTRUCT(&enabled_lock, opal_mutex_t);
-    waiting = true;
     thread_active = false;
     initialized = true;
     enabled = false;
@@ -367,26 +358,17 @@ static void cfgi_confd_activate(void)
                        OPAL_EV_READ|OPAL_EV_PERSIST, launch_thread, NULL);
         opal_event_add(&launch_event, 0);
         /* start the connection */
-        OPAL_THREAD_LOCK(&internal_lock);
         if (pthread_create(&confd_nanny_id,
                            NULL,            /* thread attributes */
                            confd_nanny,
                            NULL             /* thread parameter */) < 0) {
             /* if we can't start a thread, then just return */
-            OPAL_THREAD_UNLOCK(&internal_lock);
             return;
         }
-        while (waiting) {
-            opal_condition_wait(&internal_cond, &internal_lock);
-        }
-        if (!thread_active) {
-            /* nobody answered the phone */
-            waiting = true;
-            opal_event_del(&launch_event);
-            OPAL_THREAD_UNLOCK(&internal_lock);
-            return;
-        }
-        OPAL_THREAD_UNLOCK(&internal_lock);
+        /* don't wait for the connection as this can cause us
+         * to hang here. Let the thread just cycle while it
+         * looks for confd
+         */
     } else {
         /* do nothing - data will be sent to the tool component */
         return;
@@ -401,9 +383,6 @@ static int cfgi_confd_finalize(void)
     orte_job_t *jd;
 
     if (initialized) {
-        OBJ_DESTRUCT(&internal_lock);
-        OBJ_DESTRUCT(&internal_cond);
-        OBJ_DESTRUCT(&enabled_lock);
 
         for (i=0; i < installed_apps.size; i++) {
             if (NULL != (jd = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, i))) {

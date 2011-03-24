@@ -15,8 +15,9 @@
 #undef PACKAGE_STRING
 #undef PACKAGE_TARNAME
 #undef PACKAGE_VERSION
+#undef HAVE_CONFIG_H
 
-#  if OPAL_C_HAVE_VISIBILITY
+#  if ORCM_C_HAVE_VISIBILITY
 #    define ORCM_DECLSPEC           __opal_attribute_visibility__("default")
 #    define ORCM_MODULE_DECLSPEC    __opal_attribute_visibility__("default")
 #  else
