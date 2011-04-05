@@ -97,6 +97,8 @@ ORCM_DECLSPEC void orcm_pnp_base_recv_direct_msgs(int status, orte_process_name_
                                                   opal_buffer_t* buffer, orte_rml_tag_t tg,
                                                   void* cbdata);
 
+ORCM_DECLSPEC int orcm_pnp_base_construct_msg(opal_buffer_t **buf, opal_buffer_t *buffer,
+                                              orcm_pnp_tag_t tag, struct iovec *msg, int count);
 
 #define ORCM_PNP_MESSAGE_EVENT(sndr, chn, bf)                   \
     do {                                                        \

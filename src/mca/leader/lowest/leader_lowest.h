@@ -12,7 +12,7 @@
 
 #include "openrcm.h"
 
-extern orcm_leader_base_component_t mca_orcm_leader_lowest_component;
-extern orcm_leader_base_module_t orcm_leader_lowest_module;
+ORCM_DECLSPEC extern orcm_leader_base_component_t mca_orcm_leader_lowest_component;
+ORCM_DECLSPEC extern orcm_leader_base_module_t orcm_leader_lowest_module;
 
 #endif /* LEADER_LOWEST_H */

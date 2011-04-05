@@ -225,9 +225,8 @@ qc_pp_change (char             *output,
               confd_value_t    *newv,
               int               ns)
 {
-    int chars;
     char *opstr;
-    char buf[256];
+    char buf[256], value[256];
 
     switch (op) {
       case MOP_CREATED:   opstr = "create";    break;
@@ -238,21 +237,11 @@ qc_pp_change (char             *output,
     }
 
     confd_pp_kpath(buf, sizeof(buf), kp);
-    chars = snprintf(output, output_size, "%s %s", opstr, buf);
-    if (chars > output_size) {
-        chars = output_size;
-    }
-    output      += chars;
-    output_size += chars;
-
     if (op == MOP_VALUE_SET) {
-	confd_ns_pp_value(buf, sizeof(buf), newv, ns);
-	chars = snprintf(output, output_size, " = %s", buf);
-        if (chars > output_size) {
-            chars = output_size;
-        }
-        output      += chars;
-        output_size += chars;
+	confd_ns_pp_value(value, sizeof(value), newv, ns);
+	snprintf(output, output_size, "%s %s = %s",opstr, buf, value);
+    } else {
+        snprintf(output, output_size, "%s %s", opstr, buf);
     }
 }
 
@@ -1612,7 +1601,7 @@ tagmatch (confd_hkeypath_t *kp,
     // dump match results to stderr when debugging
     if (qc_debug) {
         int ix;
-        char buf[32];
+        char buf[512];
         uint32_t kp_ns = 0;
 
         fprintf(stderr, "%2d, %d, %d <= tagmatch(", retv, *partial, kx_start);
@@ -1761,7 +1750,7 @@ cc_iter_diffs (confd_hkeypath_t *kp,
                confd_value_t    *newv,
                void             *state)
 {
-    char buf[128];
+    char buf[512];
     cmdtbl_t *cmd;
     struct subdata *sdp;
 
