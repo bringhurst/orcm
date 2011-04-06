@@ -24,6 +24,7 @@
 #include "orte/util/name_fns.h"
 #include "orte/util/proc_info.h"
 #include "orte/runtime/orte_globals.h"
+#include "orte/threads/threads.h"
 
 #include "orte/mca/rml/rml.h"
 
@@ -41,7 +42,7 @@ static void recv_input(int status,
                        opal_buffer_t *buf,
                        void *cbdata);
 
-static void send_data(int fd, short flags, void *arg);
+static void* send_data(opal_object_t *obj);
 
 static void responses(orcm_info_t *vm);
 
@@ -53,6 +54,9 @@ static int report_rate=1;
 static int num_msgs_recvd=0;
 static bool help;
 static struct timeval starttime, stoptime;
+static int send_pipe[2];
+static orte_thread_ctl_t ctl;
+static opal_thread_t send_thread;
 
 static opal_cmd_line_init_t cmd_line_init[] = {
     /* Various "obvious" options */
@@ -88,7 +92,7 @@ int main(int argc, char* argv[])
 
     if (help) {
         args = opal_cmd_line_get_usage_msg(&cmd_line);
-        fprintf(stderr, "Usage: unicast_stress [OPTIONS]\n%s\n", args);
+        fprintf(stderr, "Usage: unicast_stress_threaded [OPTIONS]\n%s\n", args);
         free(args);
         exit(0);
     }
@@ -108,6 +112,29 @@ int main(int argc, char* argv[])
         exit(1);
     }
     
+    /* start the send thread */
+    OBJ_CONSTRUCT(&ctl, orte_thread_ctl_t);
+    OBJ_CONSTRUCT(&send_thread, opal_thread_t);
+
+    if (0 == ORTE_PROC_MY_NAME->vpid) {
+        if (pipe(send_pipe) < 0) {
+            opal_output(0, "%s Cannot open send thread pipe",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            rc = ORTE_ERROR;
+            goto cleanup;
+        }
+        /* start the thread - we will send it a NULL msg pointer when
+         * we want it to stop
+         */
+        send_thread.t_run = send_data;
+        if (ORTE_SUCCESS != (rc = opal_thread_start(&send_thread))) {
+            ORTE_ERROR_LOG(rc);
+            ctl.running = false;
+            rc = ORTE_ERROR;
+            goto cleanup;
+        }
+    }
+
     /* register to recv anything sent to our input  */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("UNICAST-STRESS", "1.0", "alpha",
                                                         ORCM_PNP_GROUP_INPUT_CHANNEL,
@@ -135,20 +162,15 @@ int main(int argc, char* argv[])
 
 static void responses(orcm_info_t *vm)
 {
+    uint8_t flag=1;
+
     if (vm->name->jobid != ORTE_PROC_MY_NAME->jobid) {
         return;
     }
 
-    /* need to get out of this callback so the system can prep
-     * itself for messaging. If we are rank=0, then we use a
-     * timer event for the very first message burst. This provides
-     * a little delay to ensure both parties are ready. Only the
-     * first burst is sent via timer - after that, it is driven
-     * by receipt of an "ack" from the prior burst.
-     */
     if (0 == ORTE_PROC_MY_NAME->vpid) {
         /* I will be sending the messages */
-        ORTE_TIMER_EVENT(1, 0, send_data);
+        opal_fd_write(send_pipe[1], sizeof(uint8_t), &flag);
     }
 }
 
@@ -175,10 +197,11 @@ static void recv_input(int status,
 {
     struct iovec *response;
     int rc;
-    
+    uint8_t flag=1;
+
     if (0 == ORTE_PROC_MY_NAME->vpid) {
         /* this is an ack - ready to send next burst */
-        send_data(0, 0, NULL);
+        opal_fd_write(send_pipe[1], sizeof(uint8_t), &flag);
     } else {
         /* bump the number of recvd messages */
         num_msgs_recvd++;
@@ -204,44 +227,81 @@ static void recv_input(int status,
 }
 
 
-static void send_data(int fd, short flags, void *arg)
+static void* send_data(opal_object_t *obj)
 {
     int rc;
+    struct timespec tp={0, 10};
     int n, i;
     struct iovec *msg;
     orte_process_name_t peer;
     long secs, usecs;
     float rate;
+    uint8_t flag;
 
-    if (0 == burst_num) {
-        gettimeofday(&starttime, NULL);
-    } else if (0 == (burst_num % report_rate)) {
-        gettimeofday(&stoptime, NULL);
-        ORTE_COMPUTE_TIME_DIFF(secs, usecs, starttime.tv_sec, starttime.tv_usec, stoptime.tv_sec, stoptime.tv_usec);
-        rate = (float)(burst_size * report_rate) / (float)(secs + (float)usecs/1000000.0);
-        opal_output(0, "%s unicasting data for burst number %d: avg rate %5.2f msgs/sec",
-                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), burst_num, rate);
-        gettimeofday(&starttime, NULL);
-    } 
+    opal_output(0, "%s send thread operational", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
 
-    /* unicast a burst to my peer */
-    for (i=0; i < burst_size; i++) {
-        msg = (struct iovec*)malloc(sizeof(struct iovec));
-        msg->iov_base = (void*)malloc(msg_size);
-        msg->iov_len = msg_size;
-    
-        /* output the values */
-        peer.jobid = ORTE_PROC_MY_NAME->jobid;
-        peer.vpid = 1;
+    ORTE_ACQUIRE_THREAD(&ctl);
+    ctl.running = true;
+    ORTE_RELEASE_THREAD(&ctl);
 
-        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, &peer,
-                                                     ORCM_TEST_CLIENT_SERVER_TAG, msg, 1, NULL, cbfunc_mcast, NULL))) {
-            ORTE_ERROR_LOG(rc);
+    while (1) {
+        /* block here until a trigger arrives */
+        if (0 > (rc = opal_fd_read(send_pipe[0],
+                                   sizeof(uint8_t), &flag))) {
+            /* if something bad happened, punt */
+            opal_output(0, "%s PUNTING THREAD", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            ORTE_ACQUIRE_THREAD(&ctl);
+            ctl.running = false;
+            ORTE_RELEASE_THREAD(&ctl);
+            /* give a little delay to ensure the main thread gets into
+             * opal_thread_join before we exit
+             */
+            nanosleep(&tp, NULL);
+            return OPAL_THREAD_CANCELLED;
         }
-        msg_num++;
-    }
+        /* check to see if we were told to stop */
+        if (0 == flag) {
+            ORTE_ACQUIRE_THREAD(&ctl);
+            ctl.running = false;
+            ORTE_RELEASE_THREAD(&ctl);
+            /* give a little delay to ensure the main thread gets into
+             * opal_thread_join before we exit
+             */
+            nanosleep(&tp, NULL);
+            return OPAL_THREAD_CANCELLED;
+        }
 
-    /* increment the burst number */
-    burst_num++;
+        /* send the next burst */
+        if (0 == burst_num) {
+            gettimeofday(&starttime, NULL);
+        } else if (0 == (burst_num % report_rate)) {
+            gettimeofday(&stoptime, NULL);
+            ORTE_COMPUTE_TIME_DIFF(secs, usecs, starttime.tv_sec, starttime.tv_usec, stoptime.tv_sec, stoptime.tv_usec);
+            rate = (float)(burst_size * report_rate) / (float)(secs + (float)usecs/1000000.0);
+            opal_output(0, "%s unicasting data for burst number %d: avg rate %5.2f msgs/sec",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), burst_num, rate);
+            gettimeofday(&starttime, NULL);
+        } 
+
+        /* unicast a burst to my peer */
+        for (i=0; i < burst_size; i++) {
+            msg = (struct iovec*)malloc(sizeof(struct iovec));
+            msg->iov_base = (void*)malloc(msg_size);
+            msg->iov_len = msg_size;
+    
+            /* output the values */
+            peer.jobid = ORTE_PROC_MY_NAME->jobid;
+            peer.vpid = 1;
+
+            if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, &peer,
+                                                         ORCM_TEST_CLIENT_SERVER_TAG, msg, 1, NULL, cbfunc_mcast, NULL))) {
+                ORTE_ERROR_LOG(rc);
+            }
+            msg_num++;
+        }
+
+        /* increment the burst number */
+        burst_num++;
+    }
     
 }

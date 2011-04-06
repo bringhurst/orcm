@@ -12,7 +12,8 @@ test_PROGRAMS =          \
         talker_iovec    \
         talker_iovec_nb \
         udp_size        \
-        unicast_stress
+        unicast_stress  \
+        unicast_stress_threaded
 
 AM_LDFLAGS = @LIBS@
 
