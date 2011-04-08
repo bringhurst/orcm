@@ -40,15 +40,21 @@ static void recv_input(int status,
                        void *cbdata);
 static void found_channel(const char *app, const char *version, const char *release,
                           orcm_pnp_channel_t channel);
+static void responses(orcm_info_t *vm);
 
 static int32_t flag=0;
 static int msg_num;
 static orcm_pnp_channel_t peer = ORCM_PNP_INVALID_CHANNEL;
+static char *string_id=NULL;
+static orte_process_name_t target;
 
 int main(int argc, char* argv[])
 {
     struct timespec tp;
     int rc, delay;
+
+    target.jobid = ORTE_JOBID_INVALID;
+    target.vpid = ORTE_VPID_INVALID;
 
     /* init the ORCM library - this includes registering
      * a multicast recv so we hear announcements and
@@ -74,7 +80,7 @@ int main(int argc, char* argv[])
     }
     
     /* announce our existence */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("CLIENT", "2.0", "beta", NULL))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("CLIENT", "2.0", "beta", responses))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -91,6 +97,21 @@ int main(int argc, char* argv[])
 cleanup:
     orcm_finalize();
     return rc;
+}
+
+static void responses(orcm_info_t *vm)
+{
+    if (ORTE_JOBID_INVALID != target.jobid) {
+        return;
+    }
+    if (0 == strcasecmp(vm->app, "client") &&
+        0 == strcasecmp(vm->version, "1.0")) {
+        opal_output(0, "%s ASSIGNING %s TO TARGET",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_NAME_PRINT(vm->name));
+        target.jobid = vm->name->jobid;
+        target.vpid = vm->name->vpid;
+        ORCM_CREATE_STRING_ID(&string_id, vm->app, vm->version, vm->release);
+    }
 }
 
 static void cbfunc(int status, orte_process_name_t *name,
@@ -129,7 +150,7 @@ static void send_data(int fd, short flags, void *arg)
     }
     
     /* output the values */
-    if (ORCM_PNP_INVALID_CHANNEL == peer) {
+    if (ORTE_JOBID_INVALID == target.jobid) {
         opal_output(0, "%s mcasting data for msg number %d on GROUP output", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num);
         if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, NULL,
                                                      ORCM_PNP_TAG_OUTPUT, msg, count,
@@ -137,9 +158,9 @@ static void send_data(int fd, short flags, void *arg)
             ORTE_ERROR_LOG(rc);
         }
     } else {
-        opal_output(0, "%s mcasting data for msg number %d on channel %d directly",
-                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num, peer);
-        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(peer, NULL,
+        opal_output(0, "%s unicasting data for msg number %d on channel %d to %s of triplet %s",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), msg_num, peer, ORTE_NAME_PRINT(&target), string_id);
+        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(peer, &target,
                                                      ORCM_TEST_CLIENT_CLIENT_TAG, msg, count,
                                                      NULL, cbfunc, NULL))) {
             ORTE_ERROR_LOG(rc);
@@ -174,5 +195,6 @@ static void found_channel(const char *app, const char *version, const char *rele
     opal_output(0, "%s recvd channel %d for triplet %s:%s:%s",
                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                 channel, app, version, release);
+    ORCM_CREATE_STRING_ID(&string_id, app, version, release);
     peer = channel;
 }

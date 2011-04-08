@@ -50,7 +50,7 @@ static int msg_num=0;
 static int burst_num=0;
 static int burst_size=250;
 static int msg_size=100;
-static int report_rate=1;
+static int report_rate=100;
 static int num_msgs_recvd=0;
 static bool help;
 static struct timeval starttime, stoptime;
@@ -71,7 +71,7 @@ static opal_cmd_line_init_t cmd_line_init[] = {
       "Number of bytes in each message [default: 100]" },
     { NULL, NULL, NULL, 'r', "report-rate", "report-rate", 1,
       &report_rate, OPAL_CMD_LINE_TYPE_INT,
-      "Number of bursts between printing a progress report [default: 1]" },
+      "Number of bursts between printing a progress report [default: 100]" },
     /* End of list */
     { NULL, NULL, NULL, '\0', NULL, NULL, 0,
       NULL, OPAL_CMD_LINE_TYPE_NULL, NULL }
@@ -136,7 +136,7 @@ int main(int argc, char* argv[])
     }
 
     /* register to recv anything sent to our input  */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("UNICAST-STRESS", "1.0", "alpha",
+    if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("UNICAST-STRESS-THREADED", "1.0", "alpha",
                                                         ORCM_PNP_GROUP_INPUT_CHANNEL,
                                                         ORCM_PNP_TAG_WILDCARD, recv_input, NULL))) {
         ORTE_ERROR_LOG(rc);
@@ -144,7 +144,7 @@ int main(int argc, char* argv[])
     }
     
     /* announce our existence and get responses so we can know our peer is alive */
-    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("UNICAST-STRESS", "1.0", "alpha", responses))) {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.announce("UNICAST-STRESS-THREADED", "1.0", "alpha", responses))) {
         ORTE_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -160,17 +160,25 @@ int main(int argc, char* argv[])
     return rc;
 }
 
-static void responses(orcm_info_t *vm)
+static void start_data(int sd, short flags, void *cb)
 {
     uint8_t flag=1;
 
+    opal_fd_write(send_pipe[1], sizeof(uint8_t), &flag);
+}
+
+static void responses(orcm_info_t *vm)
+{
     if (vm->name->jobid != ORTE_PROC_MY_NAME->jobid) {
         return;
     }
 
     if (0 == ORTE_PROC_MY_NAME->vpid) {
-        /* I will be sending the messages */
-        opal_fd_write(send_pipe[1], sizeof(uint8_t), &flag);
+        /* I will be sending the messages - need a little delay before
+         * we start so the other guy can process our announcement
+         * prior to receiving our messages
+         */
+        ORTE_TIMER_EVENT(1, 0, start_data);
     }
 }
 
@@ -293,7 +301,7 @@ static void* send_data(opal_object_t *obj)
             peer.jobid = ORTE_PROC_MY_NAME->jobid;
             peer.vpid = 1;
 
-            if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, &peer,
+            if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_INPUT_CHANNEL, &peer,
                                                          ORCM_TEST_CLIENT_SERVER_TAG, msg, 1, NULL, cbfunc_mcast, NULL))) {
                 ORTE_ERROR_LOG(rc);
             }

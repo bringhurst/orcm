@@ -41,6 +41,10 @@ static void recv_input(int status,
                        opal_buffer_t *buf,
                        void *cbdata);
 
+static void found_channel(const char *app, const char *version,
+                          const char *release,
+                          orcm_pnp_channel_t channel);
+
 static void send_data(int fd, short flags, void *arg);
 
 static void responses(orcm_info_t *vm);
@@ -49,10 +53,11 @@ static int msg_num=0;
 static int burst_num=0;
 static int burst_size=250;
 static int msg_size=100;
-static int report_rate=1;
+static int report_rate=100;
 static int num_msgs_recvd=0;
 static bool help;
 static struct timeval starttime, stoptime;
+static orcm_pnp_channel_t target=ORCM_PNP_INVALID_CHANNEL;
 
 static opal_cmd_line_init_t cmd_line_init[] = {
     /* Various "obvious" options */
@@ -67,7 +72,7 @@ static opal_cmd_line_init_t cmd_line_init[] = {
       "Number of bytes in each message [default: 100]" },
     { NULL, NULL, NULL, 'r', "report-rate", "report-rate", 1,
       &report_rate, OPAL_CMD_LINE_TYPE_INT,
-      "Number of bursts between printing a progress report [default: 1]" },
+      "Number of bursts between printing a progress report [default: 100]" },
     /* End of list */
     { NULL, NULL, NULL, '\0', NULL, NULL, 0,
       NULL, OPAL_CMD_LINE_TYPE_NULL, NULL }
@@ -116,6 +121,12 @@ int main(int argc, char* argv[])
         goto cleanup;
     }
     
+    /* open a channel to send to a peer */
+    if (ORCM_SUCCESS != (rc = orcm_pnp.open_channel("UNICAST-STRESS", "1.0", "alpha", ORTE_JOBID_WILDCARD, found_channel))) {
+        ORTE_ERROR_LOG(rc);
+        goto cleanup;
+    }
+
     /* announce our existence and get responses so we can know our peer is alive */
     if (ORCM_SUCCESS != (rc = orcm_pnp.announce("UNICAST-STRESS", "1.0", "alpha", responses))) {
         ORTE_ERROR_LOG(rc);
@@ -131,6 +142,15 @@ int main(int argc, char* argv[])
 
     orcm_finalize();
     return rc;
+}
+
+static void found_channel(const char *app, const char *version,
+                          const char *release,
+                          orcm_pnp_channel_t channel)
+{
+    opal_output(0, "%s FOUND CHANNEL %d for app %s:%s:%s",
+                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), (int)channel, app, version, release);
+    target = channel;
 }
 
 static void responses(orcm_info_t *vm)
@@ -213,6 +233,14 @@ static void send_data(int fd, short flags, void *arg)
     long secs, usecs;
     float rate;
 
+    /* only send if we got the channel */
+    if (ORCM_PNP_INVALID_CHANNEL == target) {
+        opal_output(0, "%s NO CHANNEL TO TARGET YET",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+        ORTE_TIMER_EVENT(1, 0, send_data);
+        return;
+    }
+
     if (0 == burst_num) {
         gettimeofday(&starttime, NULL);
     } else if (0 == (burst_num % report_rate)) {
@@ -234,7 +262,7 @@ static void send_data(int fd, short flags, void *arg)
         peer.jobid = ORTE_PROC_MY_NAME->jobid;
         peer.vpid = 1;
 
-        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_GROUP_OUTPUT_CHANNEL, &peer,
+        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(target, &peer,
                                                      ORCM_TEST_CLIENT_SERVER_TAG, msg, 1, NULL, cbfunc_mcast, NULL))) {
             ORTE_ERROR_LOG(rc);
         }
