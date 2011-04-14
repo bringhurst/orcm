@@ -136,10 +136,10 @@ static void tool_messages(int status,
                           void *cbdata)
 {
     int32_t rc=ORCM_SUCCESS, n, j;
-    opal_buffer_t *response;
     orte_job_t *jdata, *jdt, *jdt2;
     uint16_t jfam;
     orcm_tool_cmd_t flag=ORCM_TOOL_ILLEGAL_CMD;
+    opal_buffer_t *response;
 
     /* wait for any existing action to complete */
     OPAL_ACQUIRE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
@@ -190,6 +190,7 @@ static void tool_messages(int status,
 
         /* check it */
         if (ORCM_SUCCESS != (rc = orcm_cfgi_base_check_job(jdata))) {
+            ORTE_ERROR_LOG(rc);
             goto cleanup;
         }
 
@@ -259,19 +260,10 @@ static void tool_messages(int status,
     opal_dss.pack(response, &rc, 1, OPAL_INT);
     /* release the thread */
     OPAL_RELEASE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
-    /* if the sender was a daemon, then don't respond as this generates
-     * an infinite loop
-     * only respond if we are the lowest vpid alive or else
-     * the tool will receive multiple responses
-     */
-    if (ORTE_PROC_MY_NAME->jobid != sender->jobid &&
-        ORTE_PROC_MY_NAME->vpid == orte_get_lowest_vpid_alive(ORTE_PROC_MY_NAME->jobid)) {
-        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
-                                                     sender, ORCM_PNP_TAG_TOOL,
-                                                     NULL, 0, response, cbfunc, NULL))) {
-            ORTE_ERROR_LOG(rc);
-        }
-    } else {
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
+                                                 sender, ORCM_PNP_TAG_TOOL,
+                                                 NULL, 0, response, cbfunc, NULL))) {
+        ORTE_ERROR_LOG(rc);
         OBJ_RELEASE(response);
     }
 }

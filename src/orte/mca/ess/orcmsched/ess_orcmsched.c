@@ -161,6 +161,7 @@ static int rte_init(void)
     mca_base_param_reg_string_name("orte", "ess_jobid", "Process jobid",
                                    true, false, NULL, &tmp);
     if (NULL != tmp) {
+        opal_output(0, "GOT JOBID %s", tmp);
         if (ORTE_SUCCESS != (ret = orte_util_convert_string_to_jobid(&jobid, tmp))) {
             ORTE_ERROR_LOG(ret);
             error = "convert_jobid";
@@ -169,7 +170,7 @@ static int rte_init(void)
         free(tmp);
         ORTE_PROC_MY_NAME->jobid = jobid;
     }
-    /* if we were given a job family to join, get it */
+    /* if we were given a job family, use it */
     mca_base_param_reg_string_name("orte", "ess_job_family", "Job family",
                                    true, false, NULL, &tmp);
     if (NULL != tmp) {
@@ -221,11 +222,14 @@ static int rte_init(void)
         qinfo_t *qinfo;
 
         if (NULL != (qinfo = get_qinfo())) {
-            /* the scheduler is always 0,1 */
-            ORTE_PROC_MY_NAME->jobid = 0;
+            /* if we were given a jobid, then leave it alone */
+            if (ORTE_JOBID_INVALID == ORTE_PROC_MY_NAME->jobid) {
+                /* not given - assign it to 0 */
+                ORTE_PROC_MY_NAME->jobid = 0;
+            }
+            /* the scheduler is always vpid=1 */
             ORTE_PROC_MY_NAME->vpid = 1;
             /* point the HNP to the zero vpid */
-            ORTE_PROC_MY_HNP->jobid = 0;
             ORTE_PROC_MY_HNP->vpid = 0;
             OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
                                  "GOT NAME %s FROM QINFO rack %d slot %d ",

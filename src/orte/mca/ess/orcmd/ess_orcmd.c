@@ -132,6 +132,7 @@ static int rte_init(void)
     char *tmp=NULL;
     orte_jobid_t jobid=ORTE_JOBID_INVALID;
     orte_vpid_t vpid=ORTE_VPID_INVALID;
+    int32_t jfam;
 
     OBJ_CONSTRUCT(&ctl, orte_thread_ctl_t);
     
@@ -154,6 +155,13 @@ static int rte_init(void)
         }
         free(tmp);
         ORTE_PROC_MY_NAME->jobid = jobid;
+    }
+    /* if we were given a job family, use it */
+    mca_base_param_reg_string_name("orte", "ess_job_family", "Job family",
+                                   true, false, NULL, &tmp);
+    if (NULL != tmp) {
+        jfam = strtol(tmp, NULL, 10);
+        ORTE_PROC_MY_NAME->jobid = ORTE_CONSTRUCT_LOCAL_JOBID(jfam << 16, 0);
     }
     /* if we were given a vpid, use it */
     mca_base_param_reg_string_name("orte", "ess_vpid", "Process vpid",
@@ -188,7 +196,11 @@ static int rte_init(void)
         qinfo_t *qinfo;
 
         if (NULL != (qinfo = get_qinfo())) {
-            ORTE_PROC_MY_NAME->jobid = 0;
+            /* if we were given a jobid, then leave it alone */
+            if (ORTE_JOBID_INVALID == ORTE_PROC_MY_NAME->jobid) {
+                /* not given - assign it to 0 */
+                ORTE_PROC_MY_NAME->jobid = 0;
+            }
             /* must ensure that no daemon gets vpid 0 or 1 */
             ORTE_PROC_MY_NAME->vpid = (qinfo->rack * QLIB_MAX_SLOTS_PER_RACK) + qinfo->slot + 2;
             /* ensure that the HNP uri is NULL */

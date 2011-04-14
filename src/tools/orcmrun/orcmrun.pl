@@ -12,6 +12,7 @@ use Getopt::Long;
 my $ok = Getopt::Long::GetOptions("help|h" => \$help_arg,
                                   "qn=s" => \$qn_arg,
                                   "no-confd" => \$no_confd_arg,
+                                  "jobfam=s" => \$jobfam,
     );
 
 if (!$ok || $help_arg) {
@@ -20,7 +21,8 @@ if (!$ok || $help_arg) {
     print "\norcmrun.pl: Launches orcm daemons and scheduler on nodes listed\n on command line. Options:
   --help | -h                   This help list
   --qn | -q                     Specify a qnanny configuration file
-  --no-confd | -no-confd        Disable confd connection\n";
+  --no-confd | -no-confd        Disable confd connection
+  --jobfam | -jobfam            Job family to use for isolation\n";
     exit($ok ? 0 : 1);
 }
 
@@ -28,6 +30,12 @@ if ($no_confd_arg) {
 $confd = "-mca orcm_cfgi ^confd";
 } else {
 $confd = " ";
+}
+
+if ($jobfam) {
+$use_job = $jobfam;
+} else {
+$use_job = 0;
 }
 
 $i = 2;  # daemons start at vpid=2
@@ -43,7 +51,7 @@ if ($#ARGV < 0) {
     } else {
         $pid = fork();
         if ($pid == 0) {
-            system("orcmd -mca orte_ess_jobid 0 -mca orte_ess_vpid 2");
+            system("orcmd -mca orte_ess_job_family $use_job -mca orte_ess_vpid 2");
             exit;
         }
 # wait a little for the daemon to get ready
@@ -51,7 +59,7 @@ if ($#ARGV < 0) {
 # launch the scheduler
         $pid = fork();
         if ($pid == 0) {
-            system("orcm-sched -mca orte_ess_jobid 0 -mca orte_ess_vpid 1 $confd");
+            system("orcm-sched -mca orte_ess_job_family $use_job -mca orte_ess_vpid 1 $confd");
             exit;
         }
     }
@@ -74,7 +82,7 @@ if ($#ARGV < 0) {
 
             $pid = fork();
             if ($pid == 0) {
-                system("ssh $h orcmd -mca orte_ess_jobid 0 -mca orte_ess_vpid $i");
+                system("ssh $h orcmd -mca orte_ess_job_family $use_job -mca orte_ess_vpid $i");
                 exit;
             }
             $i++;
@@ -87,7 +95,7 @@ if ($#ARGV < 0) {
 # now start the scheduler on the first node
         $pid = fork();
         if ($pid == 0) {
-            system("ssh $hnp orcm-sched -mca orte_ess_jobid 0 -mca orte_ess_vpid 1 $confd");
+            system("ssh $hnp orcm-sched -mca orte_ess_job_family $use_job -mca orte_ess_vpid 1 $confd");
             exit;
         }
     }

@@ -31,6 +31,17 @@
 #define ORCM_TEST_CLIENT_SERVER_TAG     110
 #define ORCM_TEST_CLIENT_CLIENT_TAG     120
 
+static void signal_trap(int signal, short flags, void *arg)
+{
+    /* cannot directly call finalize and exit as
+     * we are in a signal handler - and the OS
+     * would be extremely upset with us!
+     */
+    orte_abnormal_term_ordered = true;
+    ORTE_UPDATE_EXIT_STATUS(128+signal);
+    ORTE_TIMER_EVENT(0, 0, orcm_just_quit);
+}
+
 static void send_data(int fd, short flags, void *arg);
 static void recv_input(int status,
                        orte_process_name_t *sender,
@@ -47,6 +58,7 @@ static int msg_num;
 static orcm_pnp_channel_t peer = ORCM_PNP_INVALID_CHANNEL;
 static char *string_id=NULL;
 static orte_process_name_t target;
+static opal_event_t sigterm_handler, sigint_handler;
 
 int main(int argc, char* argv[])
 {
@@ -65,6 +77,13 @@ int main(int argc, char* argv[])
         exit(1);
     }
     
+    opal_event_signal_set(opal_event_base, &sigterm_handler, SIGTERM,
+                          signal_trap, &sigterm_handler);
+    opal_event_signal_add(&sigterm_handler, NULL);
+    opal_event_signal_set(opal_event_base, &sigint_handler, SIGINT,
+                          signal_trap, &sigint_handler);
+    opal_event_signal_add(&sigint_handler, NULL);
+
     /* for this application, register to hear messages sent to our input  */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("client", "2.0", "beta",
                                                         ORCM_PNP_GROUP_INPUT_CHANNEL,

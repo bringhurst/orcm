@@ -95,9 +95,10 @@ static int finalize(void)
     lifeline = NULL;
 
     /* if I am an application process, indicate that I am
-     * truly finalizing prior to departure
+     * truly finalizing prior to departure - but DON'T do
+     * this if we are abnormally terminating!!!
      */
-    if (ORTE_PROC_IS_APP) {
+    if (ORTE_PROC_IS_APP && !orte_abnormal_term_ordered) {
         if (ORTE_SUCCESS != (rc = orte_routed_base_register_sync(false))) {
             ORTE_ERROR_LOG(rc);
             return rc;

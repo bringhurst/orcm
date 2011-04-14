@@ -468,12 +468,15 @@ static void ack_recv(int status,
                      struct iovec *msg, int count,
                      opal_buffer_t *buf, void *cbdata)
 {
-    int rc, n;
+    int rc, n, ck;
     orcm_tool_cmd_t flag;
 
     /* unpack the cmd and verify it is us */
     n=1;
-    opal_dss.unpack(buf, &flag, &n, ORCM_TOOL_CMD_T);
+    if (ORCM_SUCCESS != (ck = opal_dss.unpack(buf, &flag, &n, ORCM_TOOL_CMD_T))) {
+        ORTE_ERROR_LOG(ck);
+        return;
+    }
     if (ORCM_TOOL_START_CMD != flag && ORCM_TOOL_ILLEGAL_CMD != flag) {
         /* wrong cmd */
         opal_output(0, "GOT WRONG CMD");
@@ -482,10 +485,14 @@ static void ack_recv(int status,
 
     /* unpack the result of the start command */
     n=1;
-    opal_dss.unpack(buf, &rc, &n, OPAL_INT);
+    if (ORCM_SUCCESS != (ck = opal_dss.unpack(buf, &rc, &n, OPAL_INT))) {
+        ORTE_ERROR_LOG(ck);
+        return;
+    }
+
     ORTE_UPDATE_EXIT_STATUS(rc);
 
-    if (0 == rc) {
+    if (ORCM_SUCCESS == rc) {
         opal_output(orte_clean_output, "Job %s started", app_launched);
     } else {
         opal_output(orte_clean_output, "Job \"%s\" failed to start with error: %s", app_launched, ORTE_ERROR_NAME(rc));
@@ -493,7 +500,7 @@ static void ack_recv(int status,
     free(app_launched);
 
     /* the fact we recvd this is enough */
-    exit(0);
+    ORTE_TIMER_EVENT(0, 0, orcm_just_quit);
 }
 
 static void parse_apps(orte_job_t *jdata, int argc, char *argv[])

@@ -32,6 +32,17 @@
 #define ORCM_TEST_CLIENT_SERVER_TAG     110
 
 /* local functions */
+static void signal_trap(int signal, short flags, void *arg)
+{
+    /* cannot directly call finalize and exit as
+     * we are in a signal handler - and the OS
+     * would be extremely upset with us!
+     */
+    orte_abnormal_term_ordered = true;
+    ORTE_UPDATE_EXIT_STATUS(128+signal);
+    ORTE_TIMER_EVENT(0, 0, orcm_just_quit);
+}
+
 static void recv_input(int status,
                        orte_process_name_t *sender,
                        orcm_pnp_tag_t tag,
@@ -48,6 +59,7 @@ static void proc_failed(const char *stringid,
 static int msg_num=0;
 static struct timeval tp;
 static int report_rate;
+static opal_event_t sigterm_handler, sigint_handler;
 
 int main(int argc, char* argv[])
 {
@@ -83,6 +95,13 @@ int main(int argc, char* argv[])
         exit(1);
     }
     
+    opal_event_signal_set(opal_event_base, &sigterm_handler, SIGTERM,
+                          signal_trap, &sigterm_handler);
+    opal_event_signal_add(&sigterm_handler, NULL);
+    opal_event_signal_set(opal_event_base, &sigint_handler, SIGINT,
+                          signal_trap, &sigint_handler);
+    opal_event_signal_add(&sigint_handler, NULL);
+
     /* we want to listen to output from all versions and releases of the CLIENT app */
     if (ORCM_SUCCESS != (rc = orcm_pnp.register_receive("CLIENT", NULL, NULL,
                                                         ORCM_PNP_GROUP_OUTPUT_CHANNEL,
