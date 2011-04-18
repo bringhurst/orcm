@@ -110,6 +110,7 @@ static void delete_proc(orte_job_t *jdata, orte_odls_job_t *jobdat,
  */
 static int init(void);
 static int finalize(void);
+static void orcmd_abort(int error_code, char *fmt, ...);
 
 static int predicted_fault(opal_list_t *proc_list,
                            opal_list_t *node_list,
@@ -137,7 +138,7 @@ orte_errmgr_base_module_t orte_errmgr_orcmd_module = {
     init,
     finalize,
     orte_errmgr_base_log,
-    orte_errmgr_base_abort,
+    orcmd_abort,
     update_state,
     predicted_fault,
     suggest_map_targets,
@@ -168,6 +169,24 @@ static int finalize(void)
     OBJ_DESTRUCT(&ctl);
 
     return ORTE_SUCCESS;
+}
+
+static void orcmd_abort(int error_code, char *fmt, ...)
+{
+    va_list arglist;
+    
+    /* If there was a message, output it */
+    va_start(arglist, fmt);
+    if( NULL != fmt ) {
+        char* buffer = NULL;
+        vasprintf( &buffer, fmt, arglist );
+        opal_output( 0, "%s", buffer );
+        free( buffer );
+    }
+    va_end(arglist);
+    
+    kill(getpid(), SIGTERM);
+    return;
 }
 
 static int update_state(orte_jobid_t job,

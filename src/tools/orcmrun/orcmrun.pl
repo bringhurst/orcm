@@ -51,15 +51,21 @@ if ($#ARGV < 0) {
     } else {
         $pid = fork();
         if ($pid == 0) {
-            system("orcmd -mca orte_ess_job_family $use_job -mca orte_ess_vpid 2");
+            if ($jobfam) {
+                system("orcmd -mca orte_ess_job_family $use_job -mca orte_ess_vpid 2");
+            } else {
+                system("orcmd -mca orte_ess_vpid 2");
+            }
             exit;
         }
-# wait a little for the daemon to get ready
-        sleep(1);
 # launch the scheduler
         $pid = fork();
         if ($pid == 0) {
-            system("orcm-sched -mca orte_ess_job_family $use_job -mca orte_ess_vpid 1 $confd");
+            if ($jobfam) {
+                system("orcm-sched -mca orte_ess_job_family $use_job $confd");
+            } else {
+                system("orcm-sched $confd");
+            }
             exit;
         }
     }
@@ -82,20 +88,25 @@ if ($#ARGV < 0) {
 
             $pid = fork();
             if ($pid == 0) {
-                system("ssh $h orcmd -mca orte_ess_job_family $use_job -mca orte_ess_vpid $i");
+                if ($jobfam) {
+                    system("ssh $h orcmd -mca orte_ess_job_family $use_job -mca orte_ess_vpid $i");
+                } else {
+                    system("ssh $h orcmd -mca orte_ess_vpid $i");
+                }
                 exit;
             }
             $i++;
         }
     }
     if (! $qn_arg) {
-# wait a little for the daemons to get ready
-        sleep(10);
-
 # now start the scheduler on the first node
         $pid = fork();
         if ($pid == 0) {
-            system("ssh $hnp orcm-sched -mca orte_ess_job_family $use_job -mca orte_ess_vpid 1 $confd");
+            if ($jobfam) {
+                system("ssh $hnp orcm-sched -mca orte_ess_job_family $use_job $confd");
+            } else {
+                system("ssh $hnp orcm-sched $confd");
+            }
             exit;
         }
     }

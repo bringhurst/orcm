@@ -86,6 +86,7 @@
  */
 static int init(void);
 static int finalize(void);
+static void sched_abort(int error_code, char *fmt, ...);
 
 static int predicted_fault(opal_list_t *proc_list,
                            opal_list_t *node_list,
@@ -113,7 +114,7 @@ orte_errmgr_base_module_t orte_errmgr_orcmsched_module = {
     init,
     finalize,
     orte_errmgr_base_log,
-    orte_errmgr_base_abort,
+    sched_abort,
     update_state,
     predicted_fault,
     suggest_map_targets,
@@ -177,6 +178,24 @@ static int finalize(void)
 
     orcm_pnp.cancel_receive("orcmd", "0.1", "alpha", ORCM_PNP_SYS_CHANNEL, ORCM_PNP_TAG_ERRMGR);
     return ORTE_SUCCESS;
+}
+
+static void sched_abort(int error_code, char *fmt, ...)
+{
+    va_list arglist;
+    
+    /* If there was a message, output it */
+    va_start(arglist, fmt);
+    if( NULL != fmt ) {
+        char* buffer = NULL;
+        vasprintf( &buffer, fmt, arglist );
+        opal_output( 0, "%s", buffer );
+        free( buffer );
+    }
+    va_end(arglist);
+    
+    kill(getpid(), SIGTERM);
+    return;
 }
 
 static int update_state(orte_jobid_t job,

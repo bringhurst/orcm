@@ -19,6 +19,9 @@
 #ifdef HAVE_STRING_H
 #include <string.h>
 #endif
+#ifdef HAVE_SIGNAL_H
+#include <signal.h>
+#endif
 
 #include "opal/util/output.h"
 #include "opal/util/argv.h"
@@ -47,6 +50,8 @@
 static int init(void);
 static int finalize(void);
 
+static void app_abort(int error_code, char *fmt, ...);
+
 static int update_state(orte_jobid_t job,
                         orte_job_state_t jobstate,
                         orte_process_name_t *proc_name,
@@ -73,7 +78,7 @@ orte_errmgr_base_module_t orte_errmgr_orcmapp_module = {
     init,
     finalize,
     orte_errmgr_base_log,
-    orte_errmgr_base_abort,
+    app_abort,
     update_state,
     predicted_fault,
     suggest_map_targets,
@@ -131,6 +136,24 @@ static int finalize(void)
                             ORCM_PNP_TAG_ERRMGR);
 
     return ORTE_SUCCESS;
+}
+
+static void app_abort(int error_code, char *fmt, ...)
+{
+    va_list arglist;
+    
+    /* If there was a message, output it */
+    va_start(arglist, fmt);
+    if( NULL != fmt ) {
+        char* buffer = NULL;
+        vasprintf( &buffer, fmt, arglist );
+        opal_output( 0, "%s", buffer );
+        free( buffer );
+    }
+    va_end(arglist);
+    
+    kill(getpid(), SIGTERM);
+    return;
 }
 
 static int update_state(orte_jobid_t job,

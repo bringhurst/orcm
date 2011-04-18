@@ -174,6 +174,7 @@ static int rte_init(void)
         mca_base_param_reg_string_name("orte", "ess_job_family", "Job family",
                                        true, false, NULL, &tmp);
         if (NULL != tmp) {
+            opal_output(0, "GOT JOB FAMILY %s", tmp);
             jfam = strtoul(tmp, &tailpiece, 10);
             if (UINT16_MAX < jfam || NULL != tailpiece) {
                 /* use a string hash to restructure this to fit */
@@ -245,10 +246,13 @@ static int rte_init(void)
     }
 #endif
 
-    /* otherwise, it's an error */
-    error = "no_name_given";
-    ret = ORTE_ERR_FATAL;
-    goto error;
+    /* otherwise, default to something */
+    if (ORTE_JOBID_INVALID == ORTE_PROC_MY_NAME->jobid) {
+        ORTE_PROC_MY_NAME->jobid = 0;
+    }
+    if (ORTE_VPID_INVALID == ORTE_PROC_MY_NAME->vpid) {
+        ORTE_PROC_MY_NAME->vpid = 1;
+    }
 
  complete:
     /* get the list of nodes used for this job */

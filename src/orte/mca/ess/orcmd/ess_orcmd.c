@@ -226,36 +226,26 @@ static int rte_init(void)
     }
 #endif
 
+    /* we must have been given a vpid - we can get the jobid
+     * in other ways
+     */
+    if (ORTE_VPID_INVALID == ORTE_PROC_MY_NAME->vpid) {
+        /* we have an error */
+        error = "missing vpid assignment";
+        ret = ORTE_ERR_FATAL;
+        goto error;
+    }
+
     /* if we were given an HNP, we can get the jobid from
      * the HNP's name - this is decoded in proc_info.c during
      * the prolog
      */
     if (ORTE_JOBID_INVALID != ORTE_PROC_MY_HNP->jobid) {
         ORTE_PROC_MY_NAME->jobid = orte_process_info.my_hnp.jobid;
-        /* get vpid from environ */
-        mca_base_param_reg_string_name("orte", "ess_vpid", "Process vpid",
-                                       true, false, NULL, &tmp);
-        if (NULL != tmp) {
-            if (ORTE_SUCCESS != (ret = orte_util_convert_string_to_vpid(&vpid, tmp))) {
-                error = "convert_string_to_vpid";
-                goto error;
-            }
-            free(tmp);
-            ORTE_PROC_MY_NAME->vpid = vpid;
-            if (vpid < 2) {
-                /* NOT ALLOWED - POTENTIAL CONFLICT WITH ORCM AND ORCM-SCHED */
-                error = "disallowed_vpid";
-                ret = ORTE_ERR_BAD_PARAM;
-                goto error;
-            }
-            goto complete;
-        }
+    } else {
+        /* just fake it */
+        ORTE_PROC_MY_NAME->jobid = 0;
     }
-        
-    /* otherwise, we have an error */
-    error = "cannot get name";
-    ret = ORTE_ERR_FATAL;
-    goto error;
 
  complete:
     if (ORTE_SUCCESS != (ret = local_setup())) {
