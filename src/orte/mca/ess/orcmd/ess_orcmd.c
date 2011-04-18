@@ -33,6 +33,7 @@
 #define QLIB_MAX_SLOTS_PER_RACK 16
 #endif
 
+#include "opal/hash_string.h"
 #include "opal/util/argv.h"
 #include "opal/util/if.h"
 #include "opal/util/os_path.h"
@@ -129,7 +130,7 @@ static int rte_init(void)
 {
     int ret;
     char *error = NULL;
-    char *tmp=NULL;
+    char *tmp=NULL, *tailpiece;
     orte_jobid_t jobid=ORTE_JOBID_INVALID;
     orte_vpid_t vpid=ORTE_VPID_INVALID;
     int32_t jfam;
@@ -155,13 +156,18 @@ static int rte_init(void)
         }
         free(tmp);
         ORTE_PROC_MY_NAME->jobid = jobid;
-    }
-    /* if we were given a job family, use it */
-    mca_base_param_reg_string_name("orte", "ess_job_family", "Job family",
-                                   true, false, NULL, &tmp);
-    if (NULL != tmp) {
-        jfam = strtol(tmp, NULL, 10);
-        ORTE_PROC_MY_NAME->jobid = ORTE_CONSTRUCT_LOCAL_JOBID(jfam << 16, 0);
+    } else {
+        /* if we were given a job family, use it */
+        mca_base_param_reg_string_name("orte", "ess_job_family", "Job family",
+                                       true, false, NULL, &tmp);
+        if (NULL != tmp) {
+            jfam = strtoul(tmp, &tailpiece, 10);
+            if (UINT16_MAX < jfam || NULL != tailpiece) {
+                /* use a string hash to restructure this to fit */
+                OPAL_HASH_STR(tmp, jfam);
+            }
+            ORTE_PROC_MY_NAME->jobid = ORTE_CONSTRUCT_LOCAL_JOBID(jfam << 16, 0);
+        }
     }
     /* if we were given a vpid, use it */
     mca_base_param_reg_string_name("orte", "ess_vpid", "Process vpid",
@@ -183,8 +189,8 @@ static int rte_init(void)
     }
         
     /* if both were given, then we are done */
-    if (ORTE_JOBID_INVALID != jobid &&
-        ORTE_VPID_INVALID != vpid) {
+    if (ORTE_JOBID_INVALID != ORTE_PROC_MY_NAME->jobid &&
+        ORTE_VPID_INVALID != ORTE_PROC_MY_NAME->vpid) {
         goto complete;
     }
 
@@ -208,6 +214,7 @@ static int rte_init(void)
                 opal_output(0, "%s CONFLICTING NAME RESOLUTION - NO NAME GIVEN, BUT HNP SPECIFIED",
                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
                 error = "name conflict";
+                ret = ORTE_ERR_FATAL;
                 goto error;
             }
             OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,

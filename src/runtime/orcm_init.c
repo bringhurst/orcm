@@ -41,6 +41,7 @@ int orcm_debug_verbosity = 0;
 orcm_triplets_array_t *orcm_triplets;
 int orcm_max_msg_ring_size;
 orte_process_name_t orcm_default_leader_policy;
+bool orcm_sched_kill_dvm = false;
 
 /* signal trap support */
 /* available signals
@@ -101,6 +102,12 @@ int orcm_init(orcm_proc_type_t flags)
     mca_base_param_reg_int_name("orcm", "max_buffered_msgs",
                                 "Number of recvd messages to hold in storage from each source",
                                 false, false, ORCM_MAX_MSG_RING_SIZE, &orcm_max_msg_ring_size);
+
+    /* independent mode or not */
+    mca_base_param_reg_int_name("orcm", "sched_kill_dvm",
+                                "Whether or not scheduler kills associated daemons upon termination (default: no)",
+                                false, false, (int)false, &ret);
+    orcm_sched_kill_dvm = OPAL_INT_TO_BOOL(ret);
 
     /* setup the globals that require initialization */
     orcm_triplets = OBJ_NEW(orcm_triplets_array_t);
@@ -228,6 +235,10 @@ void orcm_just_quit(int fd, short flags, void*arg)
         /* whack any lingering session directory files from our job */
         orte_session_dir_cleanup(ORTE_PROC_MY_NAME->jobid);
     } else {
+        if (ORCM_PROC_IS_DAEMON) {
+            /* kill any local procs */
+            orte_odls.kill_local_procs(NULL);
+        }
         /* whack any lingering session directory files from our jobs */
         orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
     }
@@ -240,25 +251,24 @@ void orcm_just_quit(int fd, short flags, void*arg)
 
 static void signal_trap(int fd, short flags, void *arg)
 {
-    /* if we are a master, allow for a forced term */
-    if (ORCM_PROC_IS_MASTER) {
-        if (!opal_atomic_trylock(&orte_abort_inprogress_lock)) { /* returns 1 if already locked */
-            if (forcibly_die) {
-                opal_output(0, "%s forcibly exiting upon signal %s",
-                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), strsignal(fd));
+    if (!opal_atomic_trylock(&orte_abort_inprogress_lock)) { /* returns 1 if already locked */
+        if (forcibly_die) {
+            opal_output(0, "%s forcibly exiting upon signal %s",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), strsignal(fd));
             
+            if (ORCM_PROC_IS_DAEMON) {
                 /* kill any local procs */
                 orte_odls.kill_local_procs(NULL);
-            
-                /* whack any lingering session directory files from our jobs */
-                orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
-                /* exit with a non-zero status */
-                exit(ORTE_ERROR_DEFAULT_EXIT_CODE);
             }
-            opal_output(0, "orcm: abort is already in progress...hit ctrl-c again to forcibly terminate\n\n");
-            forcibly_die = true;
-            return;
+            
+            /* whack any lingering session directory files from our jobs */
+            orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
+            /* exit with a non-zero status */
+            exit(ORTE_ERROR_DEFAULT_EXIT_CODE);
         }
+        opal_output(0, "orcm: abort is already in progress...hit ctrl-c again to forcibly terminate\n\n");
+        forcibly_die = true;
+        return;
     }
     
     /* set the global abnormal exit flag so we know not to
@@ -268,8 +278,9 @@ static void signal_trap(int fd, short flags, void *arg)
     /* ensure that the forwarding of stdin stops */
     orte_job_term_ordered = true;
     
-    /* if we are a master, order any associated orcm daemons to die */
-    if (ORCM_PROC_IS_MASTER) {
+    /* if we are the scheduler and user directed, order any associated orcm daemons to die */
+    if (ORCM_PROC_IS_SCHEDULER && orcm_sched_kill_dvm &&
+        NULL != orte_plm.terminate_orteds) {
         orte_plm.terminate_orteds();
     }
 

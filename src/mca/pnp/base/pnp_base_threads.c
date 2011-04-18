@@ -41,7 +41,7 @@ int orcm_pnp_base_start_threads(void)
 
     if (!orcm_pnp_base.recv_process_ctl.running) {
         OPAL_OUTPUT_VERBOSE((5, orcm_pnp_base.output,
-                             "%s rmcast:base: starting recv processing thread",
+                             "%s pnp:base: starting recv processing thread",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         /* setup a pipe that we will use to signal the thread that a message
          * is waiting to be processed - don't define an event for it
@@ -62,7 +62,7 @@ int orcm_pnp_base_start_threads(void)
         }
 
         OPAL_OUTPUT_VERBOSE((5, orcm_pnp_base.output,
-                             "%s rmcast:base: recv processing thread started",
+                             "%s pnp:base: recv processing thread started",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
     }
 
@@ -73,20 +73,29 @@ void orcm_pnp_base_stop_threads(void)
 {
     orcm_pnp_msg_t *msg=NULL;
 
-    OPAL_OUTPUT_VERBOSE((5, orcm_pnp_base.output,
-                         "%s rmcast:base: stopping recv processing thread",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
     ORTE_ACQUIRE_THREAD(&orcm_pnp_base.recv_process_ctl);
     if (orcm_pnp_base.recv_process_ctl.running) {
         ORTE_RELEASE_THREAD(&orcm_pnp_base.recv_process_ctl);
-        opal_fd_write(orcm_pnp_base.recv_pipe[1], sizeof(orcm_pnp_msg_t*), &msg);
-        opal_thread_join(&orcm_pnp_base.recv_process, NULL);
-        ORTE_ACQUIRE_THREAD(&orcm_pnp_base.recv_process_ctl);
+        if (orte_abnormal_term_ordered) {
+            OPAL_OUTPUT_VERBOSE((5, orcm_pnp_base.output,
+                                 "%s pnp:base: killing recv processing thread",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+            opal_thread_kill(&orcm_pnp_base.recv_process, SIGTERM);
+            orcm_pnp_base.recv_process_ctl.running = false;
+            ORTE_ACQUIRE_THREAD(&orcm_pnp_base.recv_process_ctl);
+        } else {
+            OPAL_OUTPUT_VERBOSE((5, orcm_pnp_base.output,
+                                 "%s pnp:base: stopping recv processing thread",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+            opal_fd_write(orcm_pnp_base.recv_pipe[1], sizeof(orcm_pnp_msg_t*), &msg);
+            opal_thread_join(&orcm_pnp_base.recv_process, NULL);
+            ORTE_ACQUIRE_THREAD(&orcm_pnp_base.recv_process_ctl);
+        }
     }
     ORTE_RELEASE_THREAD(&orcm_pnp_base.recv_process_ctl);
 
     OPAL_OUTPUT_VERBOSE((5, orcm_pnp_base.output,
-                         "%s rmcast:base: all threads stopped",
+                         "%s pnp:base: all threads stopped",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
 }
 

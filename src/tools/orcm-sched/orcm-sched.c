@@ -118,7 +118,11 @@ opal_cmd_line_init_t orte_cmd_line_opts[] = {
 
     { NULL, NULL, NULL, '\0', "uri", "uri", 1,
       &my_globals.hnp_uri, OPAL_CMD_LINE_TYPE_STRING,
-      "The uri of the ORCM DVM [uri or file:name of file containing it" },
+      "The uri of the ORCM DVM [uri or file:name of file containing it]" },
+    
+    { "orcm", "sched", "kill_dvm", '\0', "kill-dvm", "kill-dvm", 0,
+      NULL, OPAL_CMD_LINE_TYPE_BOOL,
+      "Kill daemons in DVM upon termination [default: no]" },
     
     /* End of list */
     { NULL, NULL, NULL, '\0', NULL, NULL, 0,

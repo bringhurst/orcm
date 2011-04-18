@@ -132,6 +132,7 @@ static int rte_init(void)
     if (ORTE_JOBID_INVALID == jobid ||
         ORTE_VPID_INVALID == vpid) {
         error = "missing name info";
+        ret = ORTE_ERR_FATAL;
         goto error;
     }
         

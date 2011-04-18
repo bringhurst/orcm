@@ -33,6 +33,7 @@
 #define QLIB_MAX_SLOTS_PER_RACK 16
 #endif
 
+#include "opal/hash_string.h"
 #include "opal/util/argv.h"
 #include "opal/util/if.h"
 #include "opal/util/os_path.h"
@@ -141,10 +142,10 @@ static int rte_init(void)
     char *error = NULL;
     char **hosts = NULL;
     char *nodelist;
-    char *tmp=NULL;
+    char *tmp=NULL, *tailpiece;
     orte_jobid_t jobid=ORTE_JOBID_INVALID;
     orte_vpid_t vpid=ORTE_VPID_INVALID;
-    int32_t jfam;
+    uint32_t jfam;
 
     OBJ_CONSTRUCT(&ctl, orte_thread_ctl_t);
     OBJ_CONSTRUCT(&local_ctl, orte_thread_ctl_t);
@@ -161,7 +162,6 @@ static int rte_init(void)
     mca_base_param_reg_string_name("orte", "ess_jobid", "Process jobid",
                                    true, false, NULL, &tmp);
     if (NULL != tmp) {
-        opal_output(0, "GOT JOBID %s", tmp);
         if (ORTE_SUCCESS != (ret = orte_util_convert_string_to_jobid(&jobid, tmp))) {
             ORTE_ERROR_LOG(ret);
             error = "convert_jobid";
@@ -169,15 +169,20 @@ static int rte_init(void)
         }
         free(tmp);
         ORTE_PROC_MY_NAME->jobid = jobid;
-    }
-    /* if we were given a job family, use it */
-    mca_base_param_reg_string_name("orte", "ess_job_family", "Job family",
-                                   true, false, NULL, &tmp);
-    if (NULL != tmp) {
-        jfam = strtol(tmp, NULL, 10);
-        ORTE_PROC_MY_NAME->jobid = ORTE_CONSTRUCT_LOCAL_JOBID(jfam << 16, 0);
-        /* assume a vpid of 1 - it can be overwritten later */
-        ORTE_PROC_MY_NAME->vpid = 1;
+    } else {
+        /* if we were given a job family, use it */
+        mca_base_param_reg_string_name("orte", "ess_job_family", "Job family",
+                                       true, false, NULL, &tmp);
+        if (NULL != tmp) {
+            jfam = strtoul(tmp, &tailpiece, 10);
+            if (UINT16_MAX < jfam || NULL != tailpiece) {
+                /* use a string hash to restructure this to fit */
+                OPAL_HASH_STR(tmp, jfam);
+            }
+            ORTE_PROC_MY_NAME->jobid = ORTE_CONSTRUCT_LOCAL_JOBID(jfam << 16, 0);
+            /* assume a vpid of 1 - it can be overwritten later */
+            ORTE_PROC_MY_NAME->vpid = 1;
+        }
     }
 
     /* if we were given a vpid, use it */
@@ -204,7 +209,7 @@ static int rte_init(void)
     if (NULL != orte_process_info.my_hnp_uri) {
         /* extract the hnp name and store it */
         if (ORTE_SUCCESS != (ret = orte_rml_base_parse_uris(orte_process_info.my_hnp_uri,
-                                                           ORTE_PROC_MY_HNP, NULL))) {
+                                                            ORTE_PROC_MY_HNP, NULL))) {
             ORTE_ERROR_LOG(ret);
             error = "extracting_hnp_name";
             goto error;
@@ -242,6 +247,7 @@ static int rte_init(void)
 
     /* otherwise, it's an error */
     error = "no_name_given";
+    ret = ORTE_ERR_FATAL;
     goto error;
 
  complete:
@@ -677,6 +683,14 @@ static int local_setup(char **hosts)
         ORTE_ERROR_LOG(ret);
         error = "orte_plm_base_open";
         goto error;
+    }
+    if (orcm_sched_kill_dvm) {
+        /* well, we need a plm for that! */
+        if (ORTE_SUCCESS != (ret = orte_plm_base_select())) {
+            ORTE_ERROR_LOG(ret);
+            error = "orte_plm_base_select";
+            goto error;
+        }
     }
 
     /* Setup the communication infrastructure */

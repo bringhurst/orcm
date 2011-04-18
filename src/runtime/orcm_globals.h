@@ -42,17 +42,15 @@ typedef orte_proc_type_t orcm_proc_type_t;
 #define ORCM_TOOL           (ORTE_PROC_TOOL | ORTE_PROC_CM)
 #define ORCM_APP            (ORTE_PROC_NON_MPI | ORTE_PROC_CM)
 #define ORCM_DAEMON         (ORTE_PROC_DAEMON | ORTE_PROC_CM)
-#define ORCM_IOF_ENDPT      0x1000
-#define ORCM_SCHEDULER      0x2000
-#define ORCM_DEBUGGER_HOST  0x4000
+#define ORCM_IOF_ENDPT      (ORTE_PROC_IOF_ENDPT | ORTE_PROC_CM)
+#define ORCM_SCHEDULER      (ORTE_PROC_SCHEDULER | ORTE_PROC_CM)
 
 #define ORCM_PROC_IS_MASTER         (ORTE_PROC_IS_HNP && ORTE_PROC_IS_CM)
 #define ORCM_PROC_IS_TOOL           (ORTE_PROC_IS_TOOL && ORTE_PROC_IS_CM)
 #define ORCM_PROC_IS_APP            (ORTE_PROC_IS_NON_MPI && ORTE_PROC_IS_CM)
 #define ORCM_PROC_IS_DAEMON         (ORTE_PROC_IS_DAEMON && ORTE_PROC_IS_CM)
-#define ORCM_PROC_IS_IOF_ENDPT      (ORCM_IOF_ENDPT & orte_process_info.proc_type)
-#define ORCM_PROC_IS_SCHEDULER      (ORCM_SCHEDULER & orte_process_info.proc_type)
-#define ORCM_PROC_IS_DEBUGGER_HOST  (ORCM_DEBUGGER_HOST & orte_process_info.proc_type)
+#define ORCM_PROC_IS_IOF_ENDPT      (ORTE_PROC_IS_IOF_ENDPT && ORTE_PROC_IS_CM)
+#define ORCM_PROC_IS_SCHEDULER      (ORTE_PROC_IS_SCHEDULER && ORTE_PROC_IS_CM)
 
 /* define some tool command flags */
 typedef uint8_t orcm_tool_cmd_t;
@@ -171,6 +169,9 @@ ORCM_DECLSPEC extern int orcm_debug_verbosity;
 ORCM_DECLSPEC extern orcm_triplets_array_t *orcm_triplets;
 ORCM_DECLSPEC extern int orcm_max_msg_ring_size;
 ORCM_DECLSPEC extern orte_process_name_t orcm_default_leader_policy;
+
+/* whether the scheduler should start the DVM */
+ORCM_DECLSPEC extern bool orcm_sched_kill_dvm;
 
 #define ORCM_WILDCARD_STRING_ID "@:@:@"
 

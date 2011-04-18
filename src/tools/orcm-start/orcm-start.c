@@ -428,7 +428,9 @@ int main(int argc, char *argv[])
             }
             if (0 <= app->max_restarts || -1 == app->max_restarts || my_globals.continuous) {
                 app->recovery_defined = true;
-                jdata->enable_recovery = true;
+                if (0 != app->max_restarts) {
+                    jdata->enable_recovery = true;
+                }
                 jdata->recovery_defined = true;
             }
         }
