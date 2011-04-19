@@ -63,6 +63,7 @@
 #include "orte/util/show_help.h"
 #include "orte/runtime/orte_globals.h"
 #include "orte/runtime/orte_wait.h"
+#include "orte/mca/ess/ess.h"
 #include "orte/mca/rml/rml.h"
 #include "orte/mca/odls/odls.h"
 #include "orte/mca/odls/base/odls_private.h"
@@ -152,6 +153,7 @@ static orte_thread_ctl_t ctl;
 static void notify_state(orte_odls_job_t *jobdat,
                          orte_odls_child_t *child,
                          bool notify_apps);
+static bool kill_sent=false;
 
 /************************
  * API Definitions
@@ -185,7 +187,16 @@ static void orcmd_abort(int error_code, char *fmt, ...)
     }
     va_end(arglist);
     
-    kill(getpid(), SIGTERM);
+    if (kill_sent) {
+        /* only send SIGTERM to ourselves once as
+         * we otherwise can get into an infinite loop
+         * while trying to abnormally terminate
+         */
+        orte_ess.abort(error_code, false);
+    } else {
+        kill_sent = true;
+        kill(getpid(), SIGTERM);
+    }
     return;
 }
 
