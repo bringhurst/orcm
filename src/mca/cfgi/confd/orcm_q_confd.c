@@ -743,12 +743,17 @@ cc_completion (struct confd_user_info *uinfo,
     int retv;
     qc_confd_t *cc;
     struct compdata *cmp;
+    char buf[512];
 
     cmp = uinfo->actx.cb_opaque;
     cc  = uinfo->actx.dx->d_opaque;
 
     if (cc->log_level == CONFD_TRACE) {
         fprintf(cc->log_stream, "completion(%s): %s\n", cmp->comppoint, cmdpath);
+        if (NULL != kp && 0 < kp->len) {
+            confd_pp_kpath(buf, sizeof(buf), kp);
+            fprintf(cc->log_stream, "        kp: %s\n", buf);
+        }
     }
     
     if (cc->app_lock) {

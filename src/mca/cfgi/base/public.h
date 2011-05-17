@@ -14,8 +14,9 @@
 #include "include/constants.h"
 
 #include "opal/class/opal_list.h"
-#include "opal/threads/threads.h"
+#include "opal/class/opal_pointer_array.h"
 
+#include "orte/threads/threads.h"
 #include "orte/runtime/orte_globals.h"
 
 #include "mca/cfgi/cfgi.h"
@@ -27,9 +28,11 @@ typedef struct {
     int output;
     int num_active_apps;
     orte_job_t *daemons;
-    opal_mutex_t lock;
-    opal_condition_t cond;
-    bool active;
+    orte_thread_ctl_t ctl;
+    opal_pointer_array_t installed_apps;
+    opal_pointer_array_t confgd_apps;
+    int launch_pipe[2];
+    opal_event_t launch_event;
 } orcm_cfgi_base_t;
 
 ORCM_DECLSPEC extern orcm_cfgi_base_t orcm_cfgi_base;

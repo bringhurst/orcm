@@ -44,74 +44,44 @@ typedef unsigned int boolean;
 #include "mca/pnp/pnp.h"
 #include "mca/cfgi/cfgi.h"
 #include "mca/cfgi/base/public.h"
+#include "mca/cfgi/base/private.h"
 #include "cfgi_confd.h"
 
-typedef struct {
-    opal_object_t super;
-    uint8_t cmd;
-    orte_job_t *jdata;
-} orcm_job_caddy_t;
-static void caddy_const(orcm_job_caddy_t *ptr)
-{
-    ptr->jdata = NULL;
-}
-static void caddy_dest(orcm_job_caddy_t *ptr)
-{
-    if (NULL != ptr->jdata) {
-        OBJ_RELEASE(ptr->jdata);
-    }
-}
-OBJ_CLASS_INSTANCE(orcm_job_caddy_t,
-                   opal_object_t,
-                   caddy_const, caddy_dest);
-#define ORCM_CONFD_SPAWN 0x01
-#define ORCM_CONFD_KILL  0x02
 
-static opal_pointer_array_t installed_apps, active_apps;
-static bool thread_active = false;
+/* API */
+static int cfgi_confd_init(void);
+static int cfgi_confd_finalize(void);
+static void cfgi_confd_activate(void);
+
+orcm_cfgi_base_module_t orcm_cfgi_confd_module = {
+    cfgi_confd_init,
+    cfgi_confd_finalize,
+    cfgi_confd_activate
+};
+
+/* Local storage */
+static opal_pointer_array_t active_apps;
+static bool thread_active=false;
 static bool initialized = false;
 static bool enabled = false;
 static pthread_t confd_nanny_id;
 static char **interfaces=NULL;
 static bool confd_master_is_local=false;
-static int launch_pipe[2];
-static opal_event_t launch_event;
 
-static void launch_thread(int fd, short sd, void *args);
+/* Local fns */
 static orte_job_t *get_app(char *name, bool create);
-static orte_app_context_t *get_exec(orte_job_t *jdat,
-                                    char *name, bool create);
-static void copy_defaults(orte_job_t *target, orte_job_t *src);
 
-static boolean cfg_handler(confd_hkeypath_t *kp,
+static boolean parse(confd_hkeypath_t *kp,
 			   enum cdb_iter_op  op,
 			   confd_value_t    *value,
 			   enum cdb_sub_notification notify_type,
 			   long              which);
 
-static boolean install_handler(confd_hkeypath_t *kp,
-                               enum cdb_iter_op  op,
-                               confd_value_t    *value,
-			       enum cdb_sub_notification notify_type,
-                               long              which);
-
 static cmdtbl_t config_cmds[] = {
-  { { orcm_run      }, cfg_handler, },
-  { { qc_eod_notify }, cfg_handler, },
+  { { orcm_orcmRun  }, parse, },
+  { { qc_eod_notify }, parse, },
   { },
 };
-
-static cmdtbl_t install_cmds[] = {
-  { { orcm_install  }, install_handler, },
-  { { qc_eod_notify }, install_handler, },
-  { },
-};
-
-static boolean parse(confd_hkeypath_t *kp,
-                     enum cdb_iter_op  op,
-                     confd_value_t    *value,
-	             enum cdb_sub_notification notify_type,
-		     bool install);
 
 static int orcm_get_elem(struct confd_trans_ctx *tctx,
                          confd_hkeypath_t       *kp);
@@ -131,16 +101,27 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
                                      confd_hkeypath_t       *kp,
                                      char                   *cmdpath,
                                      char                   *param_id);
+
+static boolean show_installed_sw(int maapisock,
+                                 struct confd_user_info *uinfo,
+                                 int argc, char **argv, long which);
+
+static boolean show_configured_sw(int maapisock,
+                                  struct confd_user_info *uinfo,
+                                  int argc, char **argv, long which);
+
+static boolean run_config_completion(struct confd_user_info *uinfo,
+                                     int                     cli_style,
+                                     char                   *token,
+                                     int                     comp_char,
+                                     confd_hkeypath_t       *kp,
+                                     char                   *cmdpath,
+                                     char                   *param_id);
+
 /*
  * set up initial communication w/confd and register for callbacks
  * returns having requested from confd the startup config for all
  * subscription points
- *
- * NOTE: we have turned "off" two-phase commits for running and
- * installation data. This is necessary because confd only allows
- * ONE process to subscribe for validation, which would create a
- * single point-of-failure in the system. Validation will therefore
- * have to be done in a separate manner (TBD)
  */
 static boolean
 connect_to_confd (qc_confd_t *cc,
@@ -190,18 +171,6 @@ static boolean cfgi_confd_subscribe(qc_confd_t *cc)
     };
 
     /*
-     * register a subscription to the install defaults
-     */
-    if (! qc_subscribe(cc,
-                       QC_SUB_CONFIG,
-                       QC_SUB_EOD_NOTIFY,       /* flags */
-                       0,			/* priority */
-                       orcm__ns,
-                       install_cmds,
-                       "/orcmConfig/install"))
-        return FALSE;
-
-    /*
      * register a subscription
      */
     if (! qc_subscribe(cc,
@@ -210,7 +179,7 @@ static boolean cfgi_confd_subscribe(qc_confd_t *cc)
                        5,			/* priority */
                        orcm__ns,
                        config_cmds,
-                       "/orcmConfig/run"))
+                       "/orcmRun"))
         return FALSE;
 
     /*
@@ -222,7 +191,13 @@ static boolean cfgi_confd_subscribe(qc_confd_t *cc)
     /*
      * register CLI command handlers
      */
-    if (! qc_reg_cmdpoint(cc, "orcm_clear", orcm_clear, 0))
+    if (! qc_reg_cmdpoint(cc, "clear", orcm_clear, 0))
+        return FALSE;
+
+    if (! qc_reg_cmdpoint(cc, "show_installed_apps", show_installed_sw, 0))
+        return FALSE;
+
+    if (! qc_reg_cmdpoint(cc, "show_configured_apps", show_configured_sw, 0))
         return FALSE;
 
     /*
@@ -230,21 +205,15 @@ static boolean cfgi_confd_subscribe(qc_confd_t *cc)
     if (! qc_reg_completion(cc, "orcm-clear-completion", orcm_clear_completion))
         return FALSE;
 
+    /* register completion handler for configuring running apps */
+    if (! qc_reg_completion(cc, "orcm-run-config-completion", run_config_completion))
+        return FALSE;
+
     /*
      *register as a data provider
      */
-    if (qc_reg_data_cb(cc, &data_cbs)) {
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s CONFD OPERATIONAL DATA PROVIDER",
-                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-    } else {
-        /* it doesn't matter who provides this service,
-         * so it isn't an error if someone else got
-         * there first - just note it if requested
-         */
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s NOT CONFD OPERATIONAL DATA PROVIDER",
-                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+    if (!qc_reg_data_cb(cc, &data_cbs)) {
+        return FALSE;
     }
 
     /*
@@ -326,12 +295,9 @@ static int cfgi_confd_init(void)
         return ORCM_SUCCESS;
     }
 
-    OBJ_CONSTRUCT(&installed_apps, opal_pointer_array_t);
-    opal_pointer_array_init(&installed_apps, 16, INT_MAX, 16);
     OBJ_CONSTRUCT(&active_apps, opal_pointer_array_t);
     opal_pointer_array_init(&active_apps, 16, INT_MAX, 16);
 
-    thread_active = false;
     initialized = true;
     enabled = false;
 
@@ -345,34 +311,18 @@ static void cfgi_confd_activate(void)
         return;
     }
 
-    /* if we are the lowest vpid alive, we make the
-     * connection to confd
-     */
-    if (ORTE_PROC_MY_NAME->vpid == orte_get_lowest_vpid_alive(ORTE_PROC_MY_NAME->jobid)) {
-        /* setup the launch event */
-        if (pipe(launch_pipe) < 0) {
-            opal_output(0, "CANNOT OPEN LAUNCH PIPE");
-            return;
-        }
-        opal_event_set(opal_event_base, &launch_event, launch_pipe[0],
-                       OPAL_EV_READ|OPAL_EV_PERSIST, launch_thread, NULL);
-        opal_event_add(&launch_event, 0);
-        /* start the connection */
-        if (pthread_create(&confd_nanny_id,
-                           NULL,            /* thread attributes */
-                           confd_nanny,
-                           NULL             /* thread parameter */) < 0) {
-            /* if we can't start a thread, then just return */
-            return;
-        }
-        /* don't wait for the connection as this can cause us
-         * to hang here. Let the thread just cycle while it
-         * looks for confd
-         */
-    } else {
-        /* do nothing - data will be sent to the tool component */
+    /* make the connection to confd*/
+    if (pthread_create(&confd_nanny_id,
+                       NULL,            /* thread attributes */
+                       confd_nanny,
+                       NULL             /* thread parameter */) < 0) {
+        /* if we can't start a thread, then just return */
         return;
     }
+    /* don't wait for the connection as this can cause us
+     * to hang here. Let the thread just cycle while it
+     * looks for confd
+     */
 
     enabled = true;
 }
@@ -384,12 +334,6 @@ static int cfgi_confd_finalize(void)
 
     if (initialized) {
 
-        for (i=0; i < installed_apps.size; i++) {
-            if (NULL != (jd = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, i))) {
-                OBJ_RELEASE(jd);
-            }
-        }
-        OBJ_DESTRUCT(&installed_apps);
         for (i=0; i < active_apps.size; i++) {
             if (NULL != (jd = (orte_job_t*)opal_pointer_array_get_item(&active_apps, i))) {
                 OBJ_RELEASE(jd);
@@ -399,10 +343,6 @@ static int cfgi_confd_finalize(void)
 
         opal_argv_free(interfaces);
 
-        if (thread_active) {
-            opal_event_del(&launch_event);
-        }
-
         initialized = false;
     }
     OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output, "cfgi:confd finalized"));
@@ -410,63 +350,240 @@ static int cfgi_confd_finalize(void)
 }
 
 
-orcm_cfgi_base_module_t orcm_cfgi_confd_module = {
-    cfgi_confd_init,
-    cfgi_confd_finalize,
-    cfgi_confd_activate
-};
-
-static void launch_thread(int fd, short sd, void *args)
+/* find a given application in the installed config */
+static bool find_app(confd_hkeypath_t *kp,
+                     orcm_cfgi_app_t **app,
+                     char **application)
 {
-    int rc;
-    orcm_job_caddy_t *caddy;
+    confd_value_t *vp;
+    orcm_cfgi_app_t *aptr;
+    char *cptr;
+    int j;
 
-    opal_fd_read(launch_pipe[0], sizeof(orcm_job_caddy_t*), &caddy);
-
-
-    if (ORCM_CONFD_SPAWN == caddy->cmd) {
-        /* launch it */
-        if (ORCM_SUCCESS != (rc = orcm_cfgi_base_spawn_app(caddy->jdata, true))) {
-            ORTE_ERROR_LOG(rc);
-            opal_output(0, "SPECIFIED APP %s IS INVALID - IGNORING",
-                        (NULL == caddy->jdata->name) ? "NULL" : caddy->jdata->name);
-            /* remove the job from the global pool */
-            opal_pointer_array_set_item(orte_job_data, ORTE_LOCAL_JOBID(caddy->jdata->jobid), NULL);
-        } else {
-            /* if we were successful, then this job object is now
-             * in the global array, so protect it here
-             */
-            caddy->jdata = NULL;
-        }
-    } else if (ORCM_CONFD_KILL == caddy->cmd) {
-        if (ORCM_SUCCESS != (rc = orcm_cfgi_base_kill_app(caddy->jdata))) {
-            ORTE_ERROR_LOG(rc);
-        }
-        /* must NOT release the job data object at this time - we
-         * need it for when the proc states are reported!
-         */
-        caddy->jdata = NULL;
-    } else {
-        opal_output(0, "%s Unrecognized confd cmd",
-                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+    *app = NULL;
+    *application = strdup("foo");
+    vp = qc_find_key(kp, orcm_app, 0);
+    if (NULL == vp) {
+        return false;
     }
-    OBJ_RELEASE(caddy);
+    cptr = CONFD_GET_CBUFPTR(vp);
+    *application = strdup(cptr);
+    for (j=0; j < orcm_cfgi_base.installed_apps.size; j++) {
+        if (NULL == (aptr = (orcm_cfgi_app_t*)opal_pointer_array_get_item(&orcm_cfgi_base.installed_apps, j))) {
+            continue;
+        }
+        if (0 == strcmp(cptr, aptr->application)) {
+            OPAL_OUTPUT_VERBOSE((3, orcm_cfgi_base.output,
+                                 "FOUND EXISTING INSTALLED APP %s", cptr));
+            *app = aptr;
+            return true;
+        }
+    }
+    /* didn't find the app - but we still want to store the configuration */
+    OPAL_OUTPUT_VERBOSE((3, orcm_cfgi_base.output,
+                         "APP %s NOT INSTALLED", *application));
+    return true;
 }
 
-static boolean cfg_handler(confd_hkeypath_t *kp,
-                           enum cdb_iter_op  op,
-                           confd_value_t    *value,
-			   enum cdb_sub_notification notify_type,
-                           long              which)
+/* find a given version in the installed config */
+static bool find_version(confd_hkeypath_t *kp,
+                         orcm_cfgi_exec_t **exe,
+                         orcm_cfgi_version_t **vers)
 {
-    return parse(kp, op, value, notify_type, false);
+    orcm_cfgi_app_t *app;
+    orcm_cfgi_exec_t *exec, *eptr;
+    orcm_cfgi_version_t *vptr;
+    confd_value_t *vp, *vt;
+    char *cptr, *ctmp, *application;
+    int j;
+
+    /* set default */
+    *exe = NULL;
+    *vers = NULL;
+
+    if (!find_app(kp, &app, &application)) {
+        /* no key found */
+        return false;
+    }
+    vp = qc_find_key(kp, orcm_exec, 0);
+    if (NULL == vp) {
+        /* no exec key found */
+        return false;
+    }
+    cptr = CONFD_GET_CBUFPTR(vp);
+    /* find the version */
+    vt = qc_find_key(kp, orcm_version, 0);
+    if (NULL == vt) {
+        return false;
+    }
+    ctmp = CONFD_GET_CBUFPTR(vt);
+    if (NULL == app) {
+        /* didn't find the app - but allow to continue
+         * as we might just be storing config for an
+         * uninstalled app
+         */
+        return true;
+    }
+    /* find the executable */
+    exec = NULL;
+    for (j=0; j < app->executables.size; j++) {
+        if (NULL == (eptr = (orcm_cfgi_exec_t*)opal_pointer_array_get_item(&app->executables, j))) {
+            continue;
+        }
+        if (0 == strcmp(eptr->appname, cptr)) {
+            OPAL_OUTPUT_VERBOSE((3, orcm_cfgi_base.output,
+                                 "FOUND EXISTING EXECUTABLE %s IN APP %s",
+                                 cptr, app->application));
+            exec = eptr;
+            break;
+        }
+    }
+    if (NULL == exec) {
+        /* all this means is that this executable hasn't been installed
+         * yet for this app - let things continue so we record the
+         * config for later
+         */
+        return true;
+    }
+    *exe = exec;
+    /* is this version installed for this executable? */
+    for (j=0; j < exec->versions.size; j++) {
+        if (NULL == (vptr = (orcm_cfgi_version_t*)opal_pointer_array_get_item(&exec->versions, j))) {
+            continue;
+        }
+        if (0 == strcmp(ctmp, vptr->version)) {
+            OPAL_OUTPUT_VERBOSE((3, orcm_cfgi_base.output,
+                                 "FOUND EXISTING VERSION %s IN EXEC %s",
+                                 ctmp, exec->appname));
+            *vers = vptr;
+            return true;
+        }
+    }
+
+    /* not found, but that just means it hasn't been installed yet */
+    return true;
+}
+
+static bool find_binary(confd_hkeypath_t *kp,
+                        orcm_cfgi_version_t *vers,
+                        orcm_cfgi_run_t **runptr,
+                        orcm_cfgi_bin_t **bin)
+{
+    confd_value_t *vp;
+    char *instance, *app, *appname, *version;
+    orcm_cfgi_run_t *run, *rptr;
+    orcm_cfgi_app_t *aptr;
+    orcm_cfgi_exec_t *exec;
+    orcm_cfgi_bin_t *bptr;
+    int i;
+
+    /* set default */
+    *runptr = NULL;
+    *bin = NULL;
+
+    /* get the name of the application */
+    vp = qc_find_key(kp, orcm_app, 0);
+    if (NULL == vp) {
+        /* no key found */
+        return false;
+    }
+    app = CONFD_GET_CBUFPTR(vp);
+    /* find the instance this belongs to */
+    vp = qc_find_key(kp, orcm_app_instance, 0);
+    if (NULL == vp) {
+        return false;
+    }
+    instance = CONFD_GET_CBUFPTR(vp);
+    /* find the executable */
+    vp = qc_find_key(kp, orcm_exec, 0);
+    if (NULL == vp) {
+        /* no exec key found */
+        return false;
+    }
+    appname = CONFD_GET_CBUFPTR(vp);
+    /* find the version */
+    vp = qc_find_key(kp, orcm_version, 0);
+    if (NULL == vp) {
+        return false;
+    }
+    version = CONFD_GET_CBUFPTR(vp);
+    run = NULL;
+    for (i=0; i < orcm_cfgi_base.confgd_apps.size; i++) {
+        if (NULL == (rptr = (orcm_cfgi_run_t*)opal_pointer_array_get_item(&orcm_cfgi_base.confgd_apps, i))) {
+            continue;
+        }
+        if (NULL == rptr->application ||
+            NULL == rptr->instance) {
+            opal_output(0, "%s IMPROPERLY DEFINED CONFIG APPLICATION", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            return false;
+        }
+        if (0 == strcmp(rptr->application, app) &&
+            0 == strcmp(rptr->instance, instance)) {
+            run = rptr;
+            break;
+        }
+    }
+    if (NULL == run) {
+        /* shouldn't happen - but better add it */
+        run = OBJ_NEW(orcm_cfgi_run_t);
+        run->application = strdup(app);
+        run->instance = strdup(instance);
+        run->idx = opal_pointer_array_add(&orcm_cfgi_base.confgd_apps, run);
+    }
+    /* return the run object pointer */
+    *runptr = run;
+    /* see if this version already exists in this instance */
+    for (i=0; i < run->binaries.size; i++) {
+        if (NULL == (bptr = (orcm_cfgi_bin_t*)opal_pointer_array_get_item(&run->binaries, i))) {
+            continue;
+        }
+        if (0 == strcmp(bptr->appname, appname) &&
+            0 == strcmp(bptr->version, version)) {
+            *bin = bptr;
+            if (NULL == bptr->vers && NULL != vers) {
+                /* add it to the version for tracking purposes */
+                bptr->vers_idx = opal_pointer_array_add(&vers->binaries, bptr);
+                /* track the higher levels so we can cleanup as reqd */
+                bptr->exec = vers->exec;
+                bptr->vers = vers;
+            }
+            OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                 "%s FOUND EXISTING BINARY %s:%s",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                 appname, version));
+            return true;
+        }
+    }
+    /* if we get here, then this is a new version for this instance - so add it */
+    bptr = OBJ_NEW(orcm_cfgi_bin_t);
+    bptr->appname = strdup(appname);
+    bptr->version = strdup(version);
+    asprintf(&bptr->binary, "%s_%s", appname, version);
+    /* add this binary to the running config */
+    bptr->idx = opal_pointer_array_add(&run->binaries, bptr);
+    if (NULL != vers) {
+        /* also add it to the version for tracking purposes */
+        bptr->vers_idx = opal_pointer_array_add(&vers->binaries, bptr);
+        /* track the higher levels so we can cleanup as reqd */
+        bptr->exec = vers->exec;
+        bptr->vers = vers;
+    }
+    /* report out, if requested */
+    if (0 < opal_output_get_verbosity(orcm_cfgi_base.output)) {
+        opal_output(0, "%s CREATED NEW BINARY", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+        orcm_cfgi_base_dump(NULL, NULL, bptr, ORCM_CFGI_BIN);
+    }
+    /* return the struct pointer */
+    *bin = bptr;
+    return true;
+
 }
 
 static boolean parse(confd_hkeypath_t *kp,
                      enum cdb_iter_op  op,
                      confd_value_t    *value,
 	             enum cdb_sub_notification notify_type,
-		     bool install)
+                     long which)
 {
     confd_value_t *clist, *vp;
     char *cptr, *param, *ctmp;
@@ -474,47 +591,99 @@ static boolean parse(confd_hkeypath_t *kp,
     int32_t i32;
     int rc, j, app_idx;
     orte_job_t *jdat, *jdata=NULL;
-    orte_app_context_t *app, *aptr;
     bool valid;
     boolean ret=FALSE;
-    orcm_job_caddy_t *caddy;
+    orcm_cfgi_caddy_t *caddy;
     opal_pointer_array_t *array;
+    orcm_cfgi_app_t *installed_app;
+    orcm_cfgi_app_t *app, *aptr;
+    orcm_cfgi_exec_t *exec;
+    orcm_cfgi_run_t *run, *rptr;
+    orcm_cfgi_version_t *vers;
+    orcm_cfgi_bin_t *bin;
+    orte_app_context_t *ax, *axptr;
+    char *application, *appname, *version;
+
+    /* take control */
+    ORTE_ACQUIRE_THREAD(&orcm_cfgi_base.ctl);
 
     if (NULL == kp) {
         /* process the cmd */
-        if (CDB_SUB_COMMIT == notify_type && !install) {
+        if (CDB_SUB_COMMIT == notify_type) {
             for (j=0; j < active_apps.size; j++) {
-                if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(&active_apps, j))) {
+                if (NULL == (caddy = (orcm_cfgi_caddy_t*)opal_pointer_array_get_item(&active_apps, j))) {
                     continue;
                 }
-                if (ORTE_JOB_STATE_ABORT_ORDERED == jdata->state) {
+                /* convenience */
+                run = caddy->run;
+                /* see if an installed application has been given - if not,
+                 * then we just ignore this entry as all we really wanted to
+                 * do was capture the config
+                 */
+                if (NULL == run->app) {
+                    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                         "%s NOT SPAWNING CONFIGURED APP %s - APP NOT INSTALLED",
+                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), run->application));
+                    OBJ_RELEASE(caddy);
+                    continue;
+                }
+                /* if this is a new job, we need to create a job object for it.
+                 * if it is an existing job, we need to create a copy of the
+                 * currently-executing job object and pass it to the base
+                 * spawn routine, which compares the passed data against the
+                 * currently-executing job's data to determine required changes.
+                 * The base function will then update the run object's job data.
+                 */
+                jdata = OBJ_NEW(orte_job_t);
+                caddy->jdata = jdata;
+                jdata->name = strdup(run->application);
+                jdata->instance = strdup(run->instance);
+                for (i=0; i < run->binaries.size; i++) {
+                    if (NULL == (bin = (orcm_cfgi_bin_t*)opal_pointer_array_get_item(&run->binaries, i))) {
+                        continue;
+                    }
+                    if (NULL == bin->vers) {
+                        /* corresponding binary has not been installed yet - ignore */
+                        continue;
+                    }
+                    /* create an app_context for this binary */
+                    ax = OBJ_NEW(orte_app_context_t);
+                    ax->app = strdup(bin->binary);
+                    /* copy the argv across */
+                    if (NULL != bin->vers->argv) {
+                        ax->argv = opal_argv_copy(bin->vers->argv);
+                    }
+                    /* stick the command at the beginning of the argv */
+                    param = opal_basename(ax->app);
+                    opal_argv_prepend_nosize(&ax->argv, param);
+                    free(param);
+                    /* set num procs */
+                    ax->num_procs = bin->num_procs;
+                    /* add it to the job */
+                    ax->idx = opal_pointer_array_add(jdata->apps, ax);
+                    jdata->num_apps++;
+                }
+                /* do a basic validity check on the job */
+                if (ORCM_SUCCESS == orcm_cfgi_base_check_job(jdata)) {
                     valid = true;
                 } else {
-                    /* do a basic validity check on the job */
-                    if (ORCM_SUCCESS == orcm_cfgi_base_check_job(jdata)) {
-                        valid = true;
-                    } else {
-                        valid = false;
-                    }
+                    valid = false;
                 }
                 if (valid) {
                     /*spawn this job */
                     if (mca_orcm_cfgi_confd_component.test_mode) {
-                        opal_output(0, "SPAWNING %s", jdata->name);
                         /* display the result */
-                        opal_dss.dump(0, jdata, ORTE_JOB);
+                        orcm_cfgi_base_dump(NULL, NULL, caddy, ORCM_CFGI_CADDY);
                     } else {
-                        /* need to get out of this thread and into one
-                         * that is running the event library
-                         */
-                        caddy = OBJ_NEW(orcm_job_caddy_t);
-                        if (ORTE_JOB_STATE_ABORT_ORDERED == jdata->state) {
-                            caddy->cmd = ORCM_CONFD_KILL;
-                        } else {
-                            caddy->cmd = ORCM_CONFD_SPAWN;
+                        if (0 < opal_output_get_verbosity(orcm_cfgi_base.output)) {
+                            opal_output(0, "SPAWNING %s", jdata->name);
+                            orcm_cfgi_base_dump(NULL, NULL, caddy, ORCM_CFGI_CADDY);
                         }
-                        caddy->jdata = jdata;
-                        opal_fd_write(launch_pipe[1], sizeof(orcm_job_caddy_t*), &caddy);
+                        /* send it off to be processed */
+                        if (ORCM_SUCCESS != (rc = opal_fd_write(orcm_cfgi_base.launch_pipe[1],
+                                                                sizeof(orcm_cfgi_caddy_t*), &caddy))) {
+                            ORTE_ERROR_LOG(rc);
+                        }
                     }
                 } else {
                     opal_output(0, "SPECIFIED APP %s IS INVALID - IGNORING",
@@ -542,529 +711,325 @@ static boolean parse(confd_hkeypath_t *kp,
         goto release;
         break;
     case MOP_DELETED:
-        if (install) {
-            vp = qc_find_key(kp, orcm_app, 0);
-            if (NULL == vp) {
-                /* delete all installed apps */
-                for (j=0; j < installed_apps.size; j++) {
-                    if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, j))) {
-                        continue;
-                    }
-                    opal_pointer_array_set_item(&installed_apps, j, NULL);
-                    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                         "%s DELETING INSTALLED APPLICATION %s",
-                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                         (NULL == jdat->name) ? "NULL" : jdat->name));
-                    OBJ_RELEASE(jdat);
-                }
-                goto killall_running;
-                break;
-            }
-            /* delete only the specified installed app */
-            cptr = CONFD_GET_CBUFPTR(vp);
-            vp = qc_find_key(kp, orcm_exec, 0);
-            param = NULL;
-            if (NULL == vp) {
-                param = NULL;
-            } else {
-                param = CONFD_GET_CBUFPTR(vp);
-            }
-            for (j=0; j < installed_apps.size; j++) {
-                if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, j))) {
+        vp = qc_find_key(kp, orcm_app, 0);
+        if (NULL == vp) {
+            /* no app was given, so kill all jobs */
+            for (j=0; j < orcm_cfgi_base.confgd_apps.size; j++) {
+                if (NULL == (run = (orcm_cfgi_run_t*)opal_pointer_array_get_item(&orcm_cfgi_base.confgd_apps, j))) {
                     continue;
                 }
-                if (0 == strcasecmp(jdat->name, cptr)) {
-                    if (NULL == param) {
-                        switch(qc_get_xmltag(kp,1)) {
-                        case orcm_enable_recovery:
-                            OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                                 "%s DELETING ENABLE_RECOVERY FOR APPLICATION %s",
-                                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                                 (NULL == jdat->name) ? "NULL" : jdat->name));
-                            jdat->enable_recovery = false;
-                            break;
-                        default:
-                            /* delete the entire application */
-                            opal_pointer_array_set_item(&installed_apps, j, NULL);
-                            OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                                 "%s DELETING INSTALLED APPLICATION %s",
-                                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                                 (NULL == jdat->name) ? "NULL" : jdat->name));
-                            OBJ_RELEASE(jdat);
-                            /* see if any instances of this are running - if so, kill them too */
-                            for (j=0; j < orte_job_data->size; j++) {
-                                if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, j))) {
-                                    continue;
-                                }
-                                if (0 == strcasecmp(cptr, jdat->name)) {
-                                    jdata = OBJ_NEW(orte_job_t);
-                                    jdata->jobid = jdat->jobid;
-                                    jdata->state = ORTE_JOB_STATE_ABORT_ORDERED;  /* flag that this job is to be aborted */
-                                    /* add it to the active array for processing upon commit */
-                                    opal_pointer_array_add(&active_apps, jdata);
-                                }
-                            }
-                            break;
-                        }
-                    } else {
-                        /* delete a field from a specific executable within this app */
-                        for (app_idx=0; app_idx < jdat->apps->size; app_idx++) {
-                            if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, app_idx))) {
-                                continue;
-                            }
-                            if (0 == strcasecmp(app->app, param)) {
-                                /* found the executable - determine the field they want deleted */
-                                switch(qc_get_xmltag(kp,1)) {
-                                case orcm_argv:
-                                    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                                         "%s DELETING ARGV FROM INSTALLED APP %s EXEC %s",
-                                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                                         (NULL == jdat->name) ? "NULL" : jdat->name,
-                                                         param));
-                                    opal_argv_free(app->argv);
-                                    app->argv = NULL;
-                                    break;
-                                case orcm_env:
-                                    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                                         "%s DELETING ENV FROM INSTALLED APP %s EXEC %s",
-                                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                                         (NULL == jdat->name) ? "NULL" : jdat->name,
-                                                         param));
-                                    opal_argv_free(app->env);
-                                    app->env = NULL;
-                                    break;
-                                case orcm_gid:
-                                    app->gid = -1;
-                                    break;
-                                case orcm_uid:
-                                    app->uid = -1;
-                                    break;
-                                case orcm_max_restarts:
-                                    /* assuming that this means the user previously
-                                     * had specified a max_restarts value, but now
-                                     * wants it to be infinite - i.e., "no maximum
-                                     * on restarts"
-                                     */
-                                    app->max_restarts = -1;
-                                    app->recovery_defined = true;
-                                    break;
-                                case orcm_nodes:
-                                    if (NULL != app->dash_host) {
-                                        opal_argv_free(app->dash_host);
-                                        app->dash_host = NULL;
-                                    }
-                                    break;
-                                case orcm_replicas:
-                                    /* if the user wants no replicas, then this app
-                                     * won't be run - however, we leave it in the
-                                     * install config in case the user wants to 
-                                     * run it again later
-                                     */
-                                    app->num_procs = 0;
-                                    break;
-                                case orcm_working_dir:
-                                    if (NULL != app->cwd) {
-                                        free(app->cwd);
-                                        app->cwd = NULL;
-                                    }
-                                    break;
-                                case orcm_leader_exclude:
-                                    /* removing this field implies unsetting the
-                                     * value so this app can become a leader - but
-                                     * we don't use it now, so just ignore
-                                     */
-                                    break;
-                                default:
-                                    opal_output(0, "%s REQUEST TO DELETE AN UNKNOWN XML KEY FROM APP %s EXEC %s",
-                                                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                                (NULL == jdat->name) ? "NULL" : jdat->name,
-                                                param);
-                                    break;
-                                }
-                                /* only one executable could be specified */
-                                break;
-                            }
-                        }
-                    }
-                    ret = TRUE;
-                    break;
+                /* adjust the number of instances */
+                if (NULL != run->app) {
+                    run->app->num_instances--;
                 }
+                /* return all the executable counts */
+                for (i=0; i < run->binaries.size; i++) {
+                    if (NULL == (bin = (orcm_cfgi_bin_t*)opal_pointer_array_get_item(&run->binaries, i))) {
+                        continue;
+                    }
+                    if (NULL != bin->exec) {
+                        bin->exec->total_procs -= bin->num_procs;
+                    }
+                }
+                caddy = OBJ_NEW(orcm_cfgi_caddy_t);
+                caddy->cmd = ORCM_CFGI_KILL_JOB;
+                /* leave the run and jdata fields NULL as this indicates
+                 * all jobs are to be terminated
+                 */
+                /* remove the run object from the array and release it */
+                opal_pointer_array_set_item(&orcm_cfgi_base.confgd_apps, j, NULL);
+                OBJ_RELEASE(run);
+                /* send it off to be processed */
+                opal_fd_write(orcm_cfgi_base.launch_pipe[1], sizeof(orcm_cfgi_caddy_t*), &caddy);
             }
+            ret = TRUE;
             break;
         } else {
-            /* deleting a running job */
-            vp = qc_find_key(kp, orcm_app_instance, 0);
-            if (NULL == vp) {
-                /* if no app-instance was given, then the user
-                 * wants us to terminate all jobs
-                 */
-            killall_running:
-                for (j=0; j < orte_job_data->size; j++) {
-                    if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, j))) {
-                        continue;
-                    }
-                    /* if the job is already terminated, then just remove it from
-                     * the array - if we try to tell it to die, nothing will
-                     * happen and thus the errmgr won't remove the job for us
-                     * Reserve the special case of procs_migrating as there
-                     * could be other procs still running
-                     */
-                    if (ORTE_JOB_STATE_UNTERMINATED < jdat->state &&
-                        ORTE_JOB_STATE_PROCS_MIGRATING != jdat->state) {
-                        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                             "%s APP %s IS IN STATE %s - REMOVING FROM JOB ARRAY",
-                                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                             (NULL == jdat->name) ? "NULL" : jdat->name,
-                                             orte_job_state_to_str(jdat->state)));
-                        opal_pointer_array_set_item(orte_job_data, j, NULL);
-                        OBJ_RELEASE(jdat);
-                        continue;
-                    }
-                    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                         "%s ORDERING APP %s TO ABORT",
-                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                         (NULL == jdat->name) ? "NULL" : jdat->name));
-                    jdata = OBJ_NEW(orte_job_t);
-                    jdata->jobid = jdat->jobid;
-                    jdata->state = ORTE_JOB_STATE_ABORT_ORDERED;  /* flag that this job is to be aborted */
-                    /* add it to the active array for processing upon commit */
-                    opal_pointer_array_add(&active_apps, jdata);
-                }
-                ret = TRUE;
-                break;
-            }
-            /* find this in the active job array */
             cptr = CONFD_GET_CBUFPTR(vp);
-            ret = FALSE;
-            for (j=0; j < orte_job_data->size; j++) {
-                if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, j))) {
+            /* an app was specified - if no app-instance was given, then
+             * terminate all running instances of that app
+             */
+            ctmp = NULL;
+            vp = qc_find_key(kp, orcm_app_instance, 0);
+            if (NULL != vp) {
+                ctmp = CONFD_GET_CBUFPTR(vp);
+            }
+            /* see if an executable was given */
+            appname = NULL;
+            vp = qc_find_key(kp, orcm_exec, 0);
+            if (NULL != vp) {
+                appname = CONFD_GET_CBUFPTR(vp);
+            }
+            /* see if a version was given */
+            version = NULL;
+            vp = qc_find_key(kp, orcm_version, 0);
+            if (NULL != vp) {
+                version = CONFD_GET_CBUFPTR(vp);
+            }
+            /* search the configured app array */
+            for (j=0; j < orcm_cfgi_base.confgd_apps.size; j++) {
+                if (NULL == (run = (orcm_cfgi_run_t*)opal_pointer_array_get_item(&orcm_cfgi_base.confgd_apps, j))) {
                     continue;
                 }
-                if (0 == strcmp(cptr, jdat->instance)) {
-                    /* if the job is already terminated, then just remove it from
-                     * the array - if we try to tell it to die, nothing will
-                     * happen and thus the errmgr won't remove the job for us
-                     * Reserve the special case of procs_migrating as there
-                     * could be other procs still running
-                     */
-                    if (ORTE_JOB_STATE_UNTERMINATED < jdat->state &&
-                        ORTE_JOB_STATE_PROCS_MIGRATING != jdat->state) {
-                        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                             "%s APP %s IS IN STATE %s - REMOVING FROM JOB ARRAY",
-                                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                             (NULL == jdat->name) ? "NULL" : jdat->name,
-                                             orte_job_state_to_str(jdat->state)));
-                        opal_pointer_array_set_item(orte_job_data, j, NULL);
-                        OBJ_RELEASE(jdat);
-                    } else {
-                        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                             "%s ORDERING APP %s TO ABORT",
-                                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                             (NULL == jdat->name) ? "NULL" : jdat->name));
-                        jdata = OBJ_NEW(orte_job_t);
-                        jdata->jobid = jdat->jobid;
-                        jdata->state = ORTE_JOB_STATE_ABORT_ORDERED;  /* flag that this job is to be aborted */
-                        /* add it to the active array for processing upon commit */
-                        opal_pointer_array_add(&active_apps, jdata);
+                if (0 == strcmp(cptr, run->application)) {
+                    if (NULL == ctmp || 0 == strcmp(ctmp, run->instance)) {
+                        if (NULL == appname) {
+                            /**** applies to the entire running instance ****/
+                            caddy = OBJ_NEW(orcm_cfgi_caddy_t);
+                            caddy->cmd = ORCM_CFGI_KILL_JOB;
+                            /* remove the config tracker to match what is in confd */
+                            opal_pointer_array_set_item(&orcm_cfgi_base.confgd_apps, j, NULL);
+                            /* adjust the number of instances */
+                            if (NULL != run->app) {
+                                run->app->num_instances--;
+                            }
+                            /* return all the executable counts */
+                            for (i=0; i < run->binaries.size; i++) {
+                                if (NULL == (bin = (orcm_cfgi_bin_t*)opal_pointer_array_get_item(&run->binaries, i))) {
+                                    continue;
+                                }
+                                if (NULL != bin->exec) {
+                                    bin->exec->total_procs -= bin->num_procs;
+                                }
+                            }
+                            /* don't retain the run object as it has been removed from confd,
+                             * let the caddy destructor destroy it
+                             */
+                            caddy->run = run;
+                            /* send it off to be processed */
+                            opal_fd_write(orcm_cfgi_base.launch_pipe[1], sizeof(orcm_cfgi_caddy_t*), &caddy);
+                        } else if (NULL == version) {
+                            /**** terminate all versions of the specified executable ****/
+                            /* this is a little trickier as we aren't killing an entire job,
+                             * but instead just specific processes in that job. This is done
+                             * by setting the num_procs for that executable to zero
+                             */
+                            OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                                 "%s ORDERING APP %s INSTANCE %s EXEC %s (all versions) TO ABORT",
+                                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                                 run->application, run->instance, appname));
+                            valid = false;
+                            /* adjust the running config */
+                            for (i=0; i < run->binaries.size; i++) {
+                                if (NULL == (bin = (orcm_cfgi_bin_t*)opal_pointer_array_get_item(&run->binaries, i))) {
+                                    continue;
+                                }
+                                if (0 == strcmp(appname, bin->appname)) {
+                                    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                                         "%s ORDERING EXECUTABLE %s VERSION %s TO ABORT",
+                                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), bin->appname, bin->version));
+                                    if (NULL != bin->exec) {
+                                        bin->exec->total_procs -= bin->num_procs;
+                                    }
+                                    bin->vers = NULL;
+                                    valid = true;
+                                    /* might be multiple matches since we are covering
+                                     * multiple versions, so keep going
+                                     */
+                                }
+                            }
+                            if (valid) {
+                                caddy = OBJ_NEW(orcm_cfgi_caddy_t);
+                                caddy->cmd = ORCM_CFGI_KILL_EXE;
+                                /* retain the run object as it has -not- been removed from confd */
+                                OBJ_RETAIN(run);
+                                caddy->run = run;
+                                /* tell the base function to remove all zero'd binaries */
+                                caddy->cleanup = true;
+                                /* send it off to be processed */
+                                opal_fd_write(orcm_cfgi_base.launch_pipe[1], sizeof(orcm_cfgi_caddy_t*), &caddy);
+                            }
+                        } else {
+                            /**** terminate -only- the specified version of this executable ****/
+                            /* tricky again - see above comment */
+                            OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                                 "%s ORDERING APP %s INSTANCE %s EXEC %s VERSION %s TO ABORT",
+                                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                                 run->application, run->instance, appname, version));
+                            valid = false;
+                            /* adjust the running config */
+                            for (i=0; i < run->binaries.size; i++) {
+                                if (NULL == (bin = (orcm_cfgi_bin_t*)opal_pointer_array_get_item(&run->binaries, i))) {
+                                    continue;
+                                }
+                                if (0 == strcmp(appname, bin->appname) &&
+                                    0 == strcmp(version, bin->version)) {
+                                    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                                         "%s SETTING EXECUTABLE %s VERSION %s TO ABORT",
+                                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), appname, version));
+                                    if (NULL != bin->exec) {
+                                        bin->exec->total_procs -= bin->num_procs;
+                                    }
+                                    bin->vers = NULL;
+                                    valid = true;
+                                    break;
+                                }
+                            }
+                            if (valid) {
+                                caddy = OBJ_NEW(orcm_cfgi_caddy_t);
+                                caddy->cmd = ORCM_CFGI_KILL_EXE;
+                                /* retain the run object as it has -not- been removed from confd */
+                                OBJ_RETAIN(run);
+                                caddy->run = run;
+                                /* tell the base function to remove all zero'd binaries */
+                                caddy->cleanup = true;
+                                /* send it off to be processed */
+                                opal_fd_write(orcm_cfgi_base.launch_pipe[1], sizeof(orcm_cfgi_caddy_t*), &caddy);
+                            }
+                        }
                     }
-                    ret = TRUE;
-                    break;
                 }
             }
         }
+        ret = TRUE;
         break;
 
     case MOP_VALUE_SET:
         opal_output_verbose(2, orcm_cfgi_base.output, "VALUE_SET");
-        if (install) {
-            array = &installed_apps;
-            /* must have specified application */
-            vp = qc_find_key(kp, orcm_app, 0);
-            if (NULL == vp) {
-                opal_output(0, "ERROR: BAD APP KEY");
-                ret = FALSE;
-                break;
-            }
-            /* see if we already have it */
-            jdata = NULL;
-            cptr = CONFD_GET_CBUFPTR(vp);
-            for (j=0; j < array->size; j++) {
-                if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(array, j))) {
-                    continue;
-                }
-                if (0 == strcmp(cptr, jdat->name)) {
-                    OPAL_OUTPUT_VERBOSE((3, orcm_cfgi_base.output,
-                                         "FOUND EXISTING JOB %s IN INSTALLED CONFIG", cptr));
-                    jdata = jdat;
-                    break;
-                }
-            }
-            if (NULL == jdata) {
-                /* new application */
-                jdata = OBJ_NEW(orte_job_t);
-                jdata->name = strdup(cptr);
-                OPAL_OUTPUT_VERBOSE((3, orcm_cfgi_base.output,
-                                     "ADDING NEW JOB %s TO INSTALLED CONFIG", cptr));
-                /* add it to the installed array */
-                opal_pointer_array_add(array, jdata);
-            }
-        } else {
-            array = &active_apps;
-            /* must have specified app-instance */
-            vp = qc_find_key(kp, orcm_app_instance, 0);
-            if (NULL == vp) {
-                opal_output(0, "ERROR: BAD APP_INSTANCE KEY");
-                ret = FALSE;
-                break;
-            }
-            /* see if we already have it */
-            jdata = NULL;
-            cptr = CONFD_GET_CBUFPTR(vp);
-            for (j=0; j < array->size; j++) {
-                if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(array, j))) {
-                    continue;
-                }
-                if (0 == strcmp(cptr, jdat->instance)) {
-                    OPAL_OUTPUT_VERBOSE((3, orcm_cfgi_base.output,
-                                         "FOUND EXISTING APP-INSTANCE %s IN RUNNING CONFIG",
-                                         jdat->instance));
-                    jdata = jdat;
-                    break;
-                }
-            }
-            if (NULL == jdata) {
-                /* new application */
-                jdata = OBJ_NEW(orte_job_t);
-                jdata->instance = strdup(cptr);
-                OPAL_OUTPUT_VERBOSE((3, orcm_cfgi_base.output,
-                                     "ADDING NEW APP_INSTANCE %s TO RUNNING CONFIG", cptr));
-                /* add it to the installed array */
-                opal_pointer_array_add(array, jdata);
-            }
-        }
-        /* see if they specified an executable */
-        vp = qc_find_key(kp, orcm_exec, 0);
-        if (NULL != vp) {
-            /* as they provided an executable, see if we already have it
-             * in this job
-             */
-            cptr = CONFD_GET_CBUFPTR(vp);
-            app = NULL;
-            app_idx = 0;
-            for (j=0; j < jdata->apps->size; j++) {
-                if (NULL == (aptr = (orte_app_context_t*)opal_pointer_array_get_item(jdata->apps, j))) {
-                    continue;
-                }
-                if (0 == strcmp(cptr, aptr->app)) {
-                    OPAL_OUTPUT_VERBOSE((3, orcm_cfgi_base.output,
-                                         "FOUND EXISTING APP %s", cptr));
-                    app = aptr;
-                    break;
-                }
-                app_idx++;
-            }
-            if (NULL == app) {
-                /* new context */
-                app = OBJ_NEW(orte_app_context_t);
-                app->idx = app_idx;
-                app->app = strdup(cptr);
-                OPAL_OUTPUT_VERBOSE((3, orcm_cfgi_base.output,
-                                     "ADDING NEW APP %s", app->app));
-                opal_argv_append_nosize(&app->argv, opal_basename(app->app));
-                /* use this as our default "path" in case they never
-                 * explicitly define that field so operational output
-                 * looks right
-                 */
-                app->name = strdup(opal_basename(app->app));
-                /* add to the job */
-                opal_pointer_array_set_item(jdata->apps, app_idx, app);
-                jdata->num_apps++;
-            }
-        }
 
-        /* now process the value itself */
         switch(qc_get_xmltag(kp,1)) {
             /* JOB-LEVEL VALUES */
-        case orcm_app_name:
-            if (install) {
-                /* no such entry defined for install */
-                opal_output(0, "%s ERROR - INSTALL SPECIFIED APP_NAME",
-                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+        case orcm_app_instance:
+            if (!find_app(kp, &app, &application)) {
+                /* the app key wasn't provided */
                 ret = FALSE;
                 break;
-            } else {
-                cptr = strdup(CONFD_GET_CBUFPTR(value));
-                /* we require that the app have been previously installed */
-                ret = FALSE;
-                for (j=0; j < installed_apps.size; j++) {
-                    if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, j))) {
-                        continue;
-                    }
-                    if (0 != strcmp(jdat->name, cptr)) {
-                        continue;
-                    }
-                    /* we have a match - copy over all the fields
-                     * to serve as a default starting point
-                     */
-                    opal_output_verbose(2, orcm_cfgi_base.output,
-                                        "COPYING DEFAULTS FOR APP %s TO INSTANCE %s",
-                                        jdat->name, jdata->instance);
-                    copy_defaults(jdata, jdat);
-                    ret = TRUE;
+            }
+            cptr = CONFD_GET_CBUFPTR(value);
+            /* instance name for the given app -must- be unique */
+            run = NULL;
+            for (i=0; i < orcm_cfgi_base.confgd_apps.size; i++) {
+                if (NULL == (rptr = (orcm_cfgi_run_t*)opal_pointer_array_get_item(&orcm_cfgi_base.confgd_apps, i))) {
+                    continue;
+                }
+                if (0 != strcmp(rptr->application, application)) {
+                    continue;
+                }
+                if (0 == strcmp(rptr->instance, cptr)) {
+                    run = rptr;
                     break;
                 }
-                if (!ret) {
-                    /* if we get here, then the app was NOT previously installed */
-                    opal_output(0, "APP %s WAS NOT PREVIOUSLY INSTALLED", jdata->name);
-                    OBJ_RELEASE(jdata);
+            }
+            if (NULL == app) {
+                /* the specified app has not yet been installed. In this case,
+                 * we still want to capture the config so we can start the
+                 * app-instance if/when the referenced app ever does get installed
+                 */
+                if (NULL == run) {
+                    /* don't have this config yet - add it */
+                    run = OBJ_NEW(orcm_cfgi_run_t);
+                    run->application = application;
+                    run->instance = strdup(cptr);
+                    run->idx = opal_pointer_array_add(&orcm_cfgi_base.confgd_apps, run);
                 }
+                ret = TRUE;
+                break;
             }
-            break;
-        case orcm_enable_recovery:
-            i32 = CONFD_GET_INT32(value);
-            if (0 != i32) {
-                jdata->enable_recovery = true;
+            /* specified app has been installed - configure it */
+            if (app->max_instances < 0 || app->num_instances < app->max_instances) {
+                if (NULL == run) {
+                    /* don't have this config yet - add it */
+                    run = OBJ_NEW(orcm_cfgi_run_t);
+                    run->app = app;
+                    run->application = application;
+                    run->instance = strdup(cptr);
+                    run->idx = opal_pointer_array_add(&orcm_cfgi_base.confgd_apps, run);
+                }
+                /* add it to our array of apps waiting for commit */
+                caddy = OBJ_NEW(orcm_cfgi_caddy_t);
+                caddy->cmd = ORCM_CFGI_SPAWN;
+                /* retain the run object so the caddy release doesn't release it */
+                OBJ_RETAIN(run);
+                caddy->run = run;
+                opal_pointer_array_add(&active_apps, caddy);
+                if (3 < opal_output_get_verbosity(orcm_cfgi_base.output)) {
+                    opal_output(0, "NEW CADDY");
+                    orcm_cfgi_base_dump(NULL, NULL, caddy, ORCM_CFGI_CADDY);
+                }
+                /* track it against the installed apps */
+                run->app_idx = opal_pointer_array_add(&app->instances, run);
+                app->num_instances++;
             } else {
-                jdata->enable_recovery = false;
+                opal_output(0, "%s APP %s: MAX NUMBER OF ALLOWED INSTANCES (%d) EXCEEDED - CANNOT CONFIGURE INSTANCE %s",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                            (NULL == app->application) ? "NULL" : app->application,
+                            app->max_instances, cptr);
+                free(application);
+                ret = FALSE;
+                break;
             }
-            jdata->recovery_defined = true;
             ret = TRUE;
             break;
 
             /* APP-LEVEL VALUES */
-        case orcm_replicas:
-            app->num_procs = CONFD_GET_INT32(value);
-            ret = TRUE;
-            break;
+        case orcm_app_name:
+        case orcm_exec:
         case orcm_exec_name:
-            opal_output_verbose(2, orcm_cfgi_base.output, "EXEC_NAME");
-            app->app = strdup(CONFD_GET_CBUFPTR(value));
-            /* get the basename and install it as argv[0] if not already provided */
-            if (0 == opal_argv_count(app->argv)) {
-                cptr = opal_basename(app->app);
-                opal_argv_prepend_nosize(&app->argv, cptr);
-                free(cptr);
-            }
-            if (NULL == app->name) {
-                app->name = strdup(opal_basename(app->app));
-            }
+        case orcm_version_name:
+            /* not a supported option. However, confd does a stupid thing
+             * and feeds us these values as it "builds" to other options
+             * that -are- supported, so just ignore them here
+             */
             ret = TRUE;
             break;
-        case orcm_path:
-            opal_output_verbose(2, orcm_cfgi_base.output, "PATH");
-            cptr = strdup(CONFD_GET_CBUFPTR(value));
-            /* if the executable hasn't been provided yet, that is an error */
-            if (NULL == app->app) {
-                opal_output(0, "CANNOT SET PATH - NO EXECUTABLE SET");
+
+        case orcm_count:
+            i32 = CONFD_GET_INT32(value);
+            if (!find_version(kp, &exec, &vers)) {
+                /* the app/exec/version keys weren't provided */
                 ret = FALSE;
                 break;
             }
-            /* prepend the path to the executable */
-            ctmp = app->app;
-            app->app = opal_os_path(false, cptr, ctmp, NULL);
-            free(ctmp);
-            free(cptr);
-            ret = TRUE;
-            break;
-        case orcm_max_restarts:
-            app->max_restarts = CONFD_GET_INT32(value);
-            /* flag that the recovery policy has been defined
-             * so we don't pickup the system defaults
-             */
-            app->recovery_defined = true;
-            ret = TRUE;
-            break;
-        case orcm_leader_exclude:
-            /* boolean - presence means do not allow
-             * this app to become leader
-             */
-            opal_output_verbose(2, orcm_cfgi_base.output, "ORCM_LDR_EXCLUDE");
-            ret = TRUE;
-            break;
-        case orcm_version:
-            opal_output_verbose(2, orcm_cfgi_base.output, "version: %s", CONFD_GET_CBUFPTR(value));
-            app->version = strdup(CONFD_GET_CBUFPTR(value));
-            ret = TRUE;
-            break;
-        case orcm_config_set:
-            cptr = CONFD_GET_CBUFPTR(value);
-            param = mca_base_param_environ_variable("orcm", "confd", "config");
-            opal_setenv(param, cptr, true, &app->env);
-            free(param);
-            ret = TRUE;
-            break;
-        case orcm_nodes:
-            /* remove any prior data */
-            if (NULL != app->dash_host) {
-                opal_argv_free(app->dash_host);
-                app->dash_host = NULL;
+            if (!find_binary(kp, vers, &run, &bin)) {
+                /* the version key wasn't provided */
+                ret = FALSE;
+                break;
             }
-            /* the equivalent to -host */
-            clist = CONFD_GET_LIST(value);
-            imax = CONFD_GET_LISTSIZE(value);
-            for (i=0; i < imax; i++) {
-                opal_argv_append_nosize(&app->dash_host, CONFD_GET_CBUFPTR(&clist[i]));
+            if (NULL != exec) {
+                /* see if this would give us too many procs - obviously, if
+                 * the executable hasn't been installed yet, we can't know
+                 * and will just have to assume it's okay for now
+                 */
+                if (0 <= exec->process_limit) {
+                    if (exec->process_limit < ((i32 - bin->num_procs) + exec->total_procs)) {
+                        opal_output(0, "%s EXECUTABLE %s: MAX NUMBER OF ALLOWED PROCS (%d) EXCEEDED - CANNOT ADD %d PROCS, ALREADY HAVE %d",
+                                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                    (NULL == exec->appname) ? "NULL" : exec->appname,
+                                    exec->process_limit, i32 - bin->num_procs, exec->total_procs);
+                        ret = FALSE;
+                        break;
+                    }
+                }
+                exec->total_procs += (i32 - bin->num_procs);
             }
-            ret = TRUE;
-            break;
-        case orcm_argv:
-            /* remove any prior data */
-            if (NULL != app->argv) {
-                opal_argv_free(app->argv);
-                app->argv = NULL;
-                /* restore the app's name to argv[0] if known */
-                if (NULL != app->app) {
-                    opal_argv_append_nosize(&app->argv, opal_basename(app->app));
+            bin->num_procs = i32;
+            /* if this run object isn't already in the active_apps array,
+             * add it - this happens when you change the num_procs for an
+             * executable, or add an executable to a running job
+             */
+            valid = false;
+            for (i=0; i < active_apps.size; i++) {
+                if (NULL == (caddy = (orcm_cfgi_caddy_t*)opal_pointer_array_get_item(&active_apps, i))) {
+                    continue;
+                }
+                if (run == caddy->run) {
+                    valid = true;
+                    break;
                 }
             }
-            clist = CONFD_GET_LIST(value);
-            imax = CONFD_GET_LISTSIZE(value);
-            for (i=0; i < imax; i++) {
-                opal_argv_append_nosize(&app->argv, CONFD_GET_CBUFPTR(&clist[i]));
+            if (!valid) {
+                /* need to add it */
+                caddy = OBJ_NEW(orcm_cfgi_caddy_t);
+                caddy->cmd = ORCM_CFGI_SPAWN;
+                /* retain the run object so the caddy release doesn't release it */
+                OBJ_RETAIN(run);
+                caddy->run = run;
+                opal_pointer_array_add(&active_apps, caddy);
             }
-            ret = TRUE;
-            break;
-        case orcm_env:
-            /* remove any prior data */
-            if (NULL != app->env) {
-                opal_argv_free(app->env);
-                app->env = NULL;
-            }
-            clist = CONFD_GET_LIST(value);
-            imax = CONFD_GET_LISTSIZE(value);
-            for (i=0; i < imax; i++) {
-                opal_argv_append_nosize(&app->env, CONFD_GET_CBUFPTR(&clist[i]));
-            }
-            ret = TRUE;
-            break;
-        case orcm_working_dir:
-            app->cwd = strdup(CONFD_GET_CBUFPTR(value));
-            ret = TRUE;
-            break;
-        case orcm_gid:
-            app->gid = CONFD_GET_INT32(value);
-            ret = TRUE;
-            break;
-        case orcm_uid:
-            app->uid = CONFD_GET_INT32(value);
             ret = TRUE;
             break;
 
             /* IGNORED VALUES */
-        case orcm_name:
-            /* dealt with in the create when this key
-             * was provided - so ignore it here
-             */
-            ret = TRUE;
-            break;
-        case orcm_instance_name:
-            /* we already have this info - it was the key
-             * when we got the create command, so just
-             * keep what we already have
-             */
-            ret = TRUE;
-            break;
-
         default:
             opal_output(0, "NON-UNDERSTOOD XML TAG");
             ret = FALSE;
@@ -1082,16 +1047,9 @@ static boolean parse(confd_hkeypath_t *kp,
     if (valid && !ret) {
         valid = false;
     }
+    /* release control */
+    ORTE_RELEASE_THREAD(&orcm_cfgi_base.ctl);
     return ret;
-}
-
-static boolean install_handler(confd_hkeypath_t *kp,
-                               enum cdb_iter_op  op,
-                               confd_value_t    *value,
-                               enum cdb_sub_notification notify_type,
-                               long              which)
-{
-    return parse(kp, op, value, notify_type, true);
 }
 
 static orte_proc_t* get_child(orte_process_name_t *proc)
@@ -1137,6 +1095,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
     char nodename[64];
     orte_jobid_t jobid;
     orte_app_context_t *app;
+    struct confd_decimal64 d64;
 
     /*
      * look at the first XML tag in the keypath to see which element
@@ -1166,19 +1125,6 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         vp = qc_find_key(kp, orcm_job, 0);
         if (NULL != vp) {
             jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-        } else {
-            vp = qc_find_key(kp, orcm_installed_software, 0);
-            if (NULL != vp) {
-                jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
-            } else {
-                vp = qc_find_key(kp, orcm_running_software, 0);
-                if (NULL == vp) {
-                    opal_output(0, "%s CONFD REQUEST FOR JOB NAME - NO JOB PROVIDED",
-                                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                    goto notfound;
-                }
-                jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-            }
         }
         if (NULL == jdat) {
             /* job no longer exists */
@@ -1195,50 +1141,6 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         goto release;
         break;
 
-    case orcm_enable_recovery:
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s REQUEST FOR ENABLE RECOVERY ELEMENT",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        vp = qc_find_key(kp, orcm_job, 0);
-        if (NULL != vp) {
-            jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-        } else {
-            vp = qc_find_key(kp, orcm_installed_software, 0);
-            if (NULL != vp) {
-                jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
-            } else {
-                vp = qc_find_key(kp, orcm_running_software, 0);
-                if (NULL == vp) {
-                    opal_output(0, "%s CONFD REQUEST FOR ENABLE RECOVERY - NO JOB PROVIDED",
-                                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                    goto notfound;
-                }
-                jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-            }
-        }
-        if (NULL == jdat) {
-            /* job no longer exists */
-            opal_output(0, "%s CONFD REQUEST FOR ENABLE RECOVERY - JOB %s NOT FOUND",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
-            goto notfound;
-        }
-        if (jdat->recovery_defined) {
-            if (jdat->enable_recovery) {
-                CONFD_SET_CBUF(&val, "Y", 1);
-            } else {
-                CONFD_SET_CBUF(&val, "N", 1);
-            }
-        } else {
-            if (orte_enable_recovery) {
-                CONFD_SET_CBUF(&val, "Y", 1);
-            } else {
-                CONFD_SET_CBUF(&val, "N", 1);
-            }
-        }
-        confd_data_reply_value(tctx, &val);
-        goto release;
-        break;
-
     case orcm_path:
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                              "%s REQUEST FOR PATH ELEMENT",
@@ -1246,19 +1148,6 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         vp = qc_find_key(kp, orcm_job, 0);
         if (NULL != vp) {
             jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-        } else {
-            vp = qc_find_key(kp, orcm_installed_software, 0);
-            if (NULL != vp) {
-                jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
-            } else {
-                vp = qc_find_key(kp, orcm_running_software, 0);
-                if (NULL == vp) {
-                    opal_output(0, "%s CONFD REQUEST FOR PATH - NO JOB PROVIDED",
-                                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                    goto notfound;
-                }
-                jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-            }
         }
         if (NULL == jdat) {
             /* job no longer exists */
@@ -1268,15 +1157,9 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         }
         vp = qc_find_key(kp, orcm_app_context, 0);
         if (NULL == vp) {
-            vp = qc_find_key(kp, orcm_installed_app, 0);
-            if (NULL == vp) {
-                vp = qc_find_key(kp, orcm_running_app, 0);
-                if (NULL == vp) {
-                    opal_output(0, "%s CONFD REQUEST FOR PATH - NO APP INDEX PROVIDED",
-                                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                    goto notfound;
-                }
-            }
+            opal_output(0, "%s CONFD REQUEST FOR PATH - NO APP INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
         }
         app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
         if (NULL == app) {
@@ -1285,116 +1168,12 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                         CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
             goto notfound;
         }
-        if (NULL == app->name) {
-            CONFD_SET_CBUF(&val, "NONE", 4);
-        } else {
-            CONFD_SET_CBUF(&val, app->name, strlen(app->name));
-        }
+        cp = opal_basename(app->app);
+        CONFD_SET_CBUF(&val, cp, strlen(cp));
         confd_data_reply_value(tctx, &val);
+        free(cp);
         goto release;
         break;
-
-    case orcm_max_restarts:
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s REQUEST FOR RESTARTS ELEMENT",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        vp = qc_find_key(kp, orcm_job, 0);
-        if (NULL != vp) {
-            jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-        } else {
-            vp = qc_find_key(kp, orcm_installed_software, 0);
-            if (NULL != vp) {
-                jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
-            } else {
-                vp = qc_find_key(kp, orcm_running_software, 0);
-                if (NULL == vp) {
-                    opal_output(0, "%s CONFD REQUEST FOR MAX RESTARTS - NO JOB PROVIDED",
-                                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                    goto notfound;
-                }
-                jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-            }
-        }
-        if (NULL == jdat) {
-            /* job no longer exists */
-            opal_output(0, "%s CONFD REQUEST FOR MAX RESTARTS - JOB %s NOT FOUND",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
-            goto notfound;
-        }
-        vp = qc_find_key(kp, orcm_app_context, 0);
-        if (NULL == vp) {
-            vp = qc_find_key(kp, orcm_installed_app, 0);
-            if (NULL == vp) {
-                vp = qc_find_key(kp, orcm_running_app, 0);
-                if (NULL == vp) {
-                    opal_output(0, "%s CONFD REQUEST FOR MAX RESTARTS - NO APP INDEX PROVIDED",
-                                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                    goto notfound;
-                }
-            }
-        }
-        app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
-        if (NULL == app) {
-            opal_output(0, "%s CONFD REQUEST FOR MAX RESTARTS - APP %d NOT FOUND IN JOB %s",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                        CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
-            goto notfound;
-        }
-        if (app->recovery_defined) {
-            i32 = app->max_restarts;
-        } else {
-            i32 = orte_max_restarts;
-        }
-        CONFD_SET_INT32(&val, i32);
-        confd_data_reply_value(tctx, &val);
-        goto release;
-        break;
-
-        if (NULL != vp) {
-            jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-        } else {
-            vp = qc_find_key(kp, orcm_installed_software, 0);
-            if (NULL != vp) {
-                jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
-            } else {
-                vp = qc_find_key(kp, orcm_running_software, 0);
-                if (NULL == vp) {
-                    opal_output(0, "%s CONFD REQUEST FOR ENABLE RECOVERY - NO JOB PROVIDED",
-                                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                    goto notfound;
-                }
-                jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-            }
-        }
-    case orcm_name:
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s REQUEST FOR INSTALLED APPNAME ELEMENT",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        vp = qc_find_key(kp, orcm_installed_software, 0);
-        if (NULL != vp) {
-            jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
-        } else {
-            vp = qc_find_key(kp, orcm_running_software, 0);
-            if (NULL == vp) {
-                opal_output(0, "%s CONFD REQUEST FOR APPNAME - NO JOB PROVIDED",
-                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                goto notfound;
-            }
-            jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-        }
-        if (NULL == jdat) {
-            /* job no longer exists */
-            opal_output(0, "%s CONFD REQUEST FOR APP NAME - JOB %s NOT FOUND",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
-            goto notfound;
-        }
-        if (NULL == jdat->name) {
-            CONFD_SET_CBUF(&val, "UNNAMED", strlen("UNNAMED"));
-        } else {
-            CONFD_SET_CBUF(&val, jdat->name, strlen(jdat->name));
-        }
-        confd_data_reply_value(tctx, &val);
-        goto release;
 
     case orcm_app_name:
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
@@ -1426,12 +1205,10 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
                         CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
             goto notfound;
         }
-        if (NULL == app->name) {
-            CONFD_SET_CBUF(&val, "UNNAMED", strlen("UNNAMED"));
-        } else {
-            CONFD_SET_CBUF(&val, app->name, strlen(app->name));
-        }
+        cp = opal_basename(app->app);
+        CONFD_SET_CBUF(&val, cp, strlen(cp));
         confd_data_reply_value(tctx, &val);
+        free(cp);
         goto release;
 
     case orcm_pid:
@@ -1494,6 +1271,224 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         confd_data_reply_value(tctx, &val);
         goto release;
 
+    case orcm_num_threads:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR NUM THREADS ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_job, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR NUM THREADS - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        name.jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));;
+        vp = qc_find_key(kp, orcm_replica, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR NUM THREADS - NO REPLICA PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        name.vpid = CONFD_GET_UINT32(vp);
+        /* find this process */
+        proc = get_child(&name);
+        if (NULL == proc) {
+            opal_output(0, "%s CONFD REQUEST FOR NUM THREADS - PROC %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        ORTE_NAME_PRINT(&name));
+            goto notfound;
+        }
+        CONFD_SET_INT16(&val, proc->stats.num_threads);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_percent_cpu:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR PERCENT CPU ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_job, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR PERCENT CPU - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        name.jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));;
+        vp = qc_find_key(kp, orcm_replica, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR PERCENT CPU - NO REPLICA PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        name.vpid = CONFD_GET_UINT32(vp);
+        /* find this process */
+        proc = get_child(&name);
+        if (NULL == proc) {
+            opal_output(0, "%s CONFD REQUEST FOR PERCENT CPU - PROC %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        ORTE_NAME_PRINT(&name));
+            goto notfound;
+        }
+        d64.value = (int)(proc->stats.percent_cpu * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_vsize:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR VSIZE ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_job, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR VSIZE - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        name.jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));;
+        vp = qc_find_key(kp, orcm_replica, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR VSIZE - NO REPLICA PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        name.vpid = CONFD_GET_UINT32(vp);
+        /* find this process */
+        proc = get_child(&name);
+        if (NULL == proc) {
+            opal_output(0, "%s CONFD REQUEST FOR VSIZE - PROC %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        ORTE_NAME_PRINT(&name));
+            goto notfound;
+        }
+        d64.value = (int)(proc->stats.vsize * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_rss:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR RSS ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_job, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR RSS - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        name.jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));;
+        vp = qc_find_key(kp, orcm_replica, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR RSS - NO REPLICA PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        name.vpid = CONFD_GET_UINT32(vp);
+        /* find this process */
+        proc = get_child(&name);
+        if (NULL == proc) {
+            opal_output(0, "%s CONFD REQUEST FOR RSS - PROC %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        ORTE_NAME_PRINT(&name));
+            goto notfound;
+        }
+        d64.value = (int)(proc->stats.rss * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_peak_vsize:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR PEAK VSIZE ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_job, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR PEAK VSIZE - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        name.jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));;
+        vp = qc_find_key(kp, orcm_replica, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR PEAK VSIZE - NO REPLICA PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        name.vpid = CONFD_GET_UINT32(vp);
+        /* find this process */
+        proc = get_child(&name);
+        if (NULL == proc) {
+            opal_output(0, "%s CONFD REQUEST FOR PEAK VSIZE - PROC %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        ORTE_NAME_PRINT(&name));
+            goto notfound;
+        }
+        d64.value = (int)(proc->stats.peak_vsize * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_processor:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR PROCESSOR ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_job, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR PROCESSOR - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        name.jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));;
+        vp = qc_find_key(kp, orcm_replica, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR PROCESSOR - NO REPLICA PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        name.vpid = CONFD_GET_UINT32(vp);
+        /* find this process */
+        proc = get_child(&name);
+        if (NULL == proc) {
+            opal_output(0, "%s CONFD REQUEST FOR PROCESSOR - PROC %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        ORTE_NAME_PRINT(&name));
+            goto notfound;
+        }
+        CONFD_SET_INT16(&val, proc->stats.processor);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_process_state:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR PROCESS STATE ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_job, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR PROCESS STATE - NO JOB PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        name.jobid = ORTE_CONSTRUCT_LOCAL_JOBID(ORTE_PROC_MY_NAME->jobid, CONFD_GET_UINT32(vp));;
+        vp = qc_find_key(kp, orcm_replica, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR PROCESS STATE - NO REPLICA PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        name.vpid = CONFD_GET_UINT32(vp);
+        /* find this process */
+        proc = get_child(&name);
+        if (NULL == proc) {
+            opal_output(0, "%s CONFD REQUEST FOR PROCESS STATE - PROC %s NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        ORTE_NAME_PRINT(&name));
+            goto notfound;
+        }
+        CONFD_SET_CBUF(&val, proc->stats.state, strlen(proc->stats.state));
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
     case orcm_node:
         vp = qc_find_key(kp, orcm_job, 0);
         if (NULL == vp) {
@@ -1531,182 +1526,6 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         goto release;
         break;
 
-        /****   INSTALLED APP DATA    ****/
-    case orcm_version:
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s REQUEST FOR INSTALLED APP VERSION ELEMENT",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        vp = qc_find_key(kp, orcm_installed_software, 0);
-        if (NULL != vp) {
-            jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
-        } else {
-            vp = qc_find_key(kp, orcm_running_software, 0);
-            if (NULL == vp) {
-                opal_output(0, "%s CONFD REQUEST FOR VERSION - NO JOB PROVIDED",
-                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                goto notfound;
-            }
-            jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-        }
-        if (NULL == jdat) {
-            /* job no longer exists */
-            opal_output(0, "%s CONFD REQUEST FOR APP VERSION - JOB %s NOT FOUND",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
-            goto notfound;
-        }
-        vp = qc_find_key(kp, orcm_installed_app, 0);
-        if (NULL == vp) {
-            vp = qc_find_key(kp, orcm_running_app, 0);
-            if (NULL == vp) {
-                opal_output(0, "%s CONFD REQUEST FOR APP VERSION - NO APP INDEX PROVIDED",
-                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                goto notfound;
-            }
-        }
-        app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
-        if (NULL == app) {
-            opal_output(0, "%s CONFD REQUEST FOR APP VERSION - APP %d NOT FOUND IN JOB %s",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                        CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
-            goto notfound;
-        }
-        if (NULL == app->version) {
-            CONFD_SET_CBUF(&val, "----", strlen("----"));
-        } else {
-            CONFD_SET_CBUF(&val, app->version, strlen(app->version));
-        }
-        confd_data_reply_value(tctx, &val);
-        goto release;
-
-    case orcm_replicas:
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s REQUEST FOR INSTALLED APP NUM REPLICAS ELEMENT",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        vp = qc_find_key(kp, orcm_installed_software, 0);
-        if (NULL != vp) {
-            jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
-        } else {
-            vp = qc_find_key(kp, orcm_running_software, 0);
-            if (NULL == vp) {
-                opal_output(0, "%s CONFD REQUEST FOR NUM REPLICAS - NO JOB PROVIDED",
-                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                goto notfound;
-            }
-            jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-        }
-        if (NULL == jdat) {
-            /* job no longer exists */
-            opal_output(0, "%s CONFD REQUEST FOR APP NUM REPLICAS - JOB %s NOT FOUND",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
-            goto notfound;
-        }
-        vp = qc_find_key(kp, orcm_installed_app, 0);
-        if (NULL == vp) {
-            vp = qc_find_key(kp, orcm_running_app, 0);
-            if (NULL == vp) {
-                opal_output(0, "%s CONFD REQUEST FOR NUM REPLICAS - NO APP INDEX PROVIDED",
-                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                goto notfound;
-            }
-        }
-        app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
-        if (NULL == app) {
-            opal_output(0, "%s CONFD REQUEST FOR APP NUM REPLICAS - APP %d NOT FOUND IN JOB %s",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                        CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
-            goto notfound;
-        }
-        i32 = app->num_procs;
-        CONFD_SET_INT32(&val, i32);
-        confd_data_reply_value(tctx, &val);
-        goto release;
- 
-    case orcm_uid:
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s REQUEST FOR INSTALLED APP UID ELEMENT",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        vp = qc_find_key(kp, orcm_installed_software, 0);
-        if (NULL != vp) {
-            jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
-        } else {
-            vp = qc_find_key(kp, orcm_running_software, 0);
-            if (NULL == vp) {
-                opal_output(0, "%s CONFD REQUEST FOR UID - NO JOB PROVIDED",
-                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                goto notfound;
-            }
-            jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-        }
-        if (NULL == jdat) {
-            /* job no longer exists */
-            opal_output(0, "%s CONFD REQUEST FOR APP UID - JOB %s NOT FOUND",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
-            goto notfound;
-        }
-        vp = qc_find_key(kp, orcm_installed_app, 0);
-        if (NULL == vp) {
-            vp = qc_find_key(kp, orcm_running_app, 0);
-            if (NULL == vp) {
-                opal_output(0, "%s CONFD REQUEST FOR APP UID - NO APP INDEX PROVIDED",
-                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                goto notfound;
-            }
-        }
-        app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
-        if (NULL == app) {
-            opal_output(0, "%s CONFD REQUEST FOR APP UID - APP %d NOT FOUND IN JOB %s",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                        CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
-            goto notfound;
-        }
-        i32 = app->uid;
-        CONFD_SET_INT32(&val, i32);
-        confd_data_reply_value(tctx, &val);
-        goto release;
- 
-    case orcm_gid:
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s REQUEST FOR INSTALLED APP GID ELEMENT",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        vp = qc_find_key(kp, orcm_installed_software, 0);
-        if (NULL != vp) {
-            jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, CONFD_GET_UINT32(vp));
-        } else {
-            vp = qc_find_key(kp, orcm_running_software, 0);
-            if (NULL == vp) {
-                opal_output(0, "%s CONFD REQUEST FOR GID - NO JOB PROVIDED",
-                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                goto notfound;
-            }
-            jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, CONFD_GET_UINT32(vp));
-        }
-        if (NULL == jdat) {
-            /* job no longer exists */
-            opal_output(0, "%s CONFD REQUEST FOR APP GID - JOB %s NOT FOUND",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_JOBID_PRINT(jobid));
-            goto notfound;
-        }
-        vp = qc_find_key(kp, orcm_installed_app, 0);
-        if (NULL == vp) {
-            vp = qc_find_key(kp, orcm_running_app, 0);
-            if (NULL == vp) {
-                opal_output(0, "%s CONFD REQUEST FOR APP GID - NO APP INDEX PROVIDED",
-                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-                goto notfound;
-            }
-        }
-        app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, CONFD_GET_UINT32(vp));
-        if (NULL == app) {
-            opal_output(0, "%s CONFD REQUEST FOR APP GID - APP %d NOT FOUND IN JOB %s",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                        CONFD_GET_UINT32(vp), ORTE_JOBID_PRINT(jdat->jobid));
-            goto notfound;
-        }
-        i32 = app->gid;
-        CONFD_SET_INT32(&val, i32);
-        confd_data_reply_value(tctx, &val);
-        goto release;
- 
         /****  NODE DATA  ****/
     case orcm_node_id:
         CONFD_SET_CBUF(&val, "NODEID", strlen("NODEID"));
@@ -1769,6 +1588,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         confd_data_reply_value(tctx, &val);
         goto release;
 
+#if 0
     case orcm_temperature:
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                              "%s REQUEST FOR NODE TEMP ELEMENT",
@@ -1787,6 +1607,7 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         CONFD_SET_INT8(&val, 1);
         confd_data_reply_value(tctx, &val);
         goto release;
+#endif
 
     case orcm_num_procs:
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
@@ -1805,6 +1626,237 @@ static int orcm_get_elem (struct confd_trans_ctx *tctx,
         }
         i32 = node->num_procs;
         CONFD_SET_INT32(&val, i32);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_total_memory:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR NODE TOTAL MEM ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_node, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR TOTAL MEM - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR TOTAL MEM - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
+            goto notfound;
+        }
+        d64.value = (int)(node->stats.total_mem * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_free_memory:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR NODE FREE MEM ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_node, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR FREE MEM - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR FREE MEM - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
+            goto notfound;
+        }
+        d64.value = (int)(node->stats.free_mem * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_load_avg:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR NODE LOAD AVG ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_node, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR LOAD AVG - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR LOAD AVG - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
+            goto notfound;
+        }
+        d64.value = (int)(node->stats.la * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_load_avg5:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR NODE LOAD AVG ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_node, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR LOAD AVG5 - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR LOAD AVG5 - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
+            goto notfound;
+        }
+        d64.value = (int)(node->stats.la5 * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_load_avg15:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR NODE LOAD AVG15 ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_node, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR LOAD AVG15 - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR LOAD AVG15 - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
+            goto notfound;
+        }
+        d64.value = (int)(node->stats.la15 * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_buffers:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR NODE BUFFERS ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_node, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR BUFFERS - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR BUFFERS - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
+            goto notfound;
+        }
+        d64.value = (int)(node->stats.buffers * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_cached:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR NODE CACHED ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_node, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR CACHED - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR CACHED - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
+            goto notfound;
+        }
+        d64.value = (int)(node->stats.cached * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_swap_cached:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR NODE SWAPCACHED ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_node, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR SWAPCACHED - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR SWAPCACHED - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
+            goto notfound;
+        }
+        d64.value = (int)(node->stats.swap_cached * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_swap_total:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR NODE SWAPTOTAL ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_node, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR SWAPTOTAL - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR SWAPTOTAL - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
+            goto notfound;
+        }
+        d64.value = (int)(node->stats.swap_total * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_swap_free:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR NODE SWAPFREE ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_node, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR SWAPFREE - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR SWAPFREEA - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
+            goto notfound;
+        }
+        d64.value = (int)(node->stats.swap_free * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
+        confd_data_reply_value(tctx, &val);
+        goto release;
+
+    case orcm_mapped:
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "%s REQUEST FOR NODE MAPPED ELEMENT",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        vp = qc_find_key(kp, orcm_node, 0);
+        if (NULL == vp) {
+            opal_output(0, "%s CONFD REQUEST FOR MAPPED - NO NODE INDEX PROVIDED",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            goto notfound;
+        }
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, CONFD_GET_UINT32(vp)))) {
+            opal_output(0, "%s CONFD REQUEST FOR MAPPED - NODE %u NOT FOUND",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), CONFD_GET_UINT32(vp));
+            goto notfound;
+        }
+        d64.value = (int)(node->stats.mapped * 100.0);
+        d64.fraction_digits = 2;
+        CONFD_SET_DECIMAL64(&val, d64);
         confd_data_reply_value(tctx, &val);
         goto release;
 
@@ -1881,60 +1933,6 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
         goto notfound;
         break;
 
-    case orcm_installed_app:
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s REQUEST FOR NEXT INSTALLED APP",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        ky = qc_find_key(kp, orcm_installed_software, 0);
-        if (NULL == ky) {
-            goto notfound;
-        }
-        ui32 = CONFD_GET_UINT32(ky);
-        jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, ui32);
-        if (NULL == jdat) {
-            goto notfound;
-        }
-        if (next == -1) {
-            next = 0;
-        }
-        /* look for next non-NULL app context */
-        for (i=next; i < jdat->apps->size; i++) {
-            if (NULL != opal_pointer_array_get_item(jdat->apps, i)) {
-                CONFD_SET_UINT32(&key, i);
-                confd_data_reply_next_key(tctx, &key, 1, i + 1);
-                goto depart;
-            }
-        }
-        goto notfound;
-        break;
-
-    case orcm_running_app:
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s REQUEST FOR NEXT RUNNING CONFIG APP",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        ky = qc_find_key(kp, orcm_running_software, 0);
-        if (NULL == ky) {
-            goto notfound;
-        }
-        ui32 = CONFD_GET_UINT32(ky);
-        jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, ui32);
-        if (NULL == jdat) {
-            goto notfound;
-        }
-        if (next == -1) {
-            next = 0;
-        }
-        /* look for next non-NULL app context */
-        for (i=next; i < jdat->apps->size; i++) {
-            if (NULL != opal_pointer_array_get_item(jdat->apps, i)) {
-                CONFD_SET_UINT32(&key, i);
-                confd_data_reply_next_key(tctx, &key, 1, i + 1);
-                goto depart;
-            }
-        }
-        goto notfound;
-        break;
-
     case orcm_replica:
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                              "%s REQUEST FOR NEXT REPLICA",
@@ -1971,7 +1969,11 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
         /* look for next non-NULL node */
         if (next == -1) {
-            next = 0;
+            /* ignore the node for orcm-sched and orcm master
+             * as the actual local daemon will pick it up for us
+             * or else we'll see that node displayed twice
+             */
+            next = 2;
         }
         for (i=next; i < orte_node_pool->size; i++) {
             if (NULL != opal_pointer_array_get_item(orte_node_pool, i)) {
@@ -1983,41 +1985,6 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
         goto notfound;
         break;
 
-    case orcm_installed_software:
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s REQUEST FOR NEXT INSTALLED APP",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        if (next == -1) {
-            next = 0;
-        }
-        /* look for next non-NULL job site */
-        for (i=next; i < installed_apps.size; i++) {
-            if (NULL != opal_pointer_array_get_item(&installed_apps, i)) {
-                CONFD_SET_UINT32(&key, i);
-                confd_data_reply_next_key(tctx, &key, 1, i + 1);
-                goto depart;
-            }
-        }
-        goto notfound;
-        break;
-
-    case orcm_running_software:
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "%s REQUEST FOR NEXT RUNNING CONFIG JOB",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        if (next == -1) {
-            next = 1;  /* job 0 is the DVM, which isn't configurable */
-        }
-        /* look for next non-NULL job site */
-        for (i=next; i < orte_job_data->size; i++) {
-            if (NULL != opal_pointer_array_get_item(orte_job_data, i)) {
-                CONFD_SET_UINT32(&key, i);
-                confd_data_reply_next_key(tctx, &key, 1, i + 1);
-                goto depart;
-            }
-        }
-        goto notfound;
-        break;
 
     default:
         opal_output(0, "OPER: UNRECOGNIZED OPTION");
@@ -2034,96 +2001,6 @@ static int orcm_get_next (struct confd_trans_ctx *tctx,
     return CONFD_OK;
 }
 
-static orte_job_t *get_app(char *name, bool create)
-{
-    int i;
-    orte_job_t *jdat;
-
-    for (i=0; i < installed_apps.size; i++) {
-        if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(&installed_apps, i))) {
-            continue;
-        }
-        if (0 == strcmp(name, jdat->name)) {
-            return jdat;
-        }
-    }
-
-    /* get here if not found - create if requested */
-    if (!create) {
-        return NULL;
-    }
-
-    jdat = OBJ_NEW(orte_job_t);
-    jdat->name = strdup(name);
-    opal_pointer_array_add(&installed_apps, jdat);
-    return jdat;
-}
-
-static orte_app_context_t *get_exec(orte_job_t *jdat,
-                                    char *name, bool create)
-{
-    int i;
-    orte_app_context_t *app;
-
-    for (i=0; i < jdat->apps->size; i++) {
-        if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdat->apps, i))) {
-            continue;
-        }
-        if (0 == strcmp(name, app->name)) {
-            return app;
-        }
-    }
-
-    /* get here if not found - create if requested */
-    if (!create) {
-        return NULL;
-    }
-
-    app = OBJ_NEW(orte_app_context_t);
-    app->name = strdup(name);
-    app->idx =jdat->num_apps;
-    jdat->num_apps++;
-    opal_pointer_array_set_item(jdat->apps, app->idx, app);
-    return app;
-}
-
-static void copy_defaults(orte_job_t *target, orte_job_t *src)
-{
-    int i;
-    orte_app_context_t *app, *aptr;
-
-    target->recovery_defined = src->recovery_defined;
-    target->enable_recovery = src->enable_recovery;
-
-    if (NULL == target->name && NULL != src->name) {
-        target->name = strdup(src->name);
-    }
-
-    for (i=0; i < src->apps->size; i++) {
-        if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(src->apps, i))) {
-            continue;
-        }
-        /* make our own copy as confd may send us additional
-         * values modifying the install for this one instance
-         */
-        if (ORTE_SUCCESS != opal_dss.copy((void**)&aptr, app, ORTE_APP_CONTEXT)) {
-            opal_output(0, "%s UNABLE TO CREATE COPY OF APP %s",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                        (NULL != app->app) ? app->app : "NULL");
-        }
-        opal_pointer_array_set_item(target->apps, i, aptr);
-        if (aptr->recovery_defined) {
-            target->recovery_defined = true;
-            if (0 < aptr->max_restarts ||
-                -1 == aptr->max_restarts) {
-                target->enable_recovery = true;
-            }
-        }
-    }
-    target->num_apps = src->num_apps;
-    target->controls = src->controls;
-    target->stdin_target = src->stdin_target;
-}
 
 static boolean orcm_clear(int maapisock,
                           struct confd_user_info *uinfo,
@@ -2136,7 +2013,7 @@ static boolean orcm_clear(int maapisock,
     orte_proc_t *proc=NULL;
     boolean ret = TRUE;
     bool restart;
-    orcm_job_caddy_t *caddy;
+    orcm_cfgi_caddy_t *caddy;
 
     if (1 < opal_output_get_verbosity(orcm_cfgi_base.output)) {
         opal_output(0, "%s CMDPOINT CALLED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
@@ -2362,10 +2239,10 @@ static boolean orcm_clear(int maapisock,
         /* issue the restart command */
         OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                              "RESTARTING JOB %s", jdata->name));
-        caddy = OBJ_NEW(orcm_job_caddy_t);
-        caddy->cmd = ORCM_CONFD_SPAWN;
+        caddy = OBJ_NEW(orcm_cfgi_caddy_t);
+        caddy->cmd = ORCM_CFGI_SPAWN;
         caddy->jdata = jdata;
-        opal_fd_write(launch_pipe[1], sizeof(orcm_job_caddy_t*), &caddy);
+        opal_fd_write(orcm_cfgi_base.launch_pipe[1], sizeof(orcm_cfgi_caddy_t*), &caddy);
     }
 
  cleanup:
@@ -2784,3 +2661,613 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
     opal_argv_free(options);
     return ret;
 }
+
+static boolean show_installed_sw(int maapisock,
+                                 struct confd_user_info *uinfo,
+                                 int argc, char **argv, long which)
+{
+    int i;
+    orcm_cfgi_app_t *app;
+    char *output, *result=NULL, *tmp=NULL;
+
+    /* take control */
+    ORTE_ACQUIRE_THREAD(&orcm_cfgi_base.ctl);
+
+    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                         "%s CMDPOINT SHOW_INSTALLED_APPS CALLED",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+
+    /* create a string that contains ALL of the output, and then send it
+     * back to the socket - must be \n terminated!
+     */
+    for (i=0; i < orcm_cfgi_base.installed_apps.size; i++) {
+        if (NULL == (app = (orcm_cfgi_app_t*)opal_pointer_array_get_item(&orcm_cfgi_base.installed_apps, i))) {
+            continue;
+        }
+        orcm_cfgi_base_dump(&output, NULL, app, ORCM_CFGI_APP);
+        if (NULL == result) {
+            asprintf(&result, "%s\n", output);
+        } else {
+            asprintf(&tmp, "%s\n%s\n", result, output);
+            free(result);
+            result = tmp;
+            tmp = NULL;
+        }
+        free(output);
+    }
+
+    if (NULL == result) {
+        result = strdup("\n");
+    }
+    maapi_cli_write(maapisock, uinfo->usid, result, strlen(result));
+    free(result);
+    if (NULL != tmp) {
+        free(tmp);
+    }
+
+    /* release control */
+    ORTE_RELEASE_THREAD(&orcm_cfgi_base.ctl);
+
+    return TRUE;
+}
+
+static boolean show_configured_sw(int maapisock,
+                                  struct confd_user_info *uinfo,
+                                  int argc, char **argv, long which)
+{
+    int i;
+    orcm_cfgi_run_t *run;
+    char *output, *result=NULL, *tmp=NULL;
+
+    /* take control */
+    ORTE_ACQUIRE_THREAD(&orcm_cfgi_base.ctl);
+
+    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                         "%s CMDPOINT SHOW_CONFIGURED_APPS CALLED",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+
+    /* create a string that contains ALL of the output, and then send it
+     * back to the socket - must be \n terminated!
+     */
+    for (i=0; i < orcm_cfgi_base.confgd_apps.size; i++) {
+        if (NULL == (run = (orcm_cfgi_run_t*)opal_pointer_array_get_item(&orcm_cfgi_base.confgd_apps, i))) {
+            continue;
+        }
+        orcm_cfgi_base_dump(&output, NULL, run, ORCM_CFGI_RUN);
+        if (NULL == result) {
+            asprintf(&result, "%s\n", output);
+        } else {
+            asprintf(&tmp, "%s\n%s\n", result, output);
+            free(result);
+            result = tmp;
+            tmp = NULL;
+        }
+        free(output);
+    }
+
+    if (NULL == result) {
+        result = strdup("\n");
+    }
+    maapi_cli_write(maapisock, uinfo->usid, result, strlen(result));
+    free(result);
+    if (NULL != tmp) {
+        free(tmp);
+    }
+
+    /* release control */
+    ORTE_RELEASE_THREAD(&orcm_cfgi_base.ctl);
+
+    return TRUE;
+}
+
+static orcm_cfgi_app_t* find_aptr(char *appname)
+{
+    orcm_cfgi_app_t *app, *aptr;
+    int i;
+
+    app = NULL;
+    for (i=0; i < orcm_cfgi_base.installed_apps.size; i++) {
+        if (NULL == (aptr = (orcm_cfgi_app_t*)opal_pointer_array_get_item(&orcm_cfgi_base.installed_apps, i))) {
+            continue;
+        }
+        if (NULL == aptr->application) {
+            continue;
+        }
+        if (0 == strcmp(aptr->application, appname)) {
+            app = aptr;
+            break;
+        }
+    }
+
+    return app;
+}
+
+static orcm_cfgi_exec_t* find_eptr(orcm_cfgi_app_t *app, char *appname)
+{
+    orcm_cfgi_exec_t *exec, *eptr;
+    int i;
+
+    exec = NULL;
+    for (i=0; i < app->executables.size; i++) {
+        if (NULL == (eptr = (orcm_cfgi_exec_t*)opal_pointer_array_get_item(&app->executables, i))) {
+            continue;
+        }
+        if (NULL == eptr->appname) {
+            continue;
+        }
+        if (0 == strcmp(eptr->appname, appname)) {
+            exec = eptr;
+            break;
+        }
+    }
+
+    return exec;
+}
+
+static boolean run_config_completion(struct confd_user_info *uinfo,
+                                     int                     cli_style,
+                                     char                   *token,
+                                     int                     comp_char,
+                                     confd_hkeypath_t       *kp,
+                                     char                   *cmdpath,
+                                     char                   *param_id)
+{
+    struct confd_completion_value *cmplt=NULL, value;
+    int i, n, icount;
+    boolean ret=TRUE;
+    orcm_cfgi_app_t *app;
+    orcm_cfgi_exec_t *exec;
+    orcm_cfgi_version_t *vers;
+    orcm_cfgi_run_t *run;
+    confd_value_t *vp;
+    char *application, *instance, *executable, *version;
+
+    /* take control */
+    ORTE_ACQUIRE_THREAD(&orcm_cfgi_base.ctl);
+
+    switch(qc_get_xmltag(kp,1)) {
+    case orcm_app:
+        /* count the number of installed apps */
+        n=0;
+        for (i=0; i < orcm_cfgi_base.installed_apps.size; i++) {
+            if (NULL == (app = (orcm_cfgi_app_t*)opal_pointer_array_get_item(&orcm_cfgi_base.installed_apps, i))) {
+                continue;
+            }
+            n++;
+        }
+
+        if (0 == n) {
+            /* no installed apps */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "No installed apps";
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED - NO INSTALLED APPS", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }
+
+        /* allocate the completion array - this is the largest the array of completions
+         * can be. We may not fill it all, so we track the actual number of entries
+         * and pass that value back to confd
+         */
+        cmplt = (struct confd_completion_value *)calloc(n, sizeof(struct confd_completion_value));
+
+        /* were we given a partial? */
+        vp = qc_find_key(kp, orcm_app, 0);
+        if (NULL == vp) {
+            /* nope - send back all the apps */
+            for (i=0, n=0; i < orcm_cfgi_base.installed_apps.size; i++) {
+                if (NULL == (app = (orcm_cfgi_app_t*)opal_pointer_array_get_item(&orcm_cfgi_base.installed_apps, i))) {
+                    continue;
+                }
+                if (NULL == app->application) {
+                    continue;
+                }
+                cmplt[n].type = CONFD_COMPLETION;
+                cmplt[n].value = strdup(app->application);
+                cmplt[n].extra = NULL;
+                n++;
+            }
+        } else {
+            /* yes - just insert those that start with token */
+            application = CONFD_GET_CBUFPTR(vp);
+            for (i=0, n=0; i < orcm_cfgi_base.installed_apps.size; i++) {
+                if (NULL == (app = (orcm_cfgi_app_t*)opal_pointer_array_get_item(&orcm_cfgi_base.installed_apps, i))) {
+                    continue;
+                }
+                if (NULL == app->application) {
+                    continue;
+                }
+                if (0 == strncmp(app->application, application, strlen(application))) {
+                    cmplt[n].type = CONFD_COMPLETION;
+                    cmplt[n].value = strdup(app->application);
+                    cmplt[n].extra = NULL;
+                    n++;
+                }
+            }
+        }
+        if (confd_action_reply_completion(uinfo, cmplt, n) < 0) {
+            opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            ret = FALSE;
+        }
+        break;
+
+    case orcm_app_instance:
+        /* get the app name */
+        vp = qc_find_key(kp, orcm_app, 0);
+        if (NULL == vp) {
+            /* can't complete */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "No app name - cannot complete";
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED - NO APPLICATION NAME", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }            
+        application = CONFD_GET_CBUFPTR(vp);
+        /* search the configured apps and count the matches */
+        n=0;
+        for (i=0; i < orcm_cfgi_base.confgd_apps.size; i++) {
+            if (NULL == (run = (orcm_cfgi_run_t*)opal_pointer_array_get_item(&orcm_cfgi_base.confgd_apps, i))) {
+                continue;
+            }
+            if (0 == strcmp(run->application, application)) {
+                n++;
+            }
+        }
+        if (0 == n) {
+            /* no matches */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "No existing instances of this app";
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED - NO MATCHING INSTANCES", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }
+
+        /* allocate the completion array - this is the largest the array of completions
+         * can be. We may not fill it all, so we track the actual number of entries
+         * and pass that value back to confd
+         */
+        cmplt = (struct confd_completion_value *)calloc(n, sizeof(struct confd_completion_value));
+
+
+        /* were we given a partial? */
+        vp = qc_find_key(kp, orcm_app_instance, 0);
+        if (NULL == vp) {
+            /* nope - send back all the matches */
+            for (i=0, n=0; i < orcm_cfgi_base.confgd_apps.size; i++) {
+                if (NULL == (run = (orcm_cfgi_run_t*)opal_pointer_array_get_item(&orcm_cfgi_base.confgd_apps, i))) {
+                    continue;
+                }
+                if (0 != strcmp(run->application, application)) {
+                    continue;
+                }
+                cmplt[n].type = CONFD_COMPLETION;
+                cmplt[n].value = strdup(run->instance);
+                cmplt[n].extra = NULL;
+                n++;
+            }
+        } else {
+            /* yes - just insert those that start with token */
+            instance = CONFD_GET_CBUFPTR(vp);
+            for (i=0, n=0; i < orcm_cfgi_base.confgd_apps.size; i++) {
+                if (NULL == (run = (orcm_cfgi_run_t*)opal_pointer_array_get_item(&orcm_cfgi_base.confgd_apps, i))) {
+                    continue;
+                }
+                if (0 != strcmp(run->application, application)) {
+                    continue;
+                }
+                if (0 == strncmp(run->instance, instance, strlen(instance))) {
+                    cmplt[n].type = CONFD_COMPLETION;
+                    cmplt[n].value = strdup(run->instance);
+                    cmplt[n].extra = NULL;
+                    n++;
+                }
+            }
+        }
+        if (confd_action_reply_completion(uinfo, cmplt, n) < 0) {
+            opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            ret = FALSE;
+        }
+        break;
+
+    case orcm_exec:
+        vp = qc_find_key(kp, orcm_app, 0);
+        if (NULL == vp) {
+            /* can't complete */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "No app name - cannot complete";
+            opal_output(0, "NO APP NAME");
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED - NO APPLICATION NAME", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }
+        application = CONFD_GET_CBUFPTR(vp);
+
+        /* find this application */
+        if (NULL == (app = find_aptr(application))) {
+            /* unknown app */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "Unknown app";
+            opal_output(0, "UNKNOWN APP %s", application);
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }
+
+        /* count the number of installed executables */
+        n=0;
+        for (i=0; i < app->executables.size; i++) {
+            if (NULL == (exec = (orcm_cfgi_exec_t*)opal_pointer_array_get_item(&app->executables, i))) {
+                continue;
+            }
+            n++;
+        }
+
+        if (0 == n) {
+            /* no installed executables */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "No installed executables";
+            opal_output(0, "NO INSTALLED EXECUTABLES");
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED - NO INSTALLED EXECUTABLES", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }
+
+        /* allocate the completion array - this is the largest the array of completions
+         * can be. We may not fill it all, so we track the actual number of entries
+         * and pass that value back to confd
+         */
+        cmplt = (struct confd_completion_value *)calloc(n, sizeof(struct confd_completion_value));
+
+        /* were we given a partial? */
+        vp = qc_find_key(kp, orcm_exec, 0);
+        if (NULL == vp) {
+            /* nope - send back all the execs */
+            for (i=0, n=0; i < app->executables.size; i++) {
+                if (NULL == (exec = (orcm_cfgi_exec_t*)opal_pointer_array_get_item(&app->executables, i))) {
+                    continue;
+                }
+                if (NULL == exec->appname) {
+                    continue;
+                }
+                cmplt[n].type = CONFD_COMPLETION;
+                cmplt[n].value = strdup(exec->appname);
+                cmplt[n].extra = NULL;
+                n++;
+            }
+        } else {
+            /* yes - just insert those that start with token */
+            executable = CONFD_GET_CBUFPTR(vp);
+            for (i=0, n=0; i < app->executables.size; i++) {
+                if (NULL == (exec = (orcm_cfgi_exec_t*)opal_pointer_array_get_item(&app->executables, i))) {
+                    continue;
+                }
+                if (NULL == exec->appname) {
+                    continue;
+                }
+                if (0 == strncmp(exec->appname, executable, strlen(executable))) {
+                    cmplt[n].type = CONFD_COMPLETION;
+                    cmplt[n].value = strdup(exec->appname);
+                    cmplt[n].extra = NULL;
+                    n++;
+                }
+            }
+        }
+        if (confd_action_reply_completion(uinfo, cmplt, n) < 0) {
+            opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            ret = FALSE;
+        }
+        break;
+
+    case orcm_version:
+        vp = qc_find_key(kp, orcm_app, 0);
+        if (NULL == vp) {
+            /* can't complete */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "No app name - cannot complete";
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED - NO APPLICATION NAME", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }
+        application = CONFD_GET_CBUFPTR(vp);
+        if (NULL == (app = find_aptr(application))) {
+            /* unknown app */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "Unknown app";
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }
+        vp = qc_find_key(kp, orcm_exec, 0);
+        if (NULL == vp) {
+            /* can't complete */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "No executable - cannot complete";
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED - NO EXECUTABLE", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }
+        executable = CONFD_GET_CBUFPTR(vp);
+        if (NULL == (exec = find_eptr(app, executable))) {
+            /* unknown app */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "Unknown executable";
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }
+        /* count the number of installed versions */
+        n=0;
+        for (i=0; i < exec->versions.size; i++) {
+            if (NULL == (vers = (orcm_cfgi_version_t*)opal_pointer_array_get_item(&exec->versions, i))) {
+                continue;
+            }
+            n++;
+        }
+
+        if (0 == n) {
+            /* no installed versions */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "No installed versions";
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED - NO INSTALLED VERSIONS", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }
+
+        /* allocate the completion array - this is the largest the array of completions
+         * can be. We may not fill it all, so we track the actual number of entries
+         * and pass that value back to confd
+         */
+        cmplt = (struct confd_completion_value *)calloc(n, sizeof(struct confd_completion_value));
+
+        /* were we given a partial? */
+        vp = qc_find_key(kp, orcm_version, 0);
+        if (NULL == vp) {
+            /* nope - send back all the versions */
+            for (i=0, n=0; i < exec->versions.size; i++) {
+                if (NULL == (vers = (orcm_cfgi_version_t*)opal_pointer_array_get_item(&exec->versions, i))) {
+                    continue;
+                }
+                if (NULL == vers->version) {
+                    continue;
+                }
+                cmplt[n].type = CONFD_COMPLETION;
+                cmplt[n].value = strdup(vers->version);
+                cmplt[n].extra = NULL;
+                n++;
+            }
+        } else {
+            /* yes - just insert those that start with token */
+            version = CONFD_GET_CBUFPTR(vp);
+            for (i=0, n=0; i < exec->versions.size; i++) {
+                if (NULL == (vers = (orcm_cfgi_version_t*)opal_pointer_array_get_item(&exec->versions, i))) {
+                    continue;
+                }
+                if (NULL == vers->version) {
+                    continue;
+                }
+                if (0 == strncmp(vers->version, version, strlen(version))) {
+                    cmplt[n].type = CONFD_COMPLETION;
+                    cmplt[n].value = strdup(vers->version);
+                    cmplt[n].extra = NULL;
+                    n++;
+                }
+            }
+        }
+        if (confd_action_reply_completion(uinfo, cmplt, n) < 0) {
+            opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            ret = FALSE;
+        }
+        break;
+
+    case orcm_count:
+        vp = qc_find_key(kp, orcm_app, 0);
+        if (NULL == vp) {
+            /* can't complete */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "No app name - cannot complete";
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED - NO APPLICATION NAME", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }
+        application = CONFD_GET_CBUFPTR(vp);
+        if (NULL == (app = find_aptr(application))) {
+            /* unknown app */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "Unknown app";
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }
+        vp = qc_find_key(kp, orcm_exec, 0);
+        if (NULL == vp) {
+            /* can't complete */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "No executable - cannot complete";
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED - NO EXECUTABLE", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }
+        executable = CONFD_GET_CBUFPTR(vp);
+        if (NULL == (exec = find_eptr(app, executable))) {
+            /* unknown app */
+            value.type = CONFD_COMPLETION_INFO;
+            value.value = "Unknown executable";
+            if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+                opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+                ret = FALSE;
+            }
+            goto depart;
+        }
+        /* allocate the completion array */
+        cmplt = (struct confd_completion_value *)calloc(2, sizeof(struct confd_completion_value));
+        /* if the range is unlimited, respond accordingly */
+        if (exec->process_limit < 0) {
+            cmplt[0].type = CONFD_COMPLETION;
+            cmplt[0].value = strdup("1...");
+            cmplt[0].extra = NULL;
+            cmplt[1].type = CONFD_COMPLETION;
+            cmplt[1].value = strdup("N");
+            cmplt[1].extra = NULL;
+        } else {
+            /* no - show the allowed range */
+            cmplt[0].type = CONFD_COMPLETION;
+            cmplt[0].value = strdup("1...");
+            cmplt[0].extra = NULL;
+            cmplt[1].type = CONFD_COMPLETION;
+            asprintf(&cmplt[1].value, "%d", exec->process_limit);
+            cmplt[1].extra = NULL;
+        }
+
+        if (confd_action_reply_completion(uinfo, cmplt, 2) < 0) {
+            opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            ret = FALSE;
+        }
+        break;
+
+    default:
+        /* unrecognized */
+        opal_output(0, "%s COMPLETION ERROR: UNRECOGNIZED PARAMS %s",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), cmdpath);
+        value.type = CONFD_COMPLETION_INFO;
+        value.value = "UNRECOGNIZED PARAM";
+        if (confd_action_reply_completion(uinfo, &value, 1) < 0) {
+            opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
+            ret = FALSE;
+        }
+    }
+
+ depart:
+    /* release control */
+    ORTE_RELEASE_THREAD(&orcm_cfgi_base.ctl);
+
+    return ret;
+}
+

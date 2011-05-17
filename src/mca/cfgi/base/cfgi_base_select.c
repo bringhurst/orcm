@@ -25,13 +25,14 @@ static bool selected = false;
  */
 int orcm_cfgi_base_select(void)
 {
-    opal_list_item_t *item;
+    opal_list_item_t *item, *itm2;
     mca_base_component_list_item_t *cli = NULL;
     mca_base_component_t *component = NULL;
     mca_base_module_t *module = NULL;
     orcm_cfgi_base_module_t *nmodule;
-    orcm_cfgi_base_selected_module_t *newmodule;
+    orcm_cfgi_base_selected_module_t *newmodule, *mod;
     int rc, priority;
+    bool inserted;
 
     if (selected) {
         /* ensure we don't do this twice */
@@ -74,16 +75,32 @@ int orcm_cfgi_base_select(void)
         /* If we got a module, initialize it */
         nmodule = (orcm_cfgi_base_module_t*) module;
         if (NULL != nmodule->init) {
-            if (ORCM_SUCCESS == nmodule->init()) {
-                /* add to the list of selected modules */
-                newmodule = OBJ_NEW(orcm_cfgi_base_selected_module_t);
-                newmodule->module = nmodule;
-                opal_list_append(&orcm_cfgi_selected_modules, &newmodule->super);
-            } else {
-                /* If the module doesn't want to be used, skip it */
+            /* If the module doesn't want to be used, skip it */
+            if (ORCM_SUCCESS != nmodule->init()) {
                 if (NULL != nmodule->finalize) {
                     nmodule->finalize();
+                    continue;
                 }
+            }
+            /* add to the list of selected modules */
+            newmodule = OBJ_NEW(orcm_cfgi_base_selected_module_t);
+            newmodule->module = nmodule;
+            newmodule->pri = priority;
+            /* maintain priority order */
+            inserted = false;
+            for (itm2 = opal_list_get_first(&orcm_cfgi_selected_modules);
+                 itm2 != opal_list_get_end(&orcm_cfgi_selected_modules);
+                 itm2 = opal_list_get_next(itm2)) {
+                mod = (orcm_cfgi_base_selected_module_t*)itm2;
+                if (priority > mod->pri) {
+                    opal_list_insert_pos(&orcm_cfgi_selected_modules, itm2, &newmodule->super);
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) {
+                /* must be lowest priority - add to end */
+                opal_list_append(&orcm_cfgi_selected_modules, &newmodule->super);
             }
         }
     }

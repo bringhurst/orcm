@@ -8,10 +8,17 @@
 # $HEADER$
 #
 
+dist_pkgdata_DATA = help-cfgi-file.txt
+
+AM_LFLAGS = -Porcm_cfgi_file_
+LEX_OUTPUT_ROOT = lex.orcm_cfgi_file_
+
 sources = \
         cfgi_file.h \
+        cfgi_file_lex.h \
         cfgi_file.c \
-        cfgi_file_component.c
+        cfgi_file_component.c \
+        cfgi_file_lex.l
 
 # Make the output library in this directory, and name it either
 # mca_<project>_<type>_<name>.la (for DSO builds) or

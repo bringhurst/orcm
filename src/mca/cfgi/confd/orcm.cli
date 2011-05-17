@@ -2,12 +2,12 @@
   
   <operationalMode>
 
-    <cmd name="clear" mount="orcm">
+    <cmd name="clear">
       <help>Clear the restart counter for one or more processes</help>
       <info>Clear the restart counter for one or more processes</info>
       <callback>
         <capi>
-          <cmdpoint>orcm_clear</cmdpoint>
+          <cmdpoint>clear</cmdpoint>
         </capi>
       </callback>
       
@@ -72,6 +72,68 @@
 
     </cmd>
 
+    <cmd name="installed-apps" mount="show">
+      <help>Show data for installed applications</help>
+      <info>Show data for installed applications</info>
+      <callback>
+        <capi>
+          <cmdpoint>show_installed_apps</cmdpoint>
+        </capi>
+      </callback>
+    </cmd>
+
+    <cmd name="configured-apps" mount="show">
+      <help>Show data for configured applications</help>
+      <info>Show data for configured applications</info>
+      <callback>
+        <capi>
+          <cmdpoint>show_configured_apps</cmdpoint>
+        </capi>
+      </callback>
+    </cmd>
+
   </operationalMode>
+
+  <configureMode>
+
+    <modifications>
+      <simpleType namespace="http://www.cisco.com/ns/orcm" name="orcmAppName">
+         <callback>
+           <capi>
+             <completionpoint>orcm-run-config-completion</completionpoint>
+           </capi>
+         </callback>
+      </simpleType>
+      <simpleType namespace="http://www.cisco.com/ns/orcm" name="orcmAppInstance">
+         <callback>
+           <capi>
+             <completionpoint>orcm-run-config-completion</completionpoint>
+           </capi>
+         </callback>
+      </simpleType>
+      <simpleType namespace="http://www.cisco.com/ns/orcm" name="orcmExec">
+         <callback>
+           <capi>
+             <completionpoint>orcm-run-config-completion</completionpoint>
+           </capi>
+         </callback>
+      </simpleType>
+      <simpleType namespace="http://www.cisco.com/ns/orcm" name="orcmExecVersion">
+         <callback>
+           <capi>
+             <completionpoint>orcm-run-config-completion</completionpoint>
+           </capi>
+         </callback>
+      </simpleType>
+      <simpleType namespace="http://www.cisco.com/ns/orcm" name="orcmExecCount">
+         <callback>
+           <capi>
+             <completionpoint>orcm-run-config-completion</completionpoint>
+           </capi>
+         </callback>
+      </simpleType>
+    </modifications>
+
+  </configureMode>
 
 </clispec>

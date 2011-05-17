@@ -140,9 +140,11 @@ static void tool_messages(int status,
     uint16_t jfam;
     orcm_tool_cmd_t flag=ORCM_TOOL_ILLEGAL_CMD;
     opal_buffer_t *response;
+    orcm_cfgi_caddy_t *caddy;
 
     /* wait for any existing action to complete */
-    OPAL_ACQUIRE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
+    ORTE_ACQUIRE_THREAD(&orcm_cfgi_base.ctl);
+
     OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                          "%s cfgi:tool released to process cmd",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
@@ -195,10 +197,13 @@ static void tool_messages(int status,
         }
 
         /* launch the job */
-        if (ORCM_SUCCESS != (rc = orcm_cfgi_base_spawn_app(jdata, false))) {
-            ORTE_ERROR_LOG(rc);
-            OBJ_RELEASE(jdata);
-        }
+        caddy = OBJ_NEW(orcm_cfgi_caddy_t);
+        caddy->cmd = ORCM_CFGI_SPAWN;
+        /* don't retain the jdata - the base functions will either
+         * keep it or not
+         */
+        caddy->jdata = jdata;
+        opal_fd_write(orcm_cfgi_base.launch_pipe[1], sizeof(orcm_cfgi_caddy_t*), &caddy);
 
     } else if (ORCM_TOOL_STOP_CMD == flag) {
         /* unpack the job object */
@@ -211,6 +216,7 @@ static void tool_messages(int status,
         if (NULL == jdt->instance && NULL == jdt->name) {
             /* had to specify one of them */
             rc = ORTE_ERR_BAD_PARAM;
+            OBJ_RELEASE(jdt);
             goto cleanup;
         }
 
@@ -238,18 +244,18 @@ static void tool_messages(int status,
         if (NULL == jdata) {
             /* couldn't find the job */
             rc = ORTE_ERR_BAD_PARAM;
+            OBJ_RELEASE(jdt);
             goto cleanup;
         }
 
-        /* see if they want all procs killed */
-        if (0 == jdt->num_procs) {
-            jdata->state = ORTE_JOB_STATE_ABORT_ORDERED;
-        } else {
-            /* copy the names of the procs across */
-        }
-
         /* order the termination */
-        rc = orcm_cfgi_base_kill_app(jdata);
+        caddy = OBJ_NEW(orcm_cfgi_caddy_t);
+        caddy->cmd = ORCM_CFGI_KILL_JOB;
+        caddy->jdata = jdata;
+        opal_fd_write(orcm_cfgi_base.launch_pipe[1], sizeof(orcm_cfgi_caddy_t*), &caddy);
+
+        /* cleanup */
+        OBJ_RELEASE(jdt);
 
     } else {
         opal_output(0, "%s: UNKNOWN TOOL CMD FLAG %d", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), (int)flag);
@@ -259,7 +265,7 @@ static void tool_messages(int status,
     /* return the result of the cmd */
     opal_dss.pack(response, &rc, 1, OPAL_INT);
     /* release the thread */
-    OPAL_RELEASE_THREAD(&orcm_cfgi_base.lock, &orcm_cfgi_base.cond, &orcm_cfgi_base.active);
+    ORTE_RELEASE_THREAD(&orcm_cfgi_base.ctl);
     if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
                                                  sender, ORCM_PNP_TAG_TOOL,
                                                  NULL, 0, response, cbfunc, NULL))) {

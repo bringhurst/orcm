@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved. 
+ * Copyright (c) 2009-2011 Cisco Systems, Inc.  All rights reserved. 
  * $COPYRIGHT$
  * 
  * Additional copyrights may follow
@@ -13,6 +13,9 @@
 #include <signal.h>
 #ifdef HAVE_SYSLOG_H
 #include <syslog.h>
+#endif
+#ifdef HAVE_QSYSTEM_H
+#include <qsystem.h>
 #endif
 
 #include "opal/util/error.h"
@@ -77,7 +80,7 @@ int orcm_init(orcm_proc_type_t flags)
 {
     int ret;
     char *error;
-    int spin;
+    int i, spin;
 
     if (NULL != getenv("ORCM_MCA_spin")) {
         spin = 1;
@@ -111,6 +114,28 @@ int orcm_init(orcm_proc_type_t flags)
 
     /* setup the globals that require initialization */
     orcm_triplets = OBJ_NEW(orcm_triplets_array_t);
+
+#ifdef HAVE_QSYSTEM_H
+#ifdef Q_SYSTEM_INTFCS_TO_PROBE_FOR_IP_ADDRESS
+{
+    char *eth_ifs[] = Q_SYSTEM_INTFCS_TO_PROBE_FOR_IP_ADDRESS;
+    char **adds=NULL, *ifs, *envar;
+    int i, num_ifs;
+
+    num_ifs = sizeof(eth_ifs) / sizeof(eth_ifs[0]);
+    for (i=0; i < num_ifs; i++) {
+        opal_argv_append_nosize(&adds, eth_ifs[i]);
+    }
+    ifs = opal_argv_join(adds, ',');
+    opal_argv_free(adds);
+    /* push it into the environ so that the rmcast framework can get it */
+    asprintf(&envar, "OMPI_MCA_rmcast_base_if_include=%s", ifs);
+    putenv(envar);
+    /* cannot release envar as the environ doesn't keep its own copy */
+    free(ifs);
+}
+#endif
+#endif
 
     /* initialize us */
     if (ORTE_SUCCESS != (ret = orte_init(NULL, NULL, flags))) {

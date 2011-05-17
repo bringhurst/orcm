@@ -1,0 +1,17 @@
+application client-server
+   process server
+     version 1_0
+     process-limit 1
+
+   process client
+    version 1_0
+    version 2_0
+
+application talker-listener
+   process talker
+     version 1_0
+
+   process listener
+     version 1_0
+     process-limit 1
+

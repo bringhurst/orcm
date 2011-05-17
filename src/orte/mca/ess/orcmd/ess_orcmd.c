@@ -61,7 +61,7 @@
 
 #include "orte/mca/ess/ess.h"
 #include "orte/mca/ess/base/base.h"
-#include "orte/mca/ess/orcm/ess_orcm.h"
+#include "orte/mca/ess/orcmd/ess_orcmd.h"
 
 #include "runtime/runtime.h"
 
@@ -516,15 +516,8 @@ static int local_setup(void)
     daemons->instance = strdup(ORTE_JOBID_PRINT(ORTE_PROC_MY_NAME->jobid));
     /* create an app */
     app = OBJ_NEW(orte_app_context_t);
-    if (ORTE_PROC_IS_DAEMON) {
-        app->app = strdup("orcmd");
-        app->name = strdup("ORCM DAEMON");
-        opal_argv_append_nosize(&app->argv, "orcmd");
-    } else {
-        app->app = strdup("orcm");
-        app->name = strdup("ORCM FRONTEND");
-        opal_argv_append_nosize(&app->argv, "orcm");
-    }
+    app->app = strdup("orcmd");
+    opal_argv_append_nosize(&app->argv, "orcmd");
     /* add to the daemon job - always must be an app for a job */
     opal_pointer_array_add(daemons->apps, app);
     /* setup the daemon map so it knows how to map them */

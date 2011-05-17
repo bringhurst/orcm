@@ -21,7 +21,8 @@ int orcm_cfgi_file_component_register(void);
 
 typedef struct {
     orcm_cfgi_base_component_t super;
-    char *file;
+    char *dir;
+    int rate;
 } orcm_cfgi_file_component_t;
 
 ORCM_DECLSPEC extern orcm_cfgi_file_component_t mca_orcm_cfgi_file_component;

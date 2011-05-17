@@ -174,7 +174,6 @@ static int rte_init(void)
         mca_base_param_reg_string_name("orte", "ess_job_family", "Job family",
                                        true, false, NULL, &tmp);
         if (NULL != tmp) {
-            opal_output(0, "GOT JOB FAMILY %s", tmp);
             jfam = strtoul(tmp, &tailpiece, 10);
             if (UINT16_MAX < jfam || NULL != tailpiece) {
                 /* use a string hash to restructure this to fit */
@@ -594,7 +593,6 @@ static int local_setup(char **hosts)
     /* create an app */
     app = OBJ_NEW(orte_app_context_t);
     app->app = strdup("orcm-sched");
-    app->name = strdup("orcm-sched");
     app->num_procs = 1;
     /* scheduler always has infinite restarts */
     app->recovery_defined = true;
@@ -605,7 +603,6 @@ static int local_setup(char **hosts)
     /* add another app for the daemons themselves */
     daemon_app = OBJ_NEW(orte_app_context_t);
     daemon_app->app = strdup("orcmd");
-    daemon_app->name = strdup("orcmd");
     /* daemons always have infinite restarts */
     daemon_app->recovery_defined = true;
     daemon_app->max_restarts = -1;

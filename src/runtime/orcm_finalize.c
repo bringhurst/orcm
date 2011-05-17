@@ -23,6 +23,9 @@ int orcm_finalize(void)
         return ORCM_SUCCESS;
     }
 
+    /* cleanup the environ */
+    unsetenv("OMPI_MCA_rmcast_base_if_include");
+
     /* remove all signal handlers */
     orcm_remove_signal_handlers();
 

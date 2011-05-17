@@ -64,7 +64,7 @@ int orcm_cfgi_confd_component_query(mca_base_module_t **module, int *priority)
 {
     if (ORCM_PROC_IS_SCHEDULER) {
         *module = (mca_base_module_t*)&orcm_cfgi_confd_module;
-        *priority = 100;
+        *priority = 50;
         return ORCM_SUCCESS;
     }
 

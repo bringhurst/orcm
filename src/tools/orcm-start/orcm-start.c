@@ -829,8 +829,6 @@ static int create_app(int argc, char* argv[], orte_app_context_t **app_ptr,
         rc = ORTE_ERR_NOT_FOUND;
         goto cleanup;
     }
-    /* set the app name */
-    app->name = strdup(app->app);
 
     *app_ptr = app;
     app = NULL;
