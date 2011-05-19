@@ -78,6 +78,7 @@ static int watch;
 static void check_config(int fd, short args, void *cbdata);
 static int parse_file(char *filename,
                       opal_pointer_array_t *apps);
+static void check_installed(bool check_all);
 #ifdef HAVE_SYS_INOTIFY_H
 static void inotify_handler(int fd, short args, void *cbdata);
 #endif
@@ -108,7 +109,16 @@ static void activate(void)
     int rc;
     DIR *dirp;
 
+    /* take control */
+    ORTE_ACQUIRE_THREAD(&orcm_cfgi_base.ctl);
+
     if (enabled) {
+        /* we get reentered when daemons reappear so that
+         * any pending jobs can be started
+         */
+        check_installed(true);
+        /* release control */
+        ORTE_RELEASE_THREAD(&orcm_cfgi_base.ctl);
         return;
     }
     enabled = true;
@@ -140,6 +150,7 @@ static void activate(void)
     opal_event_set(opal_event_base, probe_ev, notifier,
                    OPAL_EV_READ|OPAL_EV_PERSIST, inotify_handler, NULL);
     timer_in_use = false;
+    ORTE_RELEASE_THREAD(&orcm_cfgi_base.ctl);
     /* process it the first time */
     check_config(0, 0, NULL);
     return;
@@ -155,6 +166,7 @@ static void activate(void)
         opal_event_evtimer_set(opal_event_base, probe_ev, check_config, NULL);
         timer_in_use = true;
         /* process it the first time */
+        ORTE_RELEASE_THREAD(&orcm_cfgi_base.ctl);
         check_config(0, 0, NULL);
         return;
     }
@@ -162,6 +174,7 @@ static void activate(void)
     opal_output(0, "%s CANNOT ACTIVATE INSTALL CONFIG MONITORING",
                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
     enabled = false;
+    ORTE_RELEASE_THREAD(&orcm_cfgi_base.ctl);
 }
 
 static int file_finalize(void)
@@ -185,7 +198,9 @@ static int file_finalize(void)
     return ORCM_SUCCESS;
 }
 
-static void link_launch(orcm_cfgi_app_t *app, orcm_cfgi_run_t *run)
+static void link_launch(orcm_cfgi_app_t *app,
+                        orcm_cfgi_run_t *run,
+                        bool linkall)
 {
     orcm_cfgi_caddy_t *caddy;
     int j, k;
@@ -235,7 +250,10 @@ static void link_launch(orcm_cfgi_app_t *app, orcm_cfgi_run_t *run)
         }
         /* have we already matched this one */
         if (NULL != bin->vers) {
-            /* ignore it */
+            if (linkall) {
+                /* attempt to launch all */
+                found = true;
+            }
             continue;
         }
         /* is there enough room left for this number of procs? */
@@ -292,6 +310,61 @@ static void link_launch(orcm_cfgi_app_t *app, orcm_cfgi_run_t *run)
         caddy->cmd = ORCM_CFGI_SPAWN;
         caddy->jdata = jdat;
         opal_fd_write(orcm_cfgi_base.launch_pipe[1], sizeof(orcm_cfgi_caddy_t*), &caddy);
+    }
+}
+
+static void check_installed(bool check_all)
+{
+    int i, n;
+    orcm_cfgi_app_t *app;
+    orcm_cfgi_run_t *run;
+
+    /* run a check of the installed apps against
+     * the configured apps so we can start anything that was awaiting
+     * installation
+     */
+    for (i=0; i < orcm_cfgi_base.installed_apps.size; i++) {
+        if (NULL == (app = (orcm_cfgi_app_t*)opal_pointer_array_get_item(&orcm_cfgi_base.installed_apps, i))) {
+            continue;
+        }
+        if (!check_all && !app->modified) {
+            OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                 "APP %s HAS NOT BEEN MODIFIED",
+                                 app->application));
+            continue;
+        }
+        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                             "CHECKING INSTALL-RUNNING CONFIG FOR APP %s", app->application));
+        /* reset the flag */
+        app->modified = false;
+        /* search the configuration array for instances of this app */
+        for (n=0; n < orcm_cfgi_base.confgd_apps.size; n++) {
+            if (NULL == (run = (orcm_cfgi_run_t*)opal_pointer_array_get_item(&orcm_cfgi_base.confgd_apps, n))) {
+                continue;
+            }
+            if (NULL == run->app) {
+                /* still waiting for app to be defined - is this it? */
+                if (0 == strcmp(run->application, app->application)) {
+                    /* yep - see if we can run it */
+                    if (0 <= app->max_instances && app->max_instances <= app->num_instances) {
+                        /* at our limit - can't run at this time */
+                        continue;
+                    }
+                    /* add this instance */
+                    run->app = app;
+                    run->app_idx = opal_pointer_array_add(&app->instances, run);
+                    app->num_instances++;
+                    link_launch(app, run, check_all);
+                }
+            } else if (0 == strcmp(run->application, app->application)) {
+                OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                     "%s EXISTING INSTANCE %s:%s CAN BE LAUNCHED",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     run->application, run->instance));
+                /* check to see what has changed, and launch it if reqd */
+                link_launch(app, run, check_all);
+            }
+        }
     }
 }
 
@@ -645,53 +718,10 @@ static void check_config(int fd, short args, void *cbdata)
     }
     OBJ_DESTRUCT(&found_apps);
 
-    /* finally, we need to run a check of the installed apps against
-     * the configured apps so we can start anything that was awaiting
-     * installation
+    /* check installed vs configd for anything needing starting,
+     * but only check modified apps
      */
-    for (i=0; i < orcm_cfgi_base.installed_apps.size; i++) {
-        if (NULL == (app = (orcm_cfgi_app_t*)opal_pointer_array_get_item(&orcm_cfgi_base.installed_apps, i))) {
-            continue;
-        }
-        if (!app->modified) {
-            OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                 "APP %s HAS NOT BEEN MODIFIED",
-                                 app->application));
-            continue;
-        }
-        OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                             "APP %s HAS BEEN MODIFIED", app->application));
-        /* reset the flag */
-        app->modified = false;
-        /* search the configuration array for instances of this app */
-        for (n=0; n < orcm_cfgi_base.confgd_apps.size; n++) {
-            if (NULL == (run = (orcm_cfgi_run_t*)opal_pointer_array_get_item(&orcm_cfgi_base.confgd_apps, n))) {
-                continue;
-            }
-            if (NULL == run->app) {
-                /* still waiting for app to be defined - is this it? */
-                if (0 == strcmp(run->application, app->application)) {
-                    /* yep - see if we can run it */
-                    if (0 <= app->max_instances && app->max_instances <= app->num_instances) {
-                        /* at our limit - can't run at this time */
-                        continue;
-                    }
-                    /* add this instance */
-                    run->app = app;
-                    run->app_idx = opal_pointer_array_add(&app->instances, run);
-                    app->num_instances++;
-                    link_launch(app, run);
-                }
-            } else if (0 == strcmp(run->application, app->application)) {
-                OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                     "%s EXISTING INSTANCE %s:%s HAS BEEN MODIFIED",
-                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                     run->application, run->instance));
-                /* check to see what has changed, and launch it if reqd */
-                link_launch(app, run);
-            }
-        }
-    }
+    check_installed(false);
 
  restart:
 #ifdef HAVE_SYS_INOTIFY_H

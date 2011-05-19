@@ -580,51 +580,10 @@ static int do_child(orte_app_context_t* context,
     /* Setup the pipe to be close-on-exec */
     fcntl(write_fd, F_SETFD, FD_CLOEXEC);
 
-    if (NULL != child) {
-        /* setup stdout/stderr so that any error messages that we
-           may print out will get displayed back at orterun.
-           
-           NOTE: Definitely do this AFTER we check contexts so
-           that any error message from those two functions doesn't
-           come out to the user. IF we didn't do it in this order,
-           THEN a user who gives us a bad executable name or
-           working directory would get N error messages, where
-           N=num_procs. This would be very annoying for large
-           jobs, so instead we set things up so that orterun
-           always outputs a nice, single message indicating what
-           happened
-        */
-        if (ORTE_SUCCESS != (i = orte_iof_base_setup_child(&opts, &environ_copy))) {
-            ORTE_ERROR_LOG(i);
-            send_error_show_help(write_fd, 1, 
-                                 "help-orte-odls-orcmd.txt", 
-                                 "iof setup failed",
-                                 orte_process_info.nodename, context->app);
-            /* Does not return */
-        }
-        
-    } else if (!(ORTE_JOB_CONTROL_FORWARD_OUTPUT & jobdat->controls)) {
-        /* tie stdin/out/err/internal to /dev/null */
-        int fdnull;
-        for (i=0; i < 3; i++) {
-            fdnull = open("/dev/null", O_RDONLY, 0);
-            if (fdnull > i && i != write_fd) {
-                dup2(fdnull, i);
-            }
-            close(fdnull);
-        }
-        fdnull = open("/dev/null", O_RDONLY, 0);
-        if (fdnull > opts.p_internal[1]) {
-            dup2(fdnull, opts.p_internal[1]);
-        }
-        close(fdnull);
-    }
-    
     /* close all file descriptors w/ exception of stdin/stdout/stderr,
-       the pipe used for the IOF INTERNAL messages, and the pipe up to
-       the parent. */
+       and the pipe up to the parent. */
     for(fd=3; fd<fdmax; fd++) {
-        if (fd != opts.p_internal[1] && fd != write_fd) {
+        if (fd != write_fd) {
             close(fd);
         }
     }
@@ -686,20 +645,6 @@ static int do_parent(orte_app_context_t* context,
     pipe_err_msg_t msg;
     char file[MAX_FILE_LEN + 1], topic[MAX_TOPIC_LEN + 1], *str = NULL;
 
-    if (NULL != child && (ORTE_JOB_CONTROL_FORWARD_OUTPUT & jobdat->controls)) {
-        /* connect endpoints IOF */
-        rc = orte_iof_base_setup_parent(child->name, &opts);
-        if (ORTE_SUCCESS != rc) {
-            ORTE_ERROR_LOG(rc);
-            close(read_fd);
-
-            if (NULL != child) {
-                child->state = ORTE_PROC_STATE_UNDEF;
-            }
-            return rc;
-        }
-    }
-    
     /* Block reading a message from the pipe */
     while (1) {
         rc = opal_fd_read(read_fd, sizeof(msg), &msg);
@@ -817,29 +762,9 @@ static int fork_local_proc(orte_app_context_t* context,
     int rc, p[2];
     pid_t pid;
     
-    if (NULL != child) {
-        /* should pull this information from MPIRUN instead of going with
-           default */
-        opts.usepty = OPAL_ENABLE_PTY_SUPPORT;
-        
-        /* do we want to setup stdin? */
-        if (NULL != child &&
-            (jobdat->stdin_target == ORTE_VPID_WILDCARD || child->name->vpid == jobdat->stdin_target)) {
-            opts.connect_stdin = true;
-        } else {
-            opts.connect_stdin = false;
-        }
-        
-        if (ORTE_SUCCESS != (rc = orte_iof_base_setup_prefork(&opts))) {
-            ORTE_ERROR_LOG(rc);
-            if (NULL != child) {
-                child->state = ORTE_PROC_STATE_FAILED_TO_START;
-                child->exit_code = rc;
-            }
-            return rc;
-        }
-    }
-    
+    /* we do not forward io, so mark it as complete */
+    child->iof_complete = true;
+
     /* A pipe is used to communicate between the parent and child to
        indicate whether the exec ultimately succeeded or failed.  The
        child sets the pipe to be close-on-exec; the child only ever

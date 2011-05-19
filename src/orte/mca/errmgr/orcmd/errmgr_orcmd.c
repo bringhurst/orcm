@@ -342,7 +342,6 @@ static int update_state(orte_jobid_t job,
         }
     }
     if (NULL == jobdat) {
-        ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
         ORTE_RELEASE_THREAD(&ctl);
         return ORTE_ERR_NOT_FOUND;
     }
@@ -721,6 +720,13 @@ static void notify_state(orte_odls_job_t *jobdat,
     orte_process_name_t name;
     opal_list_item_t *item;
     orte_odls_child_t *ch;
+
+    /* if we are abnormally terminating, don't notify anyone - the'
+     * scheduler will figure it out
+     */
+    if (orte_abnormal_term_ordered) {
+        return;
+    }
 
     alert = OBJ_NEW(opal_buffer_t);
     if (notify_apps) {

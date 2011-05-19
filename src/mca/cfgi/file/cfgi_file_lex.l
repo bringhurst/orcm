@@ -101,7 +101,7 @@ argv               { orcm_cfgi_file_value.sval = yytext;
 %{ /* Take all else as strings */
 %}
 
-[A-za-z0-9_\-\.]*  { orcm_cfgi_file_value.sval = yytext;
+[A-za-z0-9_\-\.\:]*  { orcm_cfgi_file_value.sval = yytext;
                      return ORCM_CFGI_FILE_STRING; }
 
 

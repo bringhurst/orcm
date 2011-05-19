@@ -467,6 +467,11 @@ static int kill_job(orcm_cfgi_caddy_t *caddy)
     orte_job_t *jdat;
     orcm_cfgi_run_t *run;
     int i;
+    bool found=false;
+
+    OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                         "%s KILLING JOBS",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
 
     /* construct the cmd buffer */
     bfr = OBJ_NEW(opal_buffer_t);
@@ -478,6 +483,7 @@ static int kill_job(orcm_cfgi_caddy_t *caddy)
     command = ORTE_DAEMON_KILL_LOCAL_PROCS;
     if (ORTE_SUCCESS != (rc = opal_dss.pack(bfr, &command, 1, ORTE_DAEMON_CMD))) {
         ORTE_ERROR_LOG(rc);
+        OBJ_RELEASE(bfr);
         return rc;
     }
 
@@ -490,10 +496,20 @@ static int kill_job(orcm_cfgi_caddy_t *caddy)
             if (NULL == (jdat = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
                 continue;
             }
+            OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                                 "%s KILLING JOB %s",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                 ORTE_JOBID_PRINT(jdat->jobid)));
             term_job(jdat, bfr);
+            found = true;
         }
     } else if (NULL != caddy->jdata) {
+        OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                             "%s KILLING JOB %s",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             ORTE_JOBID_PRINT(caddy->jdata->jobid)));
         term_job(caddy->jdata, bfr);
+        found = true;
     } else {
         /* terminate a specific instance, which means a specific job */
         for (i=1; i < orte_job_data->size; i++) {
@@ -502,10 +518,24 @@ static int kill_job(orcm_cfgi_caddy_t *caddy)
             }
             if (0 == strcmp(jdat->name, run->application) &&
                 0 == strcmp(jdat->instance, run->instance)) {
+                OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                                     "%s KILLING JOB %s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     ORTE_JOBID_PRINT(jdat->jobid)));
                 term_job(jdat, bfr);
+                found = true;
                 break;
             }
         }
+    }
+
+    /* if no matching running job was found, ignore this */
+    if (!found) {
+        OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                             "%s NO JOBS TO KILL - IGNORING KILL_JOBS CMD",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        OBJ_RELEASE(bfr);
+        return ORCM_SUCCESS;
     }
 
     /* send it to the daemons */
@@ -533,7 +563,11 @@ static int kill_exec(orcm_cfgi_caddy_t *caddy)
     orcm_cfgi_exec_t *exec;
     int i, j, k, n;
     char *cptr;
+    bool found=false;
 
+    OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                         "%s KILL EXEC",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
     /* construct the cmd buffer */
     bfr = OBJ_NEW(opal_buffer_t);
 
@@ -544,6 +578,7 @@ static int kill_exec(orcm_cfgi_caddy_t *caddy)
     command = ORTE_DAEMON_KILL_LOCAL_PROCS;
     if (ORTE_SUCCESS != (rc = opal_dss.pack(bfr, &command, 1, ORTE_DAEMON_CMD))) {
         ORTE_ERROR_LOG(rc);
+        OBJ_RELEASE(bfr);
         return rc;
     }
 
@@ -579,6 +614,10 @@ static int kill_exec(orcm_cfgi_caddy_t *caddy)
                                 continue;
                             }
                             if (proc->app_idx == app->idx) {
+                                OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                                                     "%s KILLING PROC %s",
+                                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                                     ORTE_NAME_PRINT(&proc->name)));
                                 /* flag it for termination - we can't remove it from the
                                  * various tracking structures just yet because (a) the
                                  * process is still alive, and (b) we need the info
@@ -589,8 +628,10 @@ static int kill_exec(orcm_cfgi_caddy_t *caddy)
                                 proc->state = ORTE_PROC_STATE_TERMINATE;
                                 if (ORTE_SUCCESS != (rc = opal_dss.pack(bfr, &proc->name, 1, ORTE_NAME))) {
                                     ORTE_ERROR_LOG(rc);
+                                    OBJ_RELEASE(bfr);
                                     return rc;
                                 }
+                                found = true;
                             }
                         }
                         /* update the number of procs */
@@ -611,6 +652,15 @@ static int kill_exec(orcm_cfgi_caddy_t *caddy)
                 }
             }
         }
+    }
+
+    /* if nothing was found, ignore this */
+    if (!found) {
+        OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                             "%s NO PROCS TO KILL - IGNORING KILL_EXEC CMD",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        OBJ_RELEASE(bfr);
+        return ORCM_SUCCESS;
     }
 
     /* send it to the daemons */
@@ -665,15 +715,17 @@ void orcm_cfgi_base_activate(void)
     orcm_cfgi_base_selected_module_t *module;
     orcm_cfgi_base_module_t *nmodule;
 
-    /* setup the launch event */
-    if (pipe(orcm_cfgi_base.launch_pipe) < 0) {
-        opal_output(0, "CANNOT OPEN LAUNCH PIPE");
-        return;
+    if (orcm_cfgi_base.launch_pipe[0] < 0) {
+        /* setup the launch event */
+        if (pipe(orcm_cfgi_base.launch_pipe) < 0) {
+            opal_output(0, "CANNOT OPEN LAUNCH PIPE");
+            return;
+        }
+        opal_event_set(opal_event_base, &orcm_cfgi_base.launch_event,
+                       orcm_cfgi_base.launch_pipe[0],
+                       OPAL_EV_READ|OPAL_EV_PERSIST, launcher, NULL);
+        opal_event_add(&orcm_cfgi_base.launch_event, 0);
     }
-    opal_event_set(opal_event_base, &orcm_cfgi_base.launch_event,
-                   orcm_cfgi_base.launch_pipe[0],
-                   OPAL_EV_READ|OPAL_EV_PERSIST, launcher, NULL);
-    opal_event_add(&orcm_cfgi_base.launch_event, 0);
 
     /* activate the modules */
     for (item = opal_list_get_first(&orcm_cfgi_selected_modules);

@@ -695,18 +695,6 @@ static int local_setup(void)
         goto error;
     }
     
-    /* setup I/O forwarding system */
-    if (ORTE_SUCCESS != (ret = orte_iof_base_open())) {
-        ORTE_ERROR_LOG(ret);
-        error = "orte_iof_base_open";
-        goto error;
-    }
-    if (ORTE_SUCCESS != (ret = orte_iof_base_select())) {
-        ORTE_ERROR_LOG(ret);
-        error = "orte_iof_base_select";
-        goto error;
-    }
-    
     /* open/select the errmgr - do this after the daemon job
      * has been defined so that the errmgr can get that
      * job object
@@ -846,7 +834,6 @@ static void local_fin(void)
     orte_odls_base_close();
     
     orte_wait_finalize();
-    orte_iof_base_close();
 
     /* finalize selected modules */
     orte_errmgr_base_close();

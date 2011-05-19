@@ -29,6 +29,7 @@ static int orcm_stub_finalize(void);
 orcm_cfgi_base_module_t orcm_cfgi = {
     orcm_stub_init,
     orcm_stub_finalize,
+    orcm_cfgi_base_activate
 };
 
 /* instantiate the globals */

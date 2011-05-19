@@ -280,14 +280,6 @@ static void signal_trap(int fd, short flags, void *arg)
         if (forcibly_die) {
             opal_output(0, "%s forcibly exiting upon signal %s",
                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), strsignal(fd));
-            
-            if (ORCM_PROC_IS_DAEMON) {
-                /* kill any local procs */
-                orte_odls.kill_local_procs(NULL);
-            }
-            
-            /* whack any lingering session directory files from our jobs */
-            orte_session_dir_cleanup(ORTE_JOBID_WILDCARD);
             /* exit with a non-zero status */
             exit(ORTE_ERROR_DEFAULT_EXIT_CODE);
         }

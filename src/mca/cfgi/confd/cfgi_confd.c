@@ -624,6 +624,8 @@ static boolean parse(confd_hkeypath_t *kp,
                     OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
                                          "%s NOT SPAWNING CONFIGURED APP %s - APP NOT INSTALLED",
                                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), run->application));
+                    /* remove the entry from the array */
+                    opal_pointer_array_set_item(&active_apps, j, NULL);
                     OBJ_RELEASE(caddy);
                     continue;
                 }
@@ -665,11 +667,6 @@ static boolean parse(confd_hkeypath_t *kp,
                 }
                 /* do a basic validity check on the job */
                 if (ORCM_SUCCESS == orcm_cfgi_base_check_job(jdata)) {
-                    valid = true;
-                } else {
-                    valid = false;
-                }
-                if (valid) {
                     /*spawn this job */
                     if (mca_orcm_cfgi_confd_component.test_mode) {
                         /* display the result */
@@ -690,6 +687,8 @@ static boolean parse(confd_hkeypath_t *kp,
                                 (NULL == jdata->name) ? "NULL" : jdata->name);
                     opal_dss.dump(0, jdata, ORTE_JOB);
                     OBJ_RELEASE(jdata);
+                    caddy->jdata = NULL;
+                    OBJ_RELEASE(caddy);
                 }
                 /* clear this from the array */
                 opal_pointer_array_set_item(&active_apps, j, NULL);

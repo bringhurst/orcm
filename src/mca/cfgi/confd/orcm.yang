@@ -1,0 +1,251 @@
+/* Hey Emacs use -*- mode: C -*- */
+/*
+ * Copyright (c) 2010-2011 Cisco Systems, Inc. All rights reserved. 
+ */
+
+module orcm {
+    namespace "http://www.cisco.com/ns/orcm";
+    prefix "orcm";
+
+    // we import these namespaces to get access to their predefined types
+    //   (like ip addresses, prefixes, etc., but also tailf types that provide
+    //   hooks for invoking our callbacks)
+    import tailf-common {
+        prefix tailf;
+    }
+
+    typedef orcmAppName {
+        type string;
+    }
+    typedef orcmAppInstance {
+        type string;
+    }
+    typedef orcmExec {
+        type string;
+    }
+    typedef orcmExecVersion {
+        type string;
+    }
+    typedef orcmExecCount {
+        type int32;
+    }
+
+    container orcmRun {
+    tailf:alt-name "run";
+    tailf:cli-add-mode;
+        list app {
+            // Define a running instance of the application. The instance name can be
+            //   whatever the user desires, e.g., "Production BGP" or "Test BGP".
+            description "Define a running instance of this application";
+            key app-name;
+            leaf app-name {
+                description "Application name";
+                type orcmAppName;
+            }
+            list app-instance {
+                key app-instance;
+                leaf app-instance {
+                    description "Name of the instance, e.g., \"Production BGP\"";
+                    type orcmAppInstance;
+                }
+                list exec {
+                    key exec-name;
+                    leaf exec-name {
+                        type orcmExec;
+                        description "Executable name";
+                    }
+                    list version {
+                        key version-name;
+                        leaf version-name {
+                            type orcmExecVersion;
+                            description "Executable version";
+                        }
+                        leaf count {
+                            type orcmExecCount;
+                            description "Number of copies to run";
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    container orcmOper {
+        config false;
+    tailf:alt-name "status";
+    tailf:callpoint orcm_oper;
+        description "ORCM operational data";
+        list job {
+            description "Job information";
+            key job-id;
+            leaf job-id {
+                description "Job ID";
+                type uint32;
+            }
+            leaf job-name {
+                description "Plain name of the job";
+                type string;
+            }
+            list app-context {
+                key app-context-id;
+                leaf app-context-id {
+                    description "ORCM app ID";
+                    type uint32;
+                }
+                leaf path {
+                    description "Absolute pathname to executable";
+                    type string;
+                }
+                list replica {
+                    description "Per replica (process) information";
+                    key vpid;
+		    leaf vpid {
+		        description "Virtual process ID for launched replica";
+			type uint32;
+		    }
+                    leaf pid {
+                        description "Process ID for launched replica";
+                        type uint32;
+                    }
+                    leaf node {
+                        description "Node where this replica is running";
+                        type string;
+                    }
+                    leaf process_state {
+                        description "State of the process";
+                        type string;
+                    }
+		    leaf num_restarts {
+		        description "Number of times this process has been restarted";
+			type int32;
+                    }
+                    leaf num_threads {
+                        description "Number of threads in the process";
+                        type int16;
+                    }
+                    leaf percent_cpu {
+                        description "Percent cpu utilization";
+                        type decimal64 {
+                            fraction-digits 2;
+                        }
+                    }
+                    leaf vsize {
+                        description "Virtual memory used";
+                        type decimal64 {
+                            fraction-digits 2;
+                        }
+                    }
+                    leaf rss {
+                        description "RSS memory used";
+                        type decimal64 {
+                            fraction-digits 2;
+                        }
+                    }
+                    leaf peak_vsize {
+                        description "Peak virtual memory used";
+                        type decimal64 {
+                            fraction-digits 2;
+                        }
+                    }
+                    leaf processor {
+                        description "Processor currently executing upon";
+                        type int16;
+                    }
+                }
+            }
+        }
+        list node {
+            key node-id;
+	    leaf node-id {
+	        description "Index of node in array";
+		type uint32;
+	    }
+            leaf node-name {
+                description "Node name";
+                type string;
+            }
+            leaf state {
+                description "Node state";
+                type string;
+            }
+            /*
+              container sensor-data {
+              leaf temperature {
+              description "Node temperature";
+              type int8;
+              }
+              }
+            */
+            leaf num-procs {
+                description "Number of procs running on this node";
+                type int32;
+            }
+            leaf total-memory {
+                description "Total physical memory on node";
+                type decimal64 {
+                    fraction-digits 2;
+                }
+            }
+            leaf free-memory {
+                description "Free physical memory on node";
+                type decimal64 {
+                    fraction-digits 2;
+                }
+            }
+            leaf load-avg {
+                description "Load average over last minute";
+                type decimal64 {
+                    fraction-digits 2;
+                }
+            }
+            leaf load-avg5 {
+                description "Load average over last 5 minutes";
+                type decimal64 {
+                    fraction-digits 2;
+                }
+            }
+            leaf load-avg15 {
+                description "Load average over last 15 minutes";
+                type decimal64 {
+                    fraction-digits 2;
+                }
+            }
+            leaf buffers {
+                description "Buffers";
+                type decimal64 {
+                    fraction-digits 2;
+                }
+            }
+            leaf cached {
+                description "Cached";
+                type decimal64 {
+                    fraction-digits 2;
+                }
+            }
+            leaf swap_cached {
+                description "SwapCached";
+                type decimal64 {
+                    fraction-digits 2;
+                }
+            }
+            leaf swap_total {
+                description "SwapTotal";
+                type decimal64 {
+                    fraction-digits 2;
+                }
+            }
+            leaf swap_free {
+                description "SwapFree";
+                type decimal64 {
+                    fraction-digits 2;
+                }
+            }
+            leaf mapped {
+                description "Mapped";
+                type decimal64 {
+                    fraction-digits 2;
+                }
+            }
+        }
+    }
+}

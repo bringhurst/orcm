@@ -217,14 +217,16 @@ static int update_state(orte_jobid_t job,
                         orte_exit_code_t exit_code)
 {
     int rc=ORTE_SUCCESS, i;
+    orte_app_context_t *app;
     orte_node_t *node;
-    orte_proc_t *pptr, *daemon;
+    orte_proc_t *pptr, *daemon, *pptr2;
     opal_buffer_t *notify;
     orcm_triplet_t *trp;
     orcm_source_t *src;
     bool procs_recovered;
     orte_job_t *jdt;
     uint16_t jfam;
+    bool send_msg;
 
     OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
                          "%s errmgr:update_state for job %s proc %s",
@@ -366,26 +368,42 @@ static int update_state(orte_jobid_t job,
             return ORTE_ERR_NOT_FOUND;
         }
         notify = OBJ_NEW(opal_buffer_t);
+        send_msg = false;
         for (i=0; i < node->procs->size; i++) {
             if (NULL == (pptr = (orte_proc_t*)opal_pointer_array_get_item(node->procs, i))) {
                 continue;
             }
             if (ORTE_SUCCESS != (rc = opal_dss.pack(notify, &pptr->name, 1, ORTE_NAME))) {
                 ORTE_ERROR_LOG(rc);
+                ORTE_RELEASE_THREAD(&ctl);
                 return rc;
             }
+            /* reset the proc stats */
+            OBJ_DESTRUCT(&pptr->stats);
+            OBJ_CONSTRUCT(&pptr->stats, opal_pstats_t);
+            /* since we added something, need to send msg */
+            send_msg = true;
         }
-        /* send it to all apps */
-        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_ERROR_CHANNEL, NULL,
-                                                     ORCM_PNP_TAG_ERRMGR, NULL, 0,
-                                                     notify, cbfunc, NULL))) {
-            ORTE_ERROR_LOG(rc);
+        if (send_msg) {
+            /* send it to all apps */
+            if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_ERROR_CHANNEL, NULL,
+                                                         ORCM_PNP_TAG_ERRMGR, NULL, 0,
+                                                         notify, cbfunc, NULL))) {
+                ORTE_ERROR_LOG(rc);
+            }
+        } else {
+            OBJ_RELEASE(notify);
         }
-
+        /* reset the node stats */
+        OBJ_DESTRUCT(&node->stats);
+        OBJ_CONSTRUCT(&node->stats, opal_node_stats_t);
         /* record that the daemon died */
         daemon->state = state;
         daemon->exit_code = exit_code;
         daemon->pid = 0;
+        /* reset the daemon stats */
+        OBJ_DESTRUCT(&daemon->stats);
+        OBJ_CONSTRUCT(&daemon->stats, opal_pstats_t);
         node = daemon->node;
         if (NULL == node) {
             opal_output(0, "%s Detected failure of daemon %s on unknown node",
@@ -432,20 +450,120 @@ static int update_state(orte_jobid_t job,
                                 orte_proc_state_to_str(pptr->state));
                     continue;
                 }
-                /* since the proc failed for reasons other than its own, this restart
-                 * does not count against its total, so don't increment that counter
-                 */
-                pptr->state = ORTE_PROC_STATE_MIGRATING;
-                pptr->pid = 0;
-                pptr->node = NULL;
-                /* adjust the num terminated so that acctg works right */
-                jdt->num_terminated++;
-                /* clear the object from the node */
-                opal_pointer_array_set_item(node->procs, i, NULL);
+                if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdt->apps, pptr->app_idx))) {
+                    continue;
+                }
+                OPAL_OUTPUT_VERBOSE((3, orte_errmgr_base.output,
+                                     "%s REMOVING PROC %s FROM NODE %s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     ORTE_NAME_PRINT(&pptr->name), node->name));
+                app->num_procs--;
+                opal_pointer_array_set_item(jdt->procs, pptr->name.vpid, NULL);
                 OBJ_RELEASE(pptr);
+                /* clean it off the node */
+                opal_pointer_array_set_item(node->procs, i, NULL);
                 node->num_procs--;
+                /* maintain acctg */
+                OBJ_RELEASE(pptr);
+                /* see if job is empty */
+                jdt->num_terminated++;
+                if (jdt->num_procs <= jdt->num_terminated) {
+                    OPAL_OUTPUT_VERBOSE((3, orte_errmgr_base.output,
+                                         "%s REMOVING JOB %s FROM ACTIVE ARRAY",
+                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                         ORTE_JOBID_PRINT(jdt->jobid)));
+                    opal_pointer_array_set_item(orte_job_data, ORTE_LOCAL_JOBID(jdt->jobid), NULL);
+                    OBJ_RELEASE(jdt);
+                }
             }
         }
+        ORTE_RELEASE_THREAD(&ctl);
+        return ORTE_SUCCESS;
+    }
+
+    if (ORTE_PROC_STATE_RESTARTED == state) {
+        OPAL_OUTPUT_VERBOSE((3, orte_errmgr_base.output,
+                             "%s RESTART OF DAEMON %s",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             ORTE_NAME_PRINT(proc)));
+        /* get the proc object for this daemon */
+        if (NULL == (daemon = (orte_proc_t*)opal_pointer_array_get_item(daemon_job->procs, proc->vpid))) {
+            ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
+            ORTE_RELEASE_THREAD(&ctl);
+            return ORTE_ERR_NOT_FOUND;
+        }
+        /* if apps were on that node, notify all apps immediately that
+         * those procs have failed
+         */
+        if (NULL == (node = (orte_node_t*)opal_pointer_array_get_item(orte_node_pool, proc->vpid))) {
+            ORTE_ERROR_LOG(ORTE_ERR_NOT_FOUND);
+            ORTE_RELEASE_THREAD(&ctl);
+            return ORTE_ERR_NOT_FOUND;
+        }
+        notify = OBJ_NEW(opal_buffer_t);
+        send_msg = false;
+        for (i=0; i < node->procs->size; i++) {
+            if (NULL == (pptr = (orte_proc_t*)opal_pointer_array_get_item(node->procs, i))) {
+                continue;
+            }
+            if (ORTE_SUCCESS != (rc = opal_dss.pack(notify, &pptr->name, 1, ORTE_NAME))) {
+                ORTE_ERROR_LOG(rc);
+                ORTE_RELEASE_THREAD(&ctl);
+                return rc;
+            }
+            /* since we added something, we need to send msg */
+            send_msg = true;
+            /* remove the proc from the app so that it will get
+             * restarted when we re-activate the config
+             */
+            if (NULL == (jdt = orte_get_job_data_object(pptr->name.jobid))) {
+                continue;
+            }
+            if (NULL == (app = (orte_app_context_t*)opal_pointer_array_get_item(jdt->apps, pptr->app_idx))) {
+                continue;
+            }
+            OPAL_OUTPUT_VERBOSE((3, orte_errmgr_base.output,
+                                 "%s REMOVING PROC %s FROM NODE %s",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                 ORTE_NAME_PRINT(&pptr->name), node->name));
+            app->num_procs--;
+            opal_pointer_array_set_item(jdt->procs, pptr->name.vpid, NULL);
+            OBJ_RELEASE(pptr);
+            /* clean it off the node */
+            opal_pointer_array_set_item(node->procs, i, NULL);
+            node->num_procs--;
+            /* maintain acctg */
+            OBJ_RELEASE(pptr);
+            /* see if job is empty */
+            jdt->num_terminated++;
+            if (jdt->num_procs <= jdt->num_terminated) {
+                OPAL_OUTPUT_VERBOSE((3, orte_errmgr_base.output,
+                                     "%s REMOVING JOB %s FROM ACTIVE ARRAY",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     ORTE_JOBID_PRINT(jdt->jobid)));
+                opal_pointer_array_set_item(orte_job_data, ORTE_LOCAL_JOBID(jdt->jobid), NULL);
+                OBJ_RELEASE(jdt);
+            }
+        }
+        if (send_msg) {
+            /* send it to all apps */
+            if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_ERROR_CHANNEL, NULL,
+                                                         ORCM_PNP_TAG_ERRMGR, NULL, 0,
+                                                         notify, cbfunc, NULL))) {
+                ORTE_ERROR_LOG(rc);
+            }
+        } else {
+            OBJ_RELEASE(notify);
+        }
+        /* reset the node stats */
+        OBJ_DESTRUCT(&node->stats);
+        OBJ_CONSTRUCT(&node->stats, opal_node_stats_t);
+        /* reset the daemon stats */
+        OBJ_DESTRUCT(&daemon->stats);
+        OBJ_CONSTRUCT(&daemon->stats, opal_pstats_t);
+        /* don't restart procs - we'll do that later after
+         * we allow time for multiple daemons to restart
+         */
         ORTE_RELEASE_THREAD(&ctl);
         return ORTE_SUCCESS;
     }
@@ -577,6 +695,9 @@ static void remote_update(int status,
          * it was killed by our own cmd
          */
         if (ORTE_PROC_STATE_UNTERMINATED < state) {
+            /* reset the stats */
+            OBJ_DESTRUCT(&proc->stats);
+            OBJ_CONSTRUCT(&proc->stats, opal_pstats_t);
             if (ORTE_PROC_STATE_KILLED_BY_CMD == state) {
                 /* this is a response to our killing a proc - remove it
                  * from the system
@@ -617,10 +738,11 @@ static void remote_update(int status,
                         if (NULL == (pptr = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, k))) {
                             continue;
                         }
-                        opal_output(0, "%s CHECKING PROC %s STATE %s",
-                                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                    ORTE_NAME_PRINT(&pptr->name),
-                                    orte_proc_state_to_str(pptr->state));
+                        OPAL_OUTPUT_VERBOSE((3, orte_errmgr_base.output,
+                                             "%s CHECKING PROC %s STATE %s",
+                                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                             ORTE_NAME_PRINT(&pptr->name),
+                                             orte_proc_state_to_str(pptr->state)));
                         if (pptr->state < ORTE_PROC_STATE_UNTERMINATED ||
                             ORTE_PROC_STATE_CANNOT_RESTART != pptr->state) {
                             job_done = false;
@@ -658,7 +780,7 @@ static void remote_update(int status,
     }
 
     /* cycle thru the array of jobs looking for those requiring restart */
-    for (n=0; n < orte_job_data->size; n++) {
+    for (n=1; n < orte_job_data->size; n++) {
         if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, n))) {
             continue;
         }
@@ -715,7 +837,9 @@ static void remote_update(int status,
                     /* adjust accounting */
                     jdata->num_terminated++;
                     /* clean it off of the node */
-                    node = proc->node;
+                    if (NULL == (node = proc->node)) {
+                        continue;
+                    }
                     for (k=0; k < node->procs->size; k++) {
                         if (NULL == (pptr = (orte_proc_t*)opal_pointer_array_get_item(node->procs, k))) {
                             continue;

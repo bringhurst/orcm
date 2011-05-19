@@ -67,6 +67,8 @@
 
 #include "runtime/runtime.h"
 
+#include "mca/cfgi/cfgi.h"
+#include "mca/cfgi/base/public.h"
 #include "mca/pnp/base/public.h"
 #include "mca/leader/base/public.h"
 
@@ -106,7 +108,6 @@ static uint32_t my_uid;
 static opal_event_t timeout;
 static struct timeval timeout_tv = {3,0};
 static opal_event_t process_ev;
-static int process_pipe[2];
 static bool bootstrap_complete = false;
 static bool clean_startup;
 
@@ -926,11 +927,7 @@ static int local_setup(char **hosts)
     }
 
     /* define an event to handle processing of daemon replies */
-    if (pipe(process_pipe) < 0) {
-        error = "cannot open event pipe";
-        goto error;
-    }
-    opal_event_set(opal_event_base, &process_ev, process_pipe[0],
+    opal_event_set(opal_event_base, &process_ev, -1,
                    OPAL_EV_READ|OPAL_EV_PERSIST, process_daemon, NULL);
     opal_event_add(&process_ev, 0);
 
@@ -976,11 +973,6 @@ static int local_setup(char **hosts)
                          "%s BOOTSTRAP COMPLETED",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
 
-    /* delete our local event */
-    opal_event_del(&process_ev);
-    close(process_pipe[0]);
-    close(process_pipe[1]);
-
     /* let people know we are alive */
     opal_output(orte_clean_output, "ORCM SCHEDULER %s IS READY",
                 ORTE_JOB_FAMILY_PRINT(ORTE_PROC_MY_NAME->jobid));
@@ -991,7 +983,7 @@ static int local_setup(char **hosts)
     orte_sensor.start(ORTE_PROC_MY_NAME->jobid);
 
     /* enable configuration */
-    orcm_cfgi_base_activate();
+    orcm_cfgi.activate();
 
     return ORTE_SUCCESS;
     
@@ -1077,7 +1069,6 @@ static void vm_tracker(orcm_info_t *vm)
     uint8_t trig=0;
     opal_buffer_t *buf;
     orte_daemon_cmd_flag_t command;
-    bool restarted;
 
     OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
                          "%s Received announcement from %s:%s:%s proc %s on node %s pid %lu",
@@ -1140,8 +1131,6 @@ static void vm_tracker(orcm_info_t *vm)
             ORTE_ERROR_LOG(rc);
             OBJ_RELEASE(buf);
         }
-        /* flag that it wasn't restarted */
-        restarted = false;
     } else {
         /* this daemon must have restarted */
         OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
@@ -1149,9 +1138,15 @@ static void vm_tracker(orcm_info_t *vm)
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                              ORTE_NAME_PRINT(vm->name)));
         daemons->num_procs++;
+        /* see if there are any stale procs in our records - could
+         * be this daemon died/restarted too fast for us to record
+         * the lost heartbeat
+         */
+        orte_errmgr.update_state(ORTE_PROC_MY_NAME->jobid, ORTE_JOB_STATE_RUNNING,
+                                 &proc->name, ORTE_PROC_STATE_RESTARTED,
+                                 vm->pid, 0);
         /* reinitialize heartbeat - obviously, it is alive */
         proc->beat = true;
-        restarted = true;
         /* send it an ack so it will start its heartbeat */
         buf = OBJ_NEW(opal_buffer_t);
         /* tell recipients who this is responding to */
@@ -1221,36 +1216,18 @@ static void vm_tracker(orcm_info_t *vm)
     node->daemon = proc;
     node->daemon_launched = true;
 
-    /* if this daemon restarted, then check jobs for procs
-     * waiting to migrate
-     */
-    if (restarted) {
-        opal_output(0, "%s RESTART OF PROCS AWAITING RESOURCES IS NOT ENABLED YET",
-                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-#if 0
-        orte_errmgr.update_state(ORTE_JOBID_WILDCARD, ORTE_JOB_STATE_PROCS_MIGRATING,
-                                 NULL, ORTE_PROC_STATE_MIGRATING, 0, 0);
-#endif
-    }
-
  release:
     /* reset the timer */
-    if (!bootstrap_complete) {
-        OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
-                             "%s RESETTING TIMER FROM ANNOUNCEMENT",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        opal_fd_write(process_pipe[1], sizeof(uint8_t), &trig);
-    }
+    OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
+                         "%s RESETTING TIMER FROM ANNOUNCEMENT",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+    opal_event_active(&process_ev, OPAL_EV_WRITE, 1);
     ORTE_RELEASE_THREAD(&local_ctl);
     return;
 }
 
 static void process_daemon(int fd, short flag, void *dump)
 {
-    uint8_t trig;
-
-    /* clear the trigger pipe */
-    opal_fd_read(process_pipe[0], sizeof(uint8_t), &trig);
     opal_event_evtimer_add(&timeout, &timeout_tv);
 }
 
@@ -1260,25 +1237,38 @@ static void release(int fd, short flag, void *dump)
     orte_proc_t *proc;
 
     ORTE_ACQUIRE_THREAD(&local_ctl);
-    /* flag that we are done with our own startup */
-    bootstrap_complete = true;
-    OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
-                         "%s TIMER COMPLETE - RELEASING BOOTSTRAP",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-    /* report any missing responses */
-    for (i=2; i < daemons->procs->size; i++) {
-        if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(daemons->procs, i))) {
-            continue;
+    if (!bootstrap_complete) {
+        /* flag that we are done with our own startup */
+        bootstrap_complete = true;
+        OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
+                             "%s TIMER COMPLETE - RELEASING BOOTSTRAP",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+        /* report any missing responses */
+        for (i=2; i < daemons->procs->size; i++) {
+            if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(daemons->procs, i))) {
+                continue;
+            }
+            if (!proc->reported) {
+                opal_output(0, "%s MISSING REPORT FROM DAEMON %s on NODE %s",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                            ORTE_NAME_PRINT(&proc->name),
+                            proc->node->name);
+            }
         }
-        if (!proc->reported) {
-            opal_output(0, "%s MISSING REPORT FROM DAEMON %s on NODE %s",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                        ORTE_NAME_PRINT(&proc->name),
-                        proc->node->name);
-        }
+        ORTE_RELEASE_THREAD(&local_ctl);
+        ORTE_WAKEUP_THREAD(&ctl);
+        return;
     }
+
+    /* if bootstrap was already done, then this came
+     * about due to one or more daemons restarting. See
+     * if we need to start jobs
+     */
+    OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
+                         "%s RESTART TIMER COMPLETE - REACTIVATING CONFIG",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+    orcm_cfgi.activate();
     ORTE_RELEASE_THREAD(&local_ctl);
-    ORTE_WAKEUP_THREAD(&ctl);
 }
 
 
@@ -1674,11 +1664,9 @@ static void recv_contact(int status,
     }
 
  release:
-    if (!bootstrap_complete) {
-        OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
-                             "%s RESETTING TIMER FROM CONTACT REPLY",
-                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
-        opal_fd_write(process_pipe[1], sizeof(uint8_t), &trig);
-    }
+    OPAL_OUTPUT_VERBOSE((2, orte_ess_base_output,
+                         "%s RESETTING TIMER FROM CONTACT REPLY",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+    opal_event_active(&process_ev, OPAL_EV_WRITE, 1);
     ORTE_RELEASE_THREAD(&local_ctl);
 }
