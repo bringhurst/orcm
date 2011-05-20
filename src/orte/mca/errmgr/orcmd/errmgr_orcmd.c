@@ -721,13 +721,6 @@ static void notify_state(orte_odls_job_t *jobdat,
     opal_list_item_t *item;
     orte_odls_child_t *ch;
 
-    /* if we are abnormally terminating, don't notify anyone - the'
-     * scheduler will figure it out
-     */
-    if (orte_abnormal_term_ordered) {
-        return;
-    }
-
     alert = OBJ_NEW(opal_buffer_t);
     if (notify_apps) {
         notify = OBJ_NEW(opal_buffer_t);
@@ -796,6 +789,18 @@ static void notify_state(orte_odls_job_t *jobdat,
             /* flag that notification sent */
             child->notified = true;
         }
+    }
+
+    /* if we are abnormally terminating, don't notify anyone - the
+     * scheduler will figure it out, and we probably cannot get
+     * the message out before terminating. Need to let the
+     * routine progress this far, though, to ensure that the
+     * child objects get properly updated
+     */
+    if (orte_abnormal_term_ordered) {
+        OBJ_RELEASE(notify);
+        OBJ_RELEASE(alert);
+        return;
     }
 
     if (notify_apps) {

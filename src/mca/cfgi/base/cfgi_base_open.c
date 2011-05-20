@@ -117,7 +117,8 @@ static void vers_destructor(orcm_cfgi_version_t *ptr)
     /* NEVER release the exec field as this
      * will create a fatal recursion
      */
-    if (NULL != ptr->exec && 0 <= ptr->idx) {
+    if (NULL != ptr->exec && 0 <= ptr->idx &&
+        ptr->idx < ptr->exec->versions.size) {
         opal_pointer_array_set_item(&ptr->exec->versions, ptr->idx, NULL);
     }
     if (NULL != ptr->version) {
@@ -230,7 +231,8 @@ static void bin_destructor(orcm_cfgi_bin_t *ptr)
         ptr->exec->total_procs -= ptr->num_procs;
     }
 
-    if (NULL != ptr->vers && 0 <= ptr->vers_idx) {
+    if (NULL != ptr->vers && 0 <= ptr->vers_idx &&
+        ptr->vers_idx < ptr->vers->binaries.size) {
         opal_pointer_array_set_item(&ptr->vers->binaries, ptr->vers_idx, NULL);
     }
 
@@ -269,7 +271,7 @@ static void run_destructor(orcm_cfgi_run_t *ptr)
      */
 
     /* cleanup the configured apps array */
-    if (0 <= ptr->idx) {
+    if (0 <= ptr->idx && ptr->idx < orcm_cfgi_base.confgd_apps.size) {
         opal_pointer_array_set_item(&orcm_cfgi_base.confgd_apps, ptr->idx, NULL);
     }
 
@@ -278,7 +280,7 @@ static void run_destructor(orcm_cfgi_run_t *ptr)
         /* decrement the number of instances */
         ptr->app->num_instances--;
         /* clear the array entry */
-        if (0 <= ptr->app_idx) {
+        if (0 <= ptr->app_idx && ptr->app_idx < ptr->app->instances.size) {
             opal_pointer_array_set_item(&ptr->app->instances, ptr->app_idx, NULL);
         }
     }

@@ -834,6 +834,7 @@ static void remote_update(int status,
                     /* increment his restarts this once so it shows as too high */
                     proc->restarts++;
                     /* adjust accounting */
+                    jdata->num_procs--;
                     jdata->num_terminated++;
                     /* clean it off of the node */
                     if (NULL == (node = proc->node)) {

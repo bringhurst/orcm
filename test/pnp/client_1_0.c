@@ -37,7 +37,7 @@ static void signal_trap(int signal, short flags, void *arg)
      * we are in a signal handler - and the OS
      * would be extremely upset with us!
      */
-    opal_output(0, "%s TERMINATING ON SIGTERM",
+    opal_output(0, "%s CLIENT_1_0 TERMINATING ON SIGTERM",
                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
     orte_abnormal_term_ordered = true;
     ORTE_UPDATE_EXIT_STATUS(128+signal);

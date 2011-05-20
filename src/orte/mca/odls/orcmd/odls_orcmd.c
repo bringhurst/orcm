@@ -326,13 +326,8 @@ static int get_add_procs_data(opal_buffer_t *data, orte_jobid_t job)
         }
         app_idx[i] = proc->app_idx;
         if (NULL == proc->node || NULL == proc->node->daemon) {
-            /* got an error */
-            opal_output(0, "%s PROC WITH NO NODE OR DAEMON",
-                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-            free(app_idx);
-            free(states);
-            free(locations);
-            return ORTE_ERR_BAD_PARAM;
+            /* ignore the entry */
+            continue;
         }
         locations[i] = proc->node->daemon->name.vpid;
         restarts[i] = proc->restarts;
@@ -587,7 +582,7 @@ static int do_child(orte_app_context_t* context,
             close(fd);
         }
     }
-    
+
     if (context->argv == NULL) {
         context->argv = malloc(sizeof(char*)*2);
         context->argv[0] = strdup(context->app);

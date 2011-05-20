@@ -2265,13 +2265,16 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
     char **options=NULL;
     char *appname, *numid, *remainder;
 
-    OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+    OPAL_OUTPUT_VERBOSE((0, orcm_cfgi_base.output,
                          "%s CLEAR COMPLETION CALLED\n    token %s(%d)\n     cmdpath %s\n     paramid %s\n",
                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                          (NULL == token) ? "NULL" : token,
                          (NULL == token) ? 0 : (int)strlen(token),
                          (NULL == cmdpath) ? "NULL" : cmdpath,
                          (NULL == param_id) ? "NULL" : param_id));
+
+    /* take control */
+    ORTE_ACQUIRE_THREAD(&orcm_cfgi_base.ctl);
 
     options = opal_argv_split(cmdpath, ' ');
     nopts = opal_argv_count(options);
@@ -2295,7 +2298,7 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
                 opal_output(0, "%s COMPLETION FAILED", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
                 ret = FALSE;
             }
-            return ret;
+            goto cleanup;
         }
 
         /* allocate the completion array - this is the largest the array of completions
@@ -2389,7 +2392,7 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
         }
     } else if (0 == strcmp(options[nopts-1], "executable")) {
         /* the job name or job-id is in the third position */
-        if (0 == strcmp(options[2], "job-name")) {
+        if (0 == strcmp(options[1], "job-name")) {
             /* find this job name */
             jdata = NULL;
             for (i=1; i < orte_job_data->size; i++) {
@@ -2399,7 +2402,7 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
                 if (NULL == jdt->name) {
                     continue;
                 }
-                if (0 == strcmp(jdt->name, options[3])) {
+                if (0 == strcmp(jdt->name, options[2])) {
                     jdata = jdt;
                     break;
                 }
@@ -2411,24 +2414,24 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
                 ret = FALSE;
                 goto cleanup;
             }
-        } else if (0 == strcmp(options[2], "job-id")) {
+        } else if (0 == strcmp(options[1], "job-id")) {
             /* find this job number - need extra protection here as
              * confd does -not- check types on input data! Thus, a user
              * could have provided a string, or have a typo character
              * in the middle of the number
              */
-            i = strtol(options[3], &remainder, 10);
+            i = strtol(options[2], &remainder, 10);
             if (NULL != remainder && 0 < strlen(remainder)) {
                 /* there was indeed a character in here! */
                 opal_output(0, "%s COMPLETION ERROR: JOB-ID %s HAS NON-NUMERIC CHARACTER %s(%d)",
-                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), options[3], remainder, (int)strlen(remainder));
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), options[2], remainder, (int)strlen(remainder));
                 ret = FALSE;
                 goto cleanup;
             }
             if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
                 opal_output(0, "%s COMPLETION ERROR: JOB %s NOT FOUND",
                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                            options[3]);
+                            options[2]);
                 ret = FALSE;
                 goto cleanup;
             }
@@ -2436,7 +2439,7 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
             /* unrecognized */
             opal_output(0, "%s COMPLETION ERROR: UNRECOGNIZED PATH ELEMENT %s",
                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                        options[2]);
+                        options[1]);
             ret = FALSE;
             goto cleanup;
         }
@@ -2482,7 +2485,7 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
         }
     } else if (0 == strcmp(options[nopts-1], "vpid")) {
         /* the job name or job-id is in the third position */
-        if (0 == strcmp(options[2], "job-name")) {
+        if (0 == strcmp(options[1], "job-name")) {
             /* find this job name */
             jdata = NULL;
             for (i=1; i < orte_job_data->size; i++) {
@@ -2492,7 +2495,7 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
                 if (NULL == jdt->name) {
                     continue;
                 }
-                if (0 == strcmp(jdt->name, options[3])) {
+                if (0 == strcmp(jdt->name, options[2])) {
                     jdata = jdt;
                     break;
                 }
@@ -2500,28 +2503,28 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
             if (NULL == jdata) {
                 opal_output(0, "%s COMPLETION ERROR: JOB %s NOT FOUND",
                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                            options[3]);
+                            options[2]);
                 ret = FALSE;
                 goto cleanup;
             }
-        } else if (0 == strcmp(options[2], "job-id")) {
+        } else if (0 == strcmp(options[1], "job-id")) {
             /* find this job number - need extra protection here as
              * confd does -not- check types on input data! Thus, a user
              * could have provided a string, or have a typo character
              * in the middle of the number
              */
-            i = strtol(options[3], &remainder, 10);
+            i = strtol(options[2], &remainder, 10);
             if (NULL != remainder && 0 < strlen(remainder)) {
                 /* there was indeed a character in here! */
                 opal_output(0, "%s COMPLETION ERROR: JOB-ID %s HAS NON-NUMERIC CHARACTER %s(%d)",
-                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), options[3], remainder, (int)strlen(remainder));
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), options[2], remainder, (int)strlen(remainder));
                 ret = FALSE;
                 goto cleanup;
             }
             if (NULL == (jdata = (orte_job_t*)opal_pointer_array_get_item(orte_job_data, i))) {
                 opal_output(0, "%s COMPLETION ERROR: JOB %s NOT FOUND",
                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                            options[3]);
+                            options[2]);
                 ret = FALSE;
                 goto cleanup;
             }
@@ -2529,12 +2532,12 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
             /* unrecognized */
             opal_output(0, "%s COMPLETION ERROR: UNRECOGNIZED PATH ELEMENT %s",
                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                        options[2]);
+                        options[1]);
             ret = FALSE;
             goto cleanup;
         }
         /* were we given an executable too? */
-        if (5 == nopts) {
+        if (nopts < 6) {
             /* nope - allocate the completion array - this is the largest the array of completions
              * can be. We may not fill it all, so we track the actual number of entries
              * and pass that value back to confd
@@ -2580,7 +2583,7 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
                     continue;
                 }
                 appname = opal_basename(aptr->app);
-                if (0 == strcmp(appname, options[5])) {
+                if (0 == strcmp(appname, options[4])) {
                     app = aptr;
                     free(appname);
                     break;
@@ -2590,7 +2593,7 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
             if (NULL == app) {
                 opal_output(0, "%s COMPLETION ERROR: APP %s NOT FOUND",
                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                            options[5]);
+                            options[4]);
                 ret = FALSE;
                 goto cleanup;
             }
@@ -2658,6 +2661,8 @@ static boolean orcm_clear_completion(struct confd_user_info *uinfo,
         free(cmplt);
     }
     opal_argv_free(options);
+    /* release control */
+    ORTE_RELEASE_THREAD(&orcm_cfgi_base.ctl);
     return ret;
 }
 
