@@ -187,14 +187,14 @@ static void orcmd_abort(int error_code, char *fmt, ...)
     }
     va_end(arglist);
     
-    if (kill_sent) {
+    if (orte_abnormal_term_ordered) {
         /* only send SIGTERM to ourselves once as
          * we otherwise can get into an infinite loop
          * while trying to abnormally terminate
          */
         orte_ess.abort(error_code, false);
     } else {
-        kill_sent = true;
+        orte_abnormal_term_ordered = true;
         kill(getpid(), SIGTERM);
     }
     return;

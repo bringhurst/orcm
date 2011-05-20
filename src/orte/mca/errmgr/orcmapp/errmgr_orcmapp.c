@@ -90,7 +90,6 @@ orte_errmgr_base_module_t orte_errmgr_orcmapp_module = {
  * Local functions and globals
  */
 static orte_thread_ctl_t ctl;
-static bool kill_sent=false;
 
 static void notify_failure(int status,
                           orte_process_name_t *sender,
@@ -154,14 +153,14 @@ static void app_abort(int error_code, char *fmt, ...)
     }
     va_end(arglist);
     
-    if (kill_sent) {
+    if (orte_abnormal_term_ordered) {
         /* only send SIGTERM to ourselves once as
          * we otherwise can get into an infinite loop
          * while trying to abnormally terminate
          */
         orte_ess.abort(error_code, false);
     } else {
-        kill_sent = true;
+        orte_abnormal_term_ordered = true;
         kill(getpid(), SIGTERM);
     }
     return;
