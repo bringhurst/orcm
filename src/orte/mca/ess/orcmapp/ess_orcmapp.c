@@ -191,37 +191,27 @@ static void rte_abort(int status, bool report)
 
 static uint8_t proc_get_locality(orte_process_name_t *proc)
 {
-    opal_output(0, "CALLED GET LOCALITY");
-
     return OPAL_PROC_NON_LOCAL;
     
 }
 
 static orte_vpid_t proc_get_daemon(orte_process_name_t *proc)
 {
-    opal_output(0, "CALLED GET DAEMON");
-    
     return ORTE_VPID_INVALID;
 }
 
 static char* proc_get_hostname(orte_process_name_t *proc)
 {
-    opal_output(0, "CALLED GET HOSTNAME");
-    
     return NULL;
 }
 
 static orte_local_rank_t proc_get_local_rank(orte_process_name_t *proc)
 {
-    opal_output(0, "CALLED GET LOCAL RANK");
-    
     return ORTE_LOCAL_RANK_INVALID;
 }
 
 static orte_node_rank_t proc_get_node_rank(orte_process_name_t *proc)
 {
-    opal_output(0, "CALLED GET NODE RANK");
-    
     return ORTE_NODE_RANK_INVALID;
 }
 
