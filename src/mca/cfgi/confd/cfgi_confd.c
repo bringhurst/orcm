@@ -464,10 +464,10 @@ static bool find_version(confd_hkeypath_t *kp,
     return true;
 }
 
-static bool find_binary(confd_hkeypath_t *kp,
-                        orcm_cfgi_version_t *vers,
-                        orcm_cfgi_run_t **runptr,
-                        orcm_cfgi_bin_t **bin)
+static int find_binary(confd_hkeypath_t *kp,
+                       orcm_cfgi_version_t *vers,
+                       orcm_cfgi_run_t **runptr,
+                       orcm_cfgi_bin_t **bin)
 {
     confd_value_t *vp;
     char *instance, *app, *appname, *version;
@@ -485,26 +485,26 @@ static bool find_binary(confd_hkeypath_t *kp,
     vp = qc_find_key(kp, orcm_app, 0);
     if (NULL == vp) {
         /* no key found */
-        return false;
+        return 0;
     }
     app = CONFD_GET_CBUFPTR(vp);
     /* find the instance this belongs to */
     vp = qc_find_key(kp, orcm_app_instance, 0);
     if (NULL == vp) {
-        return false;
+        return 0;
     }
     instance = CONFD_GET_CBUFPTR(vp);
     /* find the executable */
     vp = qc_find_key(kp, orcm_exec, 0);
     if (NULL == vp) {
         /* no exec key found */
-        return false;
+        return 0;
     }
     appname = CONFD_GET_CBUFPTR(vp);
     /* find the version */
     vp = qc_find_key(kp, orcm_version, 0);
     if (NULL == vp) {
-        return false;
+        return 0;
     }
     version = CONFD_GET_CBUFPTR(vp);
     run = NULL;
@@ -515,7 +515,7 @@ static bool find_binary(confd_hkeypath_t *kp,
         if (NULL == rptr->application ||
             NULL == rptr->instance) {
             opal_output(0, "%s IMPROPERLY DEFINED CONFIG APPLICATION", ORTE_NAME_PRINT(ORTE_PROC_MY_NAME));
-            return false;
+            return 0;
         }
         if (0 == strcmp(rptr->application, app) &&
             0 == strcmp(rptr->instance, instance)) {
@@ -539,6 +539,10 @@ static bool find_binary(confd_hkeypath_t *kp,
         }
         if (0 == strcmp(bptr->appname, appname) &&
             0 == strcmp(bptr->version, version)) {
+            OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
+                                 "%s FOUND EXISTING BINARY %s:%s",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                 appname, version));
             *bin = bptr;
             if (NULL == bptr->vers && NULL != vers) {
                 /* add it to the version for tracking purposes */
@@ -546,12 +550,13 @@ static bool find_binary(confd_hkeypath_t *kp,
                 /* track the higher levels so we can cleanup as reqd */
                 bptr->exec = vers->exec;
                 bptr->vers = vers;
+                /* indicate that we created a link to an installed version */
+                return 3;
             }
-            OPAL_OUTPUT_VERBOSE((2, orcm_cfgi_base.output,
-                                 "%s FOUND EXISTING BINARY %s:%s",
-                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                 appname, version));
-            return true;
+            /* indicate that we found an existing binary that had previously
+             * been linked to an installed version
+             */
+            return 1;
         }
     }
     /* if we get here, then this is a new version for this instance - so add it */
@@ -575,7 +580,7 @@ static bool find_binary(confd_hkeypath_t *kp,
     }
     /* return the struct pointer */
     *bin = bptr;
-    return true;
+    return 2;
 
 }
 
@@ -915,6 +920,9 @@ static boolean parse(confd_hkeypath_t *kp,
                  * app-instance if/when the referenced app ever does get installed
                  */
                 if (NULL == run) {
+                    OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                                         "%s SPECIFIED APP %s HAS NOT YET BEEN INSTALLED - CAPTURING CONFIG",
+                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), application));
                     /* don't have this config yet - add it */
                     run = OBJ_NEW(orcm_cfgi_run_t);
                     run->application = application;
@@ -924,16 +932,25 @@ static boolean parse(confd_hkeypath_t *kp,
                 ret = TRUE;
                 break;
             }
-            /* specified app has been installed - configure it */
+            if (NULL != run) {
+                /* already have this instance - nothing to do */
+                OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                                     "%s ALREADY HAVE INSTANCE %s:%s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     application, cptr));
+                break;
+            }
+            /* new instance of an installed app - configure it */
             if (app->max_instances < 0 || app->num_instances < app->max_instances) {
-                if (NULL == run) {
-                    /* don't have this config yet - add it */
-                    run = OBJ_NEW(orcm_cfgi_run_t);
-                    run->app = app;
-                    run->application = application;
-                    run->instance = strdup(cptr);
-                    run->idx = opal_pointer_array_add(&orcm_cfgi_base.confgd_apps, run);
-                }
+                OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                                     "%s ADDING NEW INSTANCE %s:%s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     application, cptr));
+                run = OBJ_NEW(orcm_cfgi_run_t);
+                run->app = app;
+                run->application = application;
+                run->instance = strdup(cptr);
+                run->idx = opal_pointer_array_add(&orcm_cfgi_base.confgd_apps, run);
                 /* add it to our array of apps waiting for commit */
                 caddy = OBJ_NEW(orcm_cfgi_caddy_t);
                 caddy->cmd = ORCM_CFGI_SPAWN;
@@ -974,34 +991,82 @@ static boolean parse(confd_hkeypath_t *kp,
 
         case orcm_count:
             i32 = CONFD_GET_INT32(value);
+            /* bozo check */
+            if (i32 < 0) {
+                ret = FALSE;
+                break;
+            }
             if (!find_version(kp, &exec, &vers)) {
                 /* the app/exec/version keys weren't provided */
                 ret = FALSE;
                 break;
             }
-            if (!find_binary(kp, vers, &run, &bin)) {
+            if (0 == (rc = find_binary(kp, vers, &run, &bin))) {
                 /* the version key wasn't provided */
                 ret = FALSE;
                 break;
-            }
-            if (NULL != exec) {
-                /* see if this would give us too many procs - obviously, if
-                 * the executable hasn't been installed yet, we can't know
-                 * and will just have to assume it's okay for now
-                 */
-                if (0 <= exec->process_limit) {
-                    if (exec->process_limit < ((i32 - bin->num_procs) + exec->total_procs)) {
-                        opal_output(0, "%s EXECUTABLE %s: MAX NUMBER OF ALLOWED PROCS (%d) EXCEEDED - CANNOT ADD %d PROCS, ALREADY HAVE %d",
-                                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                                    (NULL == exec->appname) ? "NULL" : exec->appname,
-                                    exec->process_limit, i32 - bin->num_procs, exec->total_procs);
-                        ret = FALSE;
+            } else if (2 == rc) {
+                /* new binary */
+                if (NULL != exec) {
+                    /* see if this would give us too many procs - obviously, if
+                     * the executable hasn't been installed yet, we can't know
+                     * and will just have to assume it's okay for now
+                     */
+                    if (0 <= exec->process_limit) {
+                        if (exec->process_limit < ((i32 - bin->num_procs) + exec->total_procs)) {
+                            opal_output(0, "%s EXECUTABLE %s: MAX NUMBER OF ALLOWED PROCS (%d) EXCEEDED - CANNOT ADD %d PROCS, ALREADY HAVE %d",
+                                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                        (NULL == exec->appname) ? "NULL" : exec->appname,
+                                        exec->process_limit, i32 - bin->num_procs, exec->total_procs);
+                            ret = FALSE;
+                            break;
+                        }
+                    }
+                    exec->total_procs += (i32 - bin->num_procs);
+                }
+                bin->num_procs = i32;
+            } else {  /* either 1 or 3 */
+                OPAL_OUTPUT_VERBOSE((5, orcm_cfgi_base.output,
+                                     "%s BINARY ALREADY EXISTED",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+                /* binary already existed and was installed - see if num procs changed */
+                if (i32 < bin->num_procs) {
+                    if (NULL != exec) {
+                        /* return the excess procs to the exec */
+                        exec->total_procs += (i32 - bin->num_procs);
+                    }
+                    bin->num_procs = i32;
+                } else if (i32 > bin->num_procs) {
+                    if (NULL != exec) {
+                        /* see if this would give us too many procs - obviously, if
+                         * the executable hasn't been installed yet, we can't know
+                         * and will just have to assume it's okay for now
+                         */
+                        if (0 <= exec->process_limit) {
+                            if (exec->process_limit < ((i32 - bin->num_procs) + exec->total_procs)) {
+                                opal_output(0, "%s EXECUTABLE %s: MAX NUMBER OF ALLOWED PROCS (%d) EXCEEDED - CANNOT ADD %d PROCS, ALREADY HAVE %d",
+                                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                            (NULL == exec->appname) ? "NULL" : exec->appname,
+                                            exec->process_limit, i32 - bin->num_procs, exec->total_procs);
+                                ret = FALSE;
+                                break;
+                            }
+                        }
+                        exec->total_procs += (i32 - bin->num_procs);
+                    }
+                    bin->num_procs = i32;
+                } else {
+                    /* no change */
+                    if (1 == rc) {
+                        /* was previously linked to an installed version, so nothing to do */
+                        ret = TRUE;
                         break;
                     }
+                    /* otherwise, we go ahead and process for launch since this
+                     * binary has now been linked to an installed version
+                     */
                 }
-                exec->total_procs += (i32 - bin->num_procs);
             }
-            bin->num_procs = i32;
             /* if this run object isn't already in the active_apps array,
              * add it - this happens when you change the num_procs for an
              * executable, or add an executable to a running job
