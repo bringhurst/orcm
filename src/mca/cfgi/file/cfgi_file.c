@@ -1032,9 +1032,9 @@ static int parse_file(char *filename,
                 /* get the modification time stamp for that binary */
                 asprintf(&binary, "%s_%s", exec->appname, version);
                 tmp = opal_path_findv(binary, X_OK, environ, NULL);
+                free(binary);
                 if (NULL == tmp) {
                     /* binary wasn't found - just leave it */
-                    free(binary);
                     free(version);
                     break;
                 }
@@ -1044,7 +1044,6 @@ static int parse_file(char *filename,
                                          "%s could not stat %s",
                                          ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), tmp));
                     free(tmp);
-                    free(binary);
                     free(version);
                     break;
                 }
@@ -1055,6 +1054,7 @@ static int parse_file(char *filename,
                                      "%s BIN %s MODTIME %s",
                                      ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                                      binary, vers->mod_time));
+                free(tmp);
             }
             free(version);
             break;
