@@ -106,6 +106,7 @@ static void vers_constructor(orcm_cfgi_version_t *ptr)
     ptr->exec = NULL;
     ptr->version = NULL;
     ptr->argv = NULL;
+    ptr->mod_time = NULL;
     OBJ_CONSTRUCT(&ptr->binaries, opal_pointer_array_t);
     opal_pointer_array_init(&ptr->binaries, 4, INT_MAX, 4);
 }
@@ -127,7 +128,9 @@ static void vers_destructor(orcm_cfgi_version_t *ptr)
     if (NULL != ptr->argv) {
         opal_argv_free(ptr->argv);
     }
-
+    if (NULL != ptr->mod_time) {
+        free(ptr->mod_time);
+    }
     /* don't need to release the contents of the binaries array as they
      * took care of that themselves
      */
@@ -348,17 +351,6 @@ void orcm_cfgi_base_dump(char **dumped, char *pfx, void *ptr, int type)
             free(output);
             output = tmp2;
         }
-        for (i=0; i < app->instances.size; i++) {
-            if (NULL == (run = (orcm_cfgi_run_t*)opal_pointer_array_get_item(&app->instances, i))) {
-                continue;
-            }
-            orcm_cfgi_base_dump(&tmp, pfx2, run, ORCM_CFGI_RUN);
-            asprintf(&tmp2, "%s\n%s", output, tmp);
-            free(tmp);
-            free(output);
-            output = tmp2;
-        }
-        free(pfx2);
         break;
 
     case ORCM_CFGI_EXEC:
@@ -388,11 +380,12 @@ void orcm_cfgi_base_dump(char **dumped, char *pfx, void *ptr, int type)
         } else {
             tmp = NULL;
         }
-        asprintf(&output, "%sExec: %s\tVersion: %s\tArgv: %s",
+        asprintf(&output, "%sExec: %s\tVersion: %s\tArgv: %s\tInstalled: %s",
                  (NULL == pfx) ? "" : pfx,
                  (NULL == vers->exec) ? "NULL" : ((NULL == vers->exec->appname) ? "NULL" : vers->exec->appname),
                  (NULL == vers->version) ? "NULL" : vers->version,
-                 (NULL == tmp) ? "NULL" : tmp);
+                 (NULL == tmp) ? "NULL" : tmp,
+                 (NULL == vers->mod_time) ? "NULL" : vers->mod_time);
         if (NULL != tmp) {
             free(tmp);
         }

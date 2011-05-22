@@ -812,13 +812,14 @@ static char *parse_string(void)
 static int parse_file(char *filename,
                       opal_pointer_array_t *apps)
 {
-    char *cptr, *executable, *version, *argv;
+    char *cptr, *executable, *version, *argv, *tmp, *binary;
     int token, rc=ORCM_SUCCESS;
     int i, ival;
     orcm_cfgi_app_t *app=NULL, *aptr, *curapp;
     orcm_cfgi_exec_t *exec=NULL, *eptr;
     orcm_cfgi_version_t *vers=NULL, *vptr;
     bool found;
+    struct stat buf;
 
     orcm_cfgi_file_in = fopen(filename, "r");
     if (NULL == orcm_cfgi_file_in) {
@@ -1028,6 +1029,32 @@ static int parse_file(char *filename,
                 vers->exec = exec;
                 vers->version = strdup(version);
                 vers->idx = opal_pointer_array_add(&exec->versions, vers);
+                /* get the modification time stamp for that binary */
+                asprintf(&binary, "%s_%s", exec->appname, version);
+                tmp = opal_path_findv(binary, X_OK, environ, NULL);
+                if (NULL == tmp) {
+                    /* binary wasn't found - just leave it */
+                    free(binary);
+                    free(version);
+                    break;
+                }
+                if (0 > stat(tmp, &buf)) {
+                    /* cannot stat file */
+                    OPAL_OUTPUT_VERBOSE((1, orcm_cfgi_base.output,
+                                         "%s could not stat %s",
+                                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), tmp));
+                    free(tmp);
+                    free(binary);
+                    free(version);
+                    break;
+                }
+                vers->mod_time = strdup(ctime(&buf.st_mtime));
+                /* strip the ending cr */
+                vers->mod_time[strlen(vers->mod_time)-1] = '\0';
+                OPAL_OUTPUT_VERBOSE((1, orcm_cfgi_base.output,
+                                     "%s BIN %s MODTIME %s",
+                                     ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                     binary, vers->mod_time));
             }
             free(version);
             break;

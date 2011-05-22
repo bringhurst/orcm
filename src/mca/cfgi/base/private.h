@@ -42,6 +42,11 @@ typedef struct {
     orcm_cfgi_exec_t *exec;   /* the executable this belongs to */
     char *version;
     char **argv;
+    /* keep a printable time of last modification so
+     * we can tell when it was last updated
+     */
+    char *mod_time;
+    /* track the executing copies of this version */
     opal_pointer_array_t binaries;
 } orcm_cfgi_version_t;
 ORCM_DECLSPEC OBJ_CLASS_DECLARATION(orcm_cfgi_version_t);
