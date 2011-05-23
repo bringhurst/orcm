@@ -598,6 +598,62 @@ int ft_event(int state)
 /*****************
  * Local Functions
  *****************/
+typedef struct {
+    opal_object_t super;
+    orte_job_t *jdata;
+    opal_event_t ev;
+} orte_errmgr_caddy_t;
+OBJ_CLASS_INSTANCE(orte_errmgr_caddy_t,
+                   opal_object_t, NULL, NULL);
+
+static void launch_restart(int fd, short args, void *cbdata)
+{
+    orte_errmgr_caddy_t *cd = (orte_errmgr_caddy_t*)cbdata;
+    int rc;
+    opal_buffer_t *bfr;
+    uint16_t jfam;
+
+    OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
+                         "%s RESTARTING JOB %s",
+                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         ORTE_JOBID_PRINT(cd->jdata->jobid)));
+
+    /* reset the job */
+    orte_plm_base_reset_job(cd->jdata);
+
+    /* the resilient mapper will automatically avoid restarting the
+     * proc on its former node
+     */
+
+    /* map the job again */
+    if (ORTE_SUCCESS != (rc = orte_rmaps.map_job(cd->jdata))) {
+        ORTE_ERROR_LOG(rc);
+        goto cleanup;
+    }
+
+    bfr = OBJ_NEW(opal_buffer_t);
+    /* indicate the target DVM */
+    jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
+    opal_dss.pack(bfr, &jfam, 1, OPAL_UINT16);
+
+    /* get the launch data */
+    if (ORTE_SUCCESS != (rc = orte_odls.get_add_procs_data(bfr, cd->jdata->jobid))) {
+        ORTE_ERROR_LOG(rc);
+        OBJ_RELEASE(bfr);
+        goto cleanup;
+    }
+    /* send it to the daemons */
+    if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
+                                                 NULL, ORCM_PNP_TAG_COMMAND,
+                                                 NULL, 0, bfr, cbfunc, NULL))) {
+        ORTE_ERROR_LOG(rc);
+    }
+
+ cleanup:
+    OBJ_RELEASE(cd);
+}
+
+
 /* failure notifications come here */
 static void remote_update(int status,
                           orte_process_name_t *sender,
@@ -620,6 +676,9 @@ static void remote_update(int status,
     pid_t pid;
     bool restart_reqd, job_released, job_done;
     uint16_t jfam;
+    struct timeval offset={0, 0};
+    int32_t max_fails=0;
+    orte_errmgr_caddy_t *cd;
 
     OPAL_OUTPUT_VERBOSE((5, orte_errmgr_base.output,
                          "%s errmgr:sched:receive proc state notification from %s",
@@ -793,6 +852,8 @@ static void remote_update(int status,
         /* find the proc that needs restarting */
         restart_reqd = false;
         job_released = false;
+        max_fails = 0;
+        offset.tv_sec = 0;
         for (cnt=0; cnt < jdata->procs->size; cnt++) {
             if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, cnt))) {
                 continue;
@@ -820,6 +881,10 @@ static void remote_update(int status,
                     jdata->num_terminated++;
                     /* increment the restart counter since the proc will be restarted */
                     proc->restarts++;
+                    /* track max failures */
+                    if (max_fails < proc->restarts) {
+                        max_fails = proc->restarts;
+                    }
                 } else {
                     /* limit reached - don't restart it */
                     OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
@@ -867,36 +932,27 @@ static void remote_update(int status,
             continue;
         }
 
-        /* reset the job */
-        orte_plm_base_reset_job(jdata);
-
-        /* the resilient mapper will automatically avoid restarting the
-         * proc on its former node
+        /* calculate a delay to avoid racy situation when a proc
+         * is continuously failing due to, e.g., a bad command
+         * syntax
          */
-
-        /* map the job again */
-        if (ORTE_SUCCESS != (rc = orte_rmaps.map_job(jdata))) {
-            ORTE_ERROR_LOG(rc);
-            return;
-        }         
-
-        bfr = OBJ_NEW(opal_buffer_t);
-        /* indicate the target DVM */
-        jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
-        opal_dss.pack(bfr, &jfam, 1, OPAL_UINT16);
-
-        /* get the launch data */
-        if (ORTE_SUCCESS != (rc = orte_odls.get_add_procs_data(bfr, jdata->jobid))) {
-            ORTE_ERROR_LOG(rc);
-            OBJ_RELEASE(bfr);
-            return;
+        if (1 < max_fails) {
+            if (4 < max_fails) {
+                /* cap the delay at 4 secs */
+                offset.tv_sec = 4;
+            } else {
+                /* add a sec for each failure beyond the first */
+                offset.tv_sec = max_fails - 1;
+            }
         }
-        /* send it to the daemons */
-        if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
-                                                     NULL, ORCM_PNP_TAG_COMMAND,
-                                                     NULL, 0, bfr, cbfunc, NULL))) {
-            ORTE_ERROR_LOG(rc);
-        }
+        OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
+                             "%s DELAYING RESTART OF JOB %s FOR %d SECS",
+                             ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                             ORTE_JOBID_PRINT(jdata->jobid), (int)offset.tv_sec));
+        cd = OBJ_NEW(orte_errmgr_caddy_t);
+        cd->jdata = jdata;
+        opal_event_evtimer_set(opal_event_base, &cd->ev, launch_restart, cd);
+        opal_event_evtimer_add(&cd->ev, &offset);
     }
 }
 
@@ -908,6 +964,9 @@ static void recover_procs(orte_process_name_t *daemon)
     int i, rc;
     opal_buffer_t *bfr;
     uint16_t jfam;
+    struct timeval offset={0, 0};
+    int32_t max_fails=0;
+    orte_errmgr_caddy_t *cd;
 
     /* the thread is locked by the caller, so don't do anything here */
 
@@ -944,6 +1003,7 @@ static void recover_procs(orte_process_name_t *daemon)
 
     node->state = ORTE_NODE_STATE_DOWN;
     node->daemon = NULL;
+    max_fails = 0;
     /* mark all procs on this node as having terminated */
     for (i=0; i < node->procs->size; i++) {
         if (NULL == (proc = (orte_proc_t*)opal_pointer_array_get_item(node->procs, i))) {
@@ -964,8 +1024,25 @@ static void recover_procs(orte_process_name_t *daemon)
         proc->state = ORTE_PROC_STATE_RESTART;
         proc->pid = 0;
         jdt->state = ORTE_JOB_STATE_RESTART;
+        if (max_fails < proc->restarts) {
+            max_fails = proc->restarts;
+        }
         /* adjust the num terminated so that acctg works right */
         jdt->num_terminated++;
+    }
+
+    /* calculate a delay to avoid racy situation when a proc
+     * is continuously failing due to, e.g., a bad command
+     * syntax
+     */
+    if (1 < max_fails) {
+        if (4 < max_fails) {
+            /* cap the delay at 4 secs */
+            offset.tv_sec = 4;
+        } else {
+            /* add a sec for each failure beyond the first */
+            offset.tv_sec = max_fails - 1;
+        }
     }
 
     /* now cycle thru the jobs and restart all those that were flagged */
@@ -974,32 +1051,14 @@ static void recover_procs(orte_process_name_t *daemon)
             continue;
         }
         if (ORTE_JOB_STATE_RESTART == jdt->state) {
-            /* reset the job parameters */
-            orte_plm_base_reset_job(jdt);
-
-            /* re-map the job */
-            if (ORTE_SUCCESS != (rc = orte_rmaps.map_job(jdt))) {
-                ORTE_ERROR_LOG(rc);
-                continue;
-            }         
-
-            bfr = OBJ_NEW(opal_buffer_t);
-            /* indicate the target DVM */
-            jfam = ORTE_JOB_FAMILY(ORTE_PROC_MY_NAME->jobid);
-            opal_dss.pack(bfr, &jfam, 1, OPAL_UINT16);
-
-            /* get the launch data */
-            if (ORTE_SUCCESS != (rc = orte_odls.get_add_procs_data(bfr, jdt->jobid))) {
-                ORTE_ERROR_LOG(rc);
-                OBJ_RELEASE(bfr);
-                return;
-            }
-            /* send it to the daemons */
-            if (ORCM_SUCCESS != (rc = orcm_pnp.output_nb(ORCM_PNP_SYS_CHANNEL,
-                                                         NULL, ORCM_PNP_TAG_COMMAND,
-                                                         NULL, 0, bfr, cbfunc, NULL))) {
-                ORTE_ERROR_LOG(rc);
-            }
+            OPAL_OUTPUT_VERBOSE((2, orte_errmgr_base.output,
+                                 "%s DELAYING RESTART OF JOB %s FOR %d SECS",
+                                 ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                                 ORTE_JOBID_PRINT(jdt->jobid), (int)offset.tv_sec));
+            cd = OBJ_NEW(orte_errmgr_caddy_t);
+            cd->jdata = jdt;
+            opal_event_evtimer_set(opal_event_base, &cd->ev, launch_restart, cd);
+            opal_event_evtimer_add(&cd->ev, &offset);
         }
     }
 }
